@@ -1,0 +1,23 @@
+{
+  "name": "sprint-griller",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.15.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "SPRINT_GRILLER_CONFIG=\"${SPRINT_GRILLER_CONFIG:-$PWD/sprint-griller.config.json}\" pnpm --filter @sprint-griller/web dev",
+    "build": "pnpm --filter @sprint-griller/web build",
+    "start": "SPRINT_GRILLER_CONFIG=\"${SPRINT_GRILLER_CONFIG:-$PWD/sprint-griller.config.json}\" pnpm --filter @sprint-griller/web start",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "vitest run",
+    "check": "pnpm typecheck && pnpm lint && pnpm test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

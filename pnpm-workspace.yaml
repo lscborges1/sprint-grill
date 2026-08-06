@@ -2,4 +2,6 @@ packages:
   - apps/*
   - packages/*
 allowBuilds:
+  # tsx (harness do agent-runtime) roda em cima do esbuild.
+  esbuild: true
   unrs-resolver: true

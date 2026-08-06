@@ -86,18 +86,20 @@ citações** (`verifyGrounding`), sem LLM nenhum no caminho:
 |---|---|
 | arquivo existe no repo citado | ok |
 | `symbol` aparece no arquivo | ok |
-| caminho não existe, ou aponta para fora do repo | relatório **reprovado** |
+| caminho não existe, aponta para fora do repo, ou não dá para ler | relatório **reprovado** |
 | repo que não está na config da squad | relatório **reprovado** |
 
 Reprovado é relatório que não publica: o preview mostra o que o agente disse com
-o aviso de que não passou. O que o agente não conseguiu ancorar em código sai em
-**Não verificado**, e suspeita de impacto em repo fora do config sai em
-**Impacto suspeito fora do config** — nenhum dos dois entra no corpo como fato.
+o aviso de que não passou, e o próprio Markdown abre com o veredito e as citações
+que falharam — o arquivo circula sozinho, não pode se apresentar como verificado.
+O que o agente não conseguiu ancorar em código sai em **Não verificado**, e
+suspeita de impacto em repo fora do config sai em **Impacto suspeito fora do
+config** — nenhum dos dois entra no corpo como fato.
 
-O turno roda em sandbox read-only: comandos de leitura são liberados sozinhos
-(é o que deixa o agente varrer os repos AFK) e escrita em arquivo é sempre
-recusada. Se o agente perguntar algo, a resposta é que ninguém está na tela — a
-dúvida volta como furo da US.
+O turno roda em sandbox read-only, e não há humano na sala: todo pedido de
+aprovação é recusado (é sempre um pedido para sair do sandbox — leitura dentro
+dele não pergunta). Se o agente fizer uma pergunta, a resposta é que ninguém está
+na tela, e a dúvida volta como furo da US.
 
 > As Investigações vivem na memória do processo: reiniciar o app perde os
 > previews que ainda não foram publicados no ADO.

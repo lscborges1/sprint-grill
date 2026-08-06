@@ -1,4 +1,4 @@
-import type { RepoConfig, SquadConfig } from "@sprint-griller/core";
+import type { SquadConfig } from "@sprint-griller/core";
 import type { InvestigationStory } from "./story";
 
 /**
@@ -19,9 +19,13 @@ export function investigationInstructions(repos: SquadConfig["repos"]): string {
     "",
     "## Repositórios da squad",
     "",
-    "Estes são os únicos repos que você pode ler. Use os caminhos absolutos:",
+    "Estes são os únicos repos que você pode ler. Para navegar e buscar, use o",
+    "caminho absoluto de cada um:",
     "",
-    ...all.map((repo) => `- \`${repo.name}\` — ${repo.path}${role(repos, repo)}`),
+    ...all.map(
+      (repo) =>
+        `- \`${repo.name}\` — ${repo.path}${repo === repos.primary ? " (principal)" : ""}`,
+    ),
     "",
     "## Regras de grounding",
     "",
@@ -32,8 +36,15 @@ export function investigationInstructions(repos: SquadConfig["repos"]): string {
     "   hipótese. Nunca escreva hipótese como se fosse fato.",
     "3. Suspeita de impacto em repo que não está na lista acima vai para",
     "   `externalRepos` — não invente citação para ela.",
-    "4. `path` é relativo à raiz do repo citado. `symbol` é um trecho literal que",
-    "   existe no arquivo (nome de função, constante, classe).",
+    "4. Na citação, `repo` é o nome curto acima e `path` é **relativo à raiz**",
+    "   daquele repo — nunca o caminho absoluto que você usou para navegar.",
+    "   `symbol` é um trecho literal que existe no arquivo (nome de função,",
+    "   constante, classe).",
+    "5. `summary` e `gaps` são resumo e perguntas: afirmação de impacto não entra",
+    "   neles. Todo impacto vai para `impacts`, onde a citação é conferida.",
+    "6. Você roda em sandbox somente-leitura e não há ninguém para aprovar nada:",
+    "   pedido de escalar permissão vai ser recusado. Trabalhe com o que der para",
+    "   ler.",
     "",
     "## Execução AFK",
     "",
@@ -72,8 +83,4 @@ export function investigationPrompt(story: InvestigationStory): string {
     "",
     story.description?.trim() ? story.description : "(a US está sem descrição)",
   ].join("\n");
-}
-
-function role(repos: SquadConfig["repos"], repo: RepoConfig): string {
-  return repo === repos.primary ? " (principal)" : "";
 }

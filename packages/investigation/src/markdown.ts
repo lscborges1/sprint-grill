@@ -1,10 +1,21 @@
-import type { Citation, InvestigationReport } from "./report";
+import type { GroundingResult } from "./grounding";
+import type { InvestigationReport } from "./report";
 import type { InvestigationStory } from "./story";
+import {
+  REJECTED_BLURB,
+  REJECTED_HEADING,
+  REPORT_SECTIONS,
+  formatCitation,
+} from "./vocabulary";
 
 /**
  * O relatório em Markdown — o artefato que o Operador lê no preview local e que
  * a publicação no ADO vai gravar como comment. Renderizado por código, não pelo
  * modelo (ADR 0002): a estrutura das seções é garantia, não estilo.
+ *
+ * O veredito da checagem entra no documento porque o documento circula sozinho:
+ * um Markdown copiado de um relatório reprovado não pode se apresentar como
+ * verificado.
  *
  * As quatro seções aparecem sempre, mesmo vazias: "nenhum impacto suspeito fora
  * do config" é informação, e seção que some vira dúvida sobre o que o agente fez.
@@ -12,38 +23,58 @@ import type { InvestigationStory } from "./story";
 export function renderReportMarkdown(
   story: InvestigationStory,
   report: InvestigationReport,
+  grounding: GroundingResult,
 ): string {
+  const approved = grounding.status === "aprovado";
+
   const blocks = [
     `# Investigação — US #${story.id}: ${story.title}`,
+    ...(grounding.status === "reprovado" ? [rejection(grounding), ""] : []),
     report.summary,
     `[Abrir a US no Azure DevOps](${story.url})`,
 
-    "## Furos da US",
+    `## ${REPORT_SECTIONS.gaps.heading}`,
     list(report.gaps, (gap) => `- **${gap.question}** — ${gap.why}`) ??
-      "_Nenhum furo aberto._",
+      italic(REPORT_SECTIONS.gaps.empty),
 
-    "## Impacto mapeado",
-    "Toda afirmação abaixo passou pela checagem mecânica de citações.",
+    `## ${REPORT_SECTIONS.impacts.heading}`,
+    approved ? REPORT_SECTIONS.impacts.verified : REPORT_SECTIONS.impacts.rejected,
     list(report.impacts, (impact) =>
-      [`- ${impact.claim}`, ...impact.citations.map((c) => `  - ${citation(c)}`)].join("\n"),
-    ) ?? "_Nenhum impacto ancorado no código._",
+      [
+        `- ${impact.claim}`,
+        ...impact.citations.map((citation) => `  - \`${formatCitation(citation)}\``),
+      ].join("\n"),
+    ) ?? italic(REPORT_SECTIONS.impacts.empty),
 
-    "## Impacto suspeito fora do config",
-    "Repos que não estão na config da squad — ninguém leu o código deles.",
+    `## ${REPORT_SECTIONS.externalRepos.heading}`,
+    REPORT_SECTIONS.externalRepos.blurb,
     list(report.externalRepos, (repo) => `- **${repo.repo}** — ${repo.suspicion}`) ??
-      "_Nenhum._",
+      italic(REPORT_SECTIONS.externalRepos.empty),
 
-    "## Não verificado",
-    "Hipóteses que o agente não conseguiu ancorar no código. Não são fato.",
-    list(report.unverified, (claim) => `- ${claim}`) ?? "_Nada ficou sem âncora._",
+    `## ${REPORT_SECTIONS.unverified.heading}`,
+    REPORT_SECTIONS.unverified.blurb,
+    list(report.unverified, (claim) => `- ${claim}`) ??
+      italic(REPORT_SECTIONS.unverified.empty),
   ];
 
   return `${blocks.join("\n\n")}\n`;
 }
 
-function citation({ repo, path, symbol }: Citation): string {
-  const anchor = `\`${repo}:${path}\``;
-  return symbol === undefined ? anchor : `${anchor} → \`${symbol}\``;
+/** Bloco de citação no topo: é a primeira coisa que quem abrir o arquivo lê. */
+function rejection(grounding: Extract<GroundingResult, { status: "reprovado" }>): string {
+  return [
+    `> **${REJECTED_HEADING}**`,
+    ">",
+    `> ${REJECTED_BLURB}`,
+    ">",
+    ...grounding.violations.map(
+      (violation) => `> - ${violation.detail} (afirmação: ${violation.claim})`,
+    ),
+  ].join("\n");
+}
+
+function italic(text: string): string {
+  return `_${text}_`;
 }
 
 function list<T>(

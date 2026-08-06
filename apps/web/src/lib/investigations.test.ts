@@ -31,7 +31,7 @@ vi.mock("./logger", () => ({
   }),
 }));
 
-process.env["AZURE_DEVOPS_PAT"] = "pat-de-teste";
+vi.stubEnv("AZURE_DEVOPS_PAT", "pat-de-teste");
 
 const { getInvestigation, startInvestigation } = await import("./investigations");
 

@@ -1,10 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { z } from "zod";
-import { startInvestigation } from "@/lib/investigations";
-
-const storyIdSchema = z.coerce.number().int().positive();
+import { startInvestigation, storyIdSchema } from "@/lib/investigations";
 
 /**
  * O clique do picker: dispara a Investigação e manda o Operador para o preview.

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -81,6 +81,22 @@ describe("verifyGrounding", () => {
     expect(result).toMatchObject({
       status: "reprovado",
       violations: [{ reason: "simbolo-nao-encontrado" }],
+    });
+  });
+
+  it("should not blame the agent when the cited file cannot be read", () => {
+    const locked = path.join(CORE_API, "src", "cache", "locked.ts");
+    writeFileSync(locked, "export const SESSION_TTL = 1;\n");
+    chmodSync(locked, 0o000);
+
+    const result = verify([
+      { repo: "core-api", path: "src/cache/locked.ts", symbol: "SESSION_TTL" },
+    ]);
+
+    chmodSync(locked, 0o600);
+    expect(result).toMatchObject({
+      status: "reprovado",
+      violations: [{ reason: "arquivo-ilegivel" }],
     });
   });
 

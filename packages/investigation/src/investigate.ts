@@ -77,12 +77,15 @@ export async function runInvestigation(
           await event.question.answer(afkAnswers(event.question.questions));
           break;
 
-        // A sessão já roda em sandbox read-only; liberar comando é o que deixa o
-        // agente varrer os repos sozinho. Escrita nunca — a Investigação só lê.
+        // Leitura dentro do sandbox não pede aprovação: o que chega aqui é o
+        // agente querendo sair dele, e não há humano para autorizar isso. Recusa
+        // não o cega — ele segue lendo os repos pelo sandbox read-only.
         case "approval":
-          await event.approval.decide(
-            event.approval.kind === "command" ? "accept-for-session" : "decline",
+          logger.warn(
+            { kind: event.approval.kind, summary: event.approval.summary },
+            "aprovação recusada — a Investigação roda AFK e só lê",
           );
+          await event.approval.decide("decline");
           break;
 
         case "turn-failed":
@@ -118,8 +121,8 @@ function grade(
     return { status: "falhou", message: parsed.message };
   }
 
-  const markdown = renderReportMarkdown(story, parsed.report);
   const grounding = verifyGrounding(parsed.report, [repos.primary, ...repos.related]);
+  const markdown = renderReportMarkdown(story, parsed.report, grounding);
 
   if (grounding.status === "reprovado") {
     logger.warn(

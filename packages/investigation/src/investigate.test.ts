@@ -230,7 +230,7 @@ describe("runInvestigation", () => {
     expect(answers).toEqual([{ q1: [AFK_ANSWER] }]);
   });
 
-  it("should let the agent search the repos but never write to them", async () => {
+  it("should refuse to leave the read-only sandbox with nobody there to allow it", async () => {
     const decisions: { kind: string; decision: ApprovalDecision }[] = [];
     const fake = fakeRuntime([
       approval("command", decisions),
@@ -247,7 +247,7 @@ describe("runInvestigation", () => {
     });
 
     expect(decisions).toEqual([
-      { kind: "command", decision: "accept-for-session" },
+      { kind: "command", decision: "decline" },
       { kind: "file-change", decision: "decline" },
     ]);
   });

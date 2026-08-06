@@ -1,12 +1,17 @@
+import {
+  REJECTED_BLURB,
+  REJECTED_HEADING,
+  REPORT_SECTIONS,
+  formatCitation,
+} from "@sprint-griller/investigation";
 import type {
-  Citation,
   CitationViolation,
   InvestigationReport,
 } from "@sprint-griller/investigation";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Section } from "@/components/section";
-import { getInvestigation } from "@/lib/investigations";
+import { getInvestigation, storyIdSchema } from "@/lib/investigations";
 import type { InvestigationRun } from "@/lib/investigations";
 import { AutoRefresh } from "./auto-refresh";
 
@@ -21,9 +26,10 @@ export default async function InvestigationPage({
 }: {
   params: Promise<{ storyId: string }>;
 }) {
-  const storyId = Number((await params).storyId);
-  if (!Number.isInteger(storyId) || storyId <= 0) notFound();
+  const parsed = storyIdSchema.safeParse((await params).storyId);
+  if (!parsed.success) notFound();
 
+  const storyId = parsed.data;
   const run = getInvestigation(storyId);
 
   return (
@@ -109,14 +115,11 @@ function Outcome({ run }: { run: InvestigationRun | undefined }) {
  */
 function Violations({ violations }: { violations: readonly CitationViolation[] }) {
   return (
-    <Alert heading="Relatório reprovado na checagem de citações">
-      <p className="text-base text-muted">
-        Citação que não fecha com o código é ruído com cara de fato. Nada disto
-        vai para o Azure DevOps — redispare a Investigação.
-      </p>
+    <Alert heading={REJECTED_HEADING}>
+      <p className="text-base text-muted">{REJECTED_BLURB}</p>
       <ul className="flex flex-col gap-2">
-        {violations.map((violation, index) => (
-          <li key={`${violation.citation.repo}:${violation.citation.path}:${index}`}>
+        {violations.map((violation) => (
+          <li key={`${violation.reason}:${violation.detail}:${violation.claim}`}>
             <span className="text-base">{violation.detail}</span>
             <br />
             <span className="text-sm text-muted">
@@ -140,10 +143,10 @@ function Report({
     <>
       <p className="text-lg">{report.summary}</p>
 
-      <Section id="gaps" heading="Furos da US">
+      <Section id="gaps" heading={REPORT_SECTIONS.gaps.heading}>
         <Items
           items={report.gaps}
-          empty="Nenhum furo aberto."
+          empty={REPORT_SECTIONS.gaps.empty}
           render={(gap) => (
             <>
               <strong className="font-medium">{gap.question}</strong> — {gap.why}
@@ -153,24 +156,26 @@ function Report({
         />
       </Section>
 
-      <Section id="impacts" heading="Impacto mapeado">
+      <Section id="impacts" heading={REPORT_SECTIONS.impacts.heading}>
         <p className="text-sm text-muted">
           {approved
-            ? "Toda afirmação abaixo passou pela checagem mecânica de citações."
-            : "Estas afirmações não passaram na checagem — leia como rascunho."}
+            ? REPORT_SECTIONS.impacts.verified
+            : REPORT_SECTIONS.impacts.rejected}
         </p>
         <Items
           items={report.impacts}
-          empty="Nenhum impacto ancorado no código."
+          empty={REPORT_SECTIONS.impacts.empty}
           keyOf={(impact) => impact.claim}
           render={(impact) => (
             <>
               {impact.claim}
               <ul className="mt-2 flex flex-col gap-1">
                 {impact.citations.map((citation) => (
-                  <li key={anchor(citation)} className="font-mono text-sm text-muted">
-                    {anchor(citation)}
-                    {citation.symbol === undefined ? "" : ` → ${citation.symbol}`}
+                  <li
+                    key={formatCitation(citation)}
+                    className="font-mono text-sm text-muted"
+                  >
+                    {formatCitation(citation)}
                   </li>
                 ))}
               </ul>
@@ -179,13 +184,11 @@ function Report({
         />
       </Section>
 
-      <Section id="external" heading="Impacto suspeito fora do config">
-        <p className="text-sm text-muted">
-          Repos que não estão na config da squad — ninguém leu o código deles.
-        </p>
+      <Section id="external" heading={REPORT_SECTIONS.externalRepos.heading}>
+        <p className="text-sm text-muted">{REPORT_SECTIONS.externalRepos.blurb}</p>
         <Items
           items={report.externalRepos}
-          empty="Nenhum."
+          empty={REPORT_SECTIONS.externalRepos.empty}
           keyOf={(external) => external.repo}
           render={(external) => (
             <>
@@ -196,13 +199,11 @@ function Report({
         />
       </Section>
 
-      <Section id="unverified" heading="Não verificado">
-        <p className="text-sm text-muted">
-          Hipóteses que o agente não conseguiu ancorar no código. Não são fato.
-        </p>
+      <Section id="unverified" heading={REPORT_SECTIONS.unverified.heading}>
+        <p className="text-sm text-muted">{REPORT_SECTIONS.unverified.blurb}</p>
         <Items
           items={report.unverified}
-          empty="Nada ficou sem âncora."
+          empty={REPORT_SECTIONS.unverified.empty}
           keyOf={(claim) => claim}
           render={(claim) => <>{claim}</>}
         />
@@ -235,10 +236,6 @@ function Items<T>({
       ))}
     </ul>
   );
-}
-
-function anchor(citation: Citation): string {
-  return `${citation.repo}:${citation.path}`;
 }
 
 function Alert({

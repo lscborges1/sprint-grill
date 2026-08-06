@@ -4,8 +4,12 @@ import type { StoryDetails } from "@sprint-griller/ado-client";
 import { ConfigError, loadAdoCredentials } from "@sprint-griller/core";
 import { runInvestigation } from "@sprint-griller/investigation";
 import type { InvestigationOutcome } from "@sprint-griller/investigation";
+import { z } from "zod";
 import { logger } from "./logger";
 import { getSquadConfig } from "./squad-config";
+
+/** Um id de US vem do formulário e da URL: os dois passam por aqui. */
+export const storyIdSchema = z.coerce.number().int().positive();
 
 interface RunBase {
   readonly storyId: number;

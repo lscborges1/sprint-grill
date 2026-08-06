@@ -7,6 +7,7 @@ export type ViolationReason =
   | "repo-fora-do-config"
   | "caminho-fora-do-repo"
   | "caminho-inexistente"
+  | "arquivo-ilegivel"
   | "simbolo-nao-encontrado";
 
 export interface CitationViolation {
@@ -82,7 +83,19 @@ function checkCitation(
     };
   }
 
-  if (citation.symbol !== undefined && !contains(file, citation.symbol)) {
+  if (citation.symbol === undefined) return undefined;
+
+  const contents = read(file);
+  if (contents === undefined) {
+    return {
+      reason: "arquivo-ilegivel",
+      detail:
+        `${citation.repo}: não foi possível ler "${citation.path}" para conferir ` +
+        `"${citation.symbol}". Confira as permissões do checkout local.`,
+    };
+  }
+
+  if (!contents.includes(citation.symbol)) {
     return {
       reason: "simbolo-nao-encontrado",
       detail:
@@ -110,13 +123,14 @@ function isFile(candidate: string): boolean {
 }
 
 /**
- * Símbolo é conferido como texto literal, não parseado: serve para qualquer
- * linguagem dos repos da squad e é o suficiente para pegar nome inventado.
+ * `undefined` é "não deu para ler", não "não achei": tratar os dois como o
+ * mesmo diria ao Operador que o agente inventou um símbolo quando o problema
+ * era permissão do arquivo.
  */
-function contains(file: string, symbol: string): boolean {
+function read(file: string): string | undefined {
   try {
-    return readFileSync(file, "utf8").includes(symbol);
+    return readFileSync(file, "utf8");
   } catch {
-    return false;
+    return undefined;
   }
 }

@@ -70,7 +70,7 @@ const FENCE = /```(?:json)?\s*\r?\n([\s\S]*?)```/g;
  * antes — por isso o último bloco vence, e o texto cru é o último recurso.
  */
 export function parseReport(text: string): ParsedReport {
-  const candidate = firstJsonCandidate(text);
+  const candidate = jsonCandidate(text);
   if (candidate === undefined) {
     return {
       ok: false,
@@ -92,7 +92,7 @@ export function parseReport(text: string): ParsedReport {
 }
 
 /** Blocos cercados do mais recente para o mais antigo; o texto inteiro por último. */
-function firstJsonCandidate(text: string): unknown {
+function jsonCandidate(text: string): unknown {
   const fences = [...text.matchAll(FENCE)].map((match) => match[1] ?? "").reverse();
 
   for (const source of [...fences, text]) {

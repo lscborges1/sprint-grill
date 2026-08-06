@@ -1,0 +1,298 @@
+<!doctype html>
+<!-- PROTÓTIPO DESCARTÁVEL — ticket 12 (.scratch/mvp-spec). Três variantes da UI de sessão, troca via barra flutuante ou ?variant=A|B|C. Não é código de produção. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PROTÓTIPO — UI de sessão · Sprint Griller</title>
+<style>
+  :root {
+    --ink: #16161a; --ink-2: #55555e; --ink-3: #8b8b95;
+    --paper: #fafaf8; --card: #ffffff; --line: #e7e7e2;
+    --accent: #2d5bff; --accent-ink: #fff;
+    --ok: #1a7f4b; --warn: #b0620c; --danger: #b3261e;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { background: var(--paper); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+  button { font: inherit; cursor: pointer; }
+  .fade-in { animation: fade .35s ease both; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* ---------- barra do protótipo ---------- */
+  #switcher {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 14px; z-index: 999;
+    background: #16161a; color: #fff; border-radius: 999px; padding: 8px 16px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.25); font-size: 13px; letter-spacing: .02em;
+  }
+  #switcher button { background: none; border: 0; color: #fff; font-size: 15px; padding: 2px 6px; }
+  #switcher .tag { color: #ffb84d; font-family: var(--mono); font-size: 11px; }
+
+  /* ============ VARIANTE A — PALCO ============ */
+  .va { min-height: 100vh; display: grid; grid-template-columns: 300px 1fr; }
+  .va-rail { border-right: 1px solid var(--line); background: var(--card); padding: 28px 24px; display: flex; flex-direction: column; gap: 20px; }
+  .va-rail h1 { font-size: 13px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  .va-us { font-family: var(--serif); font-size: 19px; line-height: 1.3; }
+  .va-us small { display: block; font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-bottom: 6px; }
+  .va-tree { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; flex: 1; }
+  .va-node { display: flex; gap: 10px; align-items: baseline; padding: 7px 10px; border-radius: 8px; font-size: 13.5px; line-height: 1.35; color: var(--ink-2); }
+  .va-node .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); position: relative; top: -1px; }
+  .va-node.open .dot { background: transparent; border: 1.5px solid var(--ink-3); }
+  .va-node.current { background: #eef2ff; color: var(--ink); font-weight: 500; }
+  .va-node.current .dot { background: var(--accent); border: 0; }
+  .va-gate { border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; color: var(--ink-2); display: flex; flex-direction: column; gap: 10px; }
+  .va-gate b { color: var(--warn); }
+  .va-stage { padding: 64px 9vw; display: flex; flex-direction: column; justify-content: center; gap: 34px; max-width: 1100px; }
+  .va-kicker { font-size: 13px; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  .va-q { font-family: var(--serif); font-size: clamp(30px, 3.6vw, 46px); line-height: 1.18; letter-spacing: -.01em; }
+  .va-rec { border-left: 3px solid var(--accent); padding: 4px 0 4px 20px; color: var(--ink-2); font-size: 17px; line-height: 1.55; max-width: 62ch; }
+  .va-rec b { color: var(--ink); }
+  .va-ev { font-size: 13.5px; color: var(--ink-3); }
+  .va-ev code { font-family: var(--mono); font-size: 12px; background: #f0f0ec; border-radius: 5px; padding: 2px 7px; color: var(--ink-2); }
+  .va-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+  .va-actions button { border-radius: 12px; padding: 14px 22px; font-size: 15.5px; border: 1px solid var(--line); background: var(--card); transition: all .15s ease; }
+  .va-actions button:hover { border-color: var(--ink); transform: translateY(-1px); }
+  .va-actions button.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .va-actions button.ghost { border-style: dashed; color: var(--ink-3); }
+
+  /* ============ VARIANTE B — DOSSIÊ ============ */
+  .vb { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(380px, 1fr); }
+  .vb-doc { padding: 56px 5vw 120px; overflow-y: auto; max-height: 100vh; }
+  .vb-doc header { margin-bottom: 40px; }
+  .vb-doc header small { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .vb-doc header h1 { font-family: var(--serif); font-size: 34px; letter-spacing: -.01em; margin-top: 6px; }
+  .vb-meta { display: flex; gap: 22px; margin-top: 14px; font-size: 13px; color: var(--ink-2); }
+  .vb-meta b { font-weight: 600; }
+  .vb-sec { margin-top: 34px; }
+  .vb-sec h2 { font-size: 12.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px; }
+  .vb-dec { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin-bottom: 10px; }
+  .vb-dec .q { font-size: 14px; color: var(--ink-3); margin-bottom: 5px; }
+  .vb-dec .a { font-size: 15.5px; line-height: 1.5; }
+  .vb-dec .who { font-size: 12px; color: var(--ink-3); margin-top: 8px; font-family: var(--mono); }
+  .vb-dec.pending { border-style: dashed; color: var(--ink-3); background: transparent; }
+  .vb-imp li { font-size: 15px; line-height: 1.6; color: var(--ink-2); margin: 0 0 8px 18px; }
+  .vb-imp code { font-family: var(--mono); font-size: 12.5px; background: #f0f0ec; border-radius: 5px; padding: 1px 6px; }
+  .vb-unv { border-left: 3px solid var(--warn); padding-left: 14px; font-size: 14.5px; color: var(--ink-2); line-height: 1.6; }
+  .vb-live { border-left: 1px solid var(--line); background: var(--card); max-height: 100vh; position: sticky; top: 0; display: flex; flex-direction: column; }
+  .vb-live-head { padding: 22px 30px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  .vb-live-head span { font-size: 12.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  .vb-live-head em { font-size: 12.5px; color: var(--ink-3); font-style: normal; }
+  .vb-live-body { padding: 36px 30px; display: flex; flex-direction: column; gap: 22px; flex: 1; overflow-y: auto; }
+  .vb-q { font-family: var(--serif); font-size: 24px; line-height: 1.3; }
+  .vb-rec { font-size: 14.5px; line-height: 1.6; color: var(--ink-2); background: #f5f6ff; border-radius: 12px; padding: 14px 16px; }
+  .vb-rec b { color: var(--ink); }
+  .vb-ev { font-size: 12.5px; color: var(--ink-3); }
+  .vb-ev code { font-family: var(--mono); font-size: 11.5px; background: #f0f0ec; border-radius: 5px; padding: 1px 6px; }
+  .vb-live-actions { display: flex; flex-direction: column; gap: 8px; }
+  .vb-live-actions button { text-align: left; border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 12px 14px; font-size: 14.5px; transition: border-color .15s; }
+  .vb-live-actions button:hover { border-color: var(--ink); }
+  .vb-live-actions button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .vb-live-foot { border-top: 1px solid var(--line); padding: 16px 30px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--ink-2); }
+  .vb-despejar { background: var(--accent); color: #fff; border: 0; border-radius: 999px; padding: 10px 20px; font-size: 13.5px; }
+  .vb-despejar[data-warn="true"] { background: #f0f0ec; color: var(--ink-2); }
+
+  /* ============ VARIANTE C — TRILHA ============ */
+  .vc { min-height: 100vh; display: flex; flex-direction: column; background: #101014; color: #ecebe6; }
+  .vc-top { display: flex; align-items: center; gap: 26px; padding: 16px 4vw; border-bottom: 1px solid #26262c; position: sticky; top: 0; background: #101014; z-index: 5; }
+  .vc-top .us { font-size: 14.5px; }
+  .vc-top .us small { font-family: var(--mono); color: #74747e; display: block; font-size: 11px; }
+  .vc-prog { display: flex; gap: 5px; margin-left: auto; }
+  .vc-prog i { width: 22px; height: 5px; border-radius: 3px; background: #2ecc71; }
+  .vc-prog i.open { background: #34343c; }
+  .vc-prog i.current { background: var(--accent); }
+  .vc-gatebtn { border: 1px solid #34343c; background: transparent; color: #ecebe6; border-radius: 999px; padding: 8px 16px; font-size: 13px; }
+  .vc-feed { flex: 1; overflow-y: auto; padding: 40px 4vw 220px; display: flex; flex-direction: column; gap: 18px; max-width: 900px; width: 100%; margin: 0 auto; }
+  .vc-item { display: grid; grid-template-columns: 90px 1fr; gap: 22px; align-items: baseline; }
+  .vc-item time { font-family: var(--mono); font-size: 11.5px; color: #5c5c66; }
+  .vc-item .q { color: #9a9aa4; font-size: 14px; margin-bottom: 4px; }
+  .vc-item .a { font-size: 16px; line-height: 1.5; }
+  .vc-item .a b { color: #7fe0a7; font-weight: 500; }
+  .vc-item.fact .a { color: #9a9aa4; font-size: 14px; }
+  .vc-item.fact code { font-family: var(--mono); font-size: 12px; color: #c7c7ce; background: #1c1c22; padding: 1px 7px; border-radius: 5px; }
+  .vc-now {
+    position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%);
+    width: min(860px, 92vw); background: #1a1a20; border: 1px solid #2e2e36;
+    border-radius: 18px; padding: 26px 28px; box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .vc-now .kicker { font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase; color: #7c9aff; font-weight: 600; }
+  .vc-now .q { font-family: var(--serif); font-size: 22px; line-height: 1.3; }
+  .vc-now .rec { font-size: 14px; color: #b9b9c2; line-height: 1.55; }
+  .vc-now .rec b { color: #ecebe6; }
+  .vc-now .ev { font-size: 12px; color: #74747e; font-family: var(--mono); }
+  .vc-now .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .vc-now button { border-radius: 10px; border: 1px solid #34343c; background: transparent; color: #ecebe6; padding: 10px 16px; font-size: 14px; }
+  .vc-now button.primary { background: #ecebe6; color: #101014; border-color: #ecebe6; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<div id="switcher">
+  <span class="tag">PROTÓTIPO</span>
+  <button id="prev" title="anterior (←)">←</button>
+  <span id="vlabel"></span>
+  <button id="next" title="próxima (→)">→</button>
+</div>
+
+<script>
+/* Plano: três variantes da tela da cerimônia, trocáveis via ?variant=, num HTML único (o repo ainda não tem app — sub-shape B adaptada). */
+
+const MOCK = {
+  us: { id: "US 4312", title: "Parcelamento em até 12x no checkout", sprint: "Sprint 87", operador: "Lucas" },
+  investigacao: [
+    { txt: "O cálculo de cobrança assume pagamento à vista", ref: "payments-api/src/checkout/charge.ts:88" },
+    { txt: "O contrato de CreateOrder não tem campo de parcelas", ref: "orders-api/src/contracts/create-order.ts:31" },
+    { txt: "Webhook de conciliação ignora eventos parciais", ref: "finance-worker/src/webhooks/settlement.ts:112" },
+  ],
+  naoVerificado: "Possível impacto no repo do antifraude (fora dos repos configurados) — regra de score pode considerar valor total vs parcela.",
+  decididas: [
+    { q: "Juros: quem absorve?", a: "Repassado ao cliente a partir de 4x, tabela do gateway", who: "Marina (PO) · 10:04" },
+    { q: "Parcela mínima?", a: "R$ 50 — abaixo disso o nº de parcelas é limitado", who: "Marina (PO) · 10:07" },
+    { q: "Pedido cancelado com parcela paga: estorno como?", a: "Estorno total imediato via gateway; conciliação trata como evento único", who: "Rafael + Marina · 10:12" },
+  ],
+  atual: {
+    q: "O contrato de CreateOrder ganha o campo de parcelas agora ou criamos um endpoint novo de cobrança?",
+    rec: "Estender CreateOrder com installments opcional — o endpoint é versionado e o consumidor único é o próprio checkout; endpoint novo dobraria a superfície de conciliação.",
+    ev: "orders-api/src/contracts/create-order.ts:31 · consumido apenas por web-checkout/src/api/order.ts:57",
+    opts: ["Estender CreateOrder (recomendado)", "Endpoint novo de cobrança", "Outra resposta…"],
+  },
+  abertas: ["Limite de parcelas por bandeira de cartão", "Exibição do valor total com juros no resumo"],
+};
+
+const el = (h) => { const t = document.createElement("template"); t.innerHTML = h.trim(); return t.content.firstChild; };
+const root = document.getElementById("root");
+
+/* ---------- Variante A — Palco ---------- */
+function renderA() {
+  const m = MOCK;
+  const tree = [
+    ...m.decididas.map(d => `<div class="va-node"><span class="dot"></span><span>${d.q}</span></div>`),
+    `<div class="va-node current"><span class="dot"></span><span>${m.atual.q}</span></div>`,
+    ...m.abertas.map(q => `<div class="va-node open"><span class="dot"></span><span>${q}</span></div>`),
+  ].join("");
+  return el(`
+  <div class="va fade-in">
+    <aside class="va-rail">
+      <div class="va-us"><small>${m.us.id} · ${m.us.sprint}</small>${m.us.title}</div>
+      <h1>Árvore de decisões</h1>
+      <div class="va-tree">${tree}</div>
+      <div class="va-gate">
+        <span><b>${m.abertas.length} dúvidas abertas</b> · 1 não verificado</span>
+        <span style="font-size:12px">O despejo mostra tudo isso antes de gravar no Azure DevOps.</span>
+      </div>
+    </aside>
+    <main class="va-stage">
+      <span class="va-kicker">Decisão 4 de 6 · squad + PO decidem</span>
+      <h1 class="va-q">${m.atual.q}</h1>
+      <p class="va-rec"><b>Recomendação do agente:</b> ${m.atual.rec}</p>
+      <p class="va-ev">Evidência: <code>${m.atual.ev.split(" · ")[0]}</code> &nbsp;<code>${m.atual.ev.split(" · ")[1]}</code></p>
+      <div class="va-actions">
+        <button class="primary">${m.atual.opts[0]}</button>
+        <button>${m.atual.opts[1]}</button>
+        <button class="ghost">${m.atual.opts[2]}</button>
+      </div>
+    </main>
+  </div>`);
+}
+
+/* ---------- Variante B — Dossiê ---------- */
+function renderB() {
+  const m = MOCK;
+  return el(`
+  <div class="vb fade-in">
+    <section class="vb-doc">
+      <header>
+        <small>${m.us.id} · ${m.us.sprint} · operador: ${m.us.operador}</small>
+        <h1>${m.us.title}</h1>
+        <div class="vb-meta"><span><b>${m.decididas.length}</b> decisões</span><span><b>${m.abertas.length + 1}</b> abertas</span><span><b>1</b> não verificado</span></div>
+      </header>
+      <div class="vb-sec">
+        <h2>Impacto mapeado pela Investigação</h2>
+        <ul class="vb-imp">${m.investigacao.map(i => `<li>${i.txt} — <code>${i.ref}</code></li>`).join("")}</ul>
+      </div>
+      <div class="vb-sec">
+        <h2>Não verificado</h2>
+        <p class="vb-unv">${m.naoVerificado}</p>
+      </div>
+      <div class="vb-sec">
+        <h2>Decisões registradas</h2>
+        ${m.decididas.map(d => `<div class="vb-dec"><div class="q">${d.q}</div><div class="a">${d.a}</div><div class="who">${d.who}</div></div>`).join("")}
+        ${m.abertas.map(q => `<div class="vb-dec pending"><div class="q">ainda aberta</div><div class="a">${q}</div></div>`).join("")}
+      </div>
+    </section>
+    <aside class="vb-live">
+      <div class="vb-live-head"><span>Em discussão</span><em>decisão 4 de 6</em></div>
+      <div class="vb-live-body">
+        <h2 class="vb-q">${m.atual.q}</h2>
+        <div class="vb-rec"><b>Recomendação:</b> ${m.atual.rec}</div>
+        <div class="vb-ev">Evidência: ${m.atual.ev.split(" · ").map(e => `<code>${e}</code>`).join(" ")}</div>
+        <div class="vb-live-actions">
+          <button class="primary">${m.atual.opts[0]}</button>
+          <button>${m.atual.opts[1]}</button>
+          <button>${m.atual.opts[2]}</button>
+        </div>
+      </div>
+      <div class="vb-live-foot">
+        <span>${m.abertas.length} dúvidas abertas · 1 não verificado</span>
+        <button class="vb-despejar" data-warn="true">Despejar no Azure DevOps</button>
+      </div>
+    </aside>
+  </div>`);
+}
+
+/* ---------- Variante C — Trilha ---------- */
+function renderC() {
+  const m = MOCK;
+  const prog = [...m.decididas.map(() => '<i></i>'), '<i class="current"></i>', ...m.abertas.map(() => '<i class="open"></i>')].join("");
+  return el(`
+  <div class="vc fade-in">
+    <div class="vc-top">
+      <div class="us"><small>${m.us.id} · ${m.us.sprint}</small>${m.us.title}</div>
+      <div class="vc-prog">${prog}</div>
+      <button class="vc-gatebtn">Despejo · ${m.abertas.length + 1} pendências</button>
+    </div>
+    <div class="vc-feed">
+      <div class="vc-item fact"><time>09:58</time><div class="a">Investigação: ${MOCK.investigacao.map(i => `${i.txt} <code>${i.ref}</code>`).join(" · ")}</div></div>
+      ${m.decididas.map((d, i) => `<div class="vc-item"><time>${d.who.split("· ")[1]}</time><div><div class="q">${d.q}</div><div class="a"><b>✓</b> ${d.a} <span style="color:#5c5c66;font-size:12.5px">— ${d.who.split(" ·")[0]}</span></div></div></div>`).join("")}
+      <div class="vc-item fact"><time>10:14</time><div class="a">Fato buscado ao vivo: CreateOrder é consumido só pelo checkout <code>web-checkout/src/api/order.ts:57</code></div></div>
+    </div>
+    <div class="vc-now">
+      <span class="kicker">Agora · decisão 4 de 6</span>
+      <div class="q">${m.atual.q}</div>
+      <div class="rec"><b>Recomendação:</b> ${m.atual.rec}</div>
+      <div class="ev">${m.atual.ev}</div>
+      <div class="row">
+        <button class="primary">${m.atual.opts[0]}</button>
+        <button>${m.atual.opts[1]}</button>
+        <button>${m.atual.opts[2]}</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+/* ---------- switcher ---------- */
+const VARIANTS = { A: { name: "Palco", render: renderA }, B: { name: "Dossiê", render: renderB }, C: { name: "Trilha", render: renderC } };
+const KEYS = Object.keys(VARIANTS);
+function current() { return new URLSearchParams(location.search).get("variant")?.toUpperCase() in VARIANTS ? new URLSearchParams(location.search).get("variant").toUpperCase() : "A"; }
+function show(k) {
+  history.replaceState(null, "", "?variant=" + k);
+  root.replaceChildren(VARIANTS[k].render());
+  document.getElementById("vlabel").textContent = `${k} — ${VARIANTS[k].name}`;
+}
+function cycle(d) { show(KEYS[(KEYS.indexOf(current()) + d + KEYS.length) % KEYS.length]); }
+document.getElementById("prev").onclick = () => cycle(-1);
+document.getElementById("next").onclick = () => cycle(1);
+document.addEventListener("keydown", (e) => {
+  if (["INPUT", "TEXTAREA"].includes(e.target.tagName) || e.target.isContentEditable) return;
+  if (e.key === "ArrowLeft") cycle(-1);
+  if (e.key === "ArrowRight") cycle(1);
+});
+show(current());
+</script>
+</body>
+</html>

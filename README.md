@@ -38,13 +38,14 @@ O caminho do arquivo de config pode ser trocado com `SPRINT_GRILLER_CONFIG`.
 ## Estrutura
 
 ```
-apps/web                  app Next.js (App Router): UI de sessão e rotas
+apps/web                  app Next.js (App Router): picker, UI de sessão e rotas
 packages/core             config da squad (zod) e logging estruturado
+packages/ado-client       fronteira do Azure DevOps (REST tipado com zod)
 packages/agent-runtime    cliente do `codex app-server` (streaming, HITL, resume)
 docs/adr                  decisões de arquitetura difíceis de reverter
 ```
 
-Módulo previsto pela spec e ainda não escrito: `ado-client` (única porta de escrita no ADO).
+As duas fronteiras onde vivem os logs estruturados e os testes de comportamento são `ado-client` e `agent-runtime`.
 
 ### Rodar o agente
 
@@ -56,3 +57,14 @@ pnpm --filter @sprint-griller/agent-runtime harness --resume <sessionId> "e o qu
 ```
 
 O harness mostra o turno streamando, pergunta no terminal quando o agente pede input, e imprime o id da sessão para retomar depois.
+
+## Status de refinamento no picker
+
+A tela inicial lista as US da iteration atual e mostra em que ponto do fluxo cada uma está — **sem Investigação**, **investigada** ou **refinada**. Não existe banco de status: o `ado-client` procura marcadores HTML que a própria ferramenta embute nos artefatos que grava no Azure DevOps.
+
+| Marcador | Artefato que o carrega | Status resultante |
+|---|---|---|
+| `<!-- sprint-griller:investigacao -->` | Investigação publicada como comment na US | investigada |
+| `<!-- sprint-griller:spec -->` | Spec da US gravada pelo despejo (comment ou description) | refinada |
+
+Quem grava um artefato novo precisa embutir o marcador correspondente (`INVESTIGATION_MARKER` / `SPEC_MARKER`, exportados por `@sprint-griller/ado-client`) — é o que fecha o ciclo entre despejo e picker.

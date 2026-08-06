@@ -1,0 +1,39 @@
+/**
+ * Onde a US está no fluxo de refinamento. Não é estado nosso: cada valor é
+ * apenas o nome do artefato mais avançado que a ferramenta já gravou no ADO
+ * (ADR 0003 — o Azure DevOps é a fonte da verdade).
+ */
+export type RefinementStatus = "sem-investigacao" | "investigada" | "refinada";
+
+/**
+ * Marcador que o `ado-client` embute na Investigação publicada como comment na
+ * US. Invisível para quem lê no ADO (comment HTML) e o suficiente para o picker
+ * inferir o status sem manter banco próprio.
+ */
+export const INVESTIGATION_MARKER = "<!-- sprint-griller:investigacao -->";
+
+/**
+ * Marcador da Spec da US gravada pelo despejo. Procurado também na description
+ * porque a Spec pode viver no corpo da US, não só como comment.
+ */
+export const SPEC_MARKER = "<!-- sprint-griller:spec -->";
+
+/** Textos da US que podem carregar artefatos da ferramenta. */
+export interface WorkItemArtifacts {
+  readonly description: string | undefined;
+  readonly comments: readonly string[];
+}
+
+export function inferRefinementStatus(
+  artifacts: WorkItemArtifacts,
+): RefinementStatus {
+  if (hasMarker(artifacts, SPEC_MARKER)) return "refinada";
+  if (hasMarker(artifacts, INVESTIGATION_MARKER)) return "investigada";
+  return "sem-investigacao";
+}
+
+function hasMarker(artifacts: WorkItemArtifacts, marker: string): boolean {
+  return [artifacts.description ?? "", ...artifacts.comments].some((text) =>
+    text.includes(marker),
+  );
+}

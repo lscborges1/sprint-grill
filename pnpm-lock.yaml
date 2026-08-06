@@ -20,6 +20,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@sprint-griller/ado-client':
+        specifier: workspace:*
+        version: link:../../packages/ado-client
       '@sprint-griller/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -57,6 +60,28 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
+  packages/ado-client:
+    dependencies:
+      '@sprint-griller/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.39.1
+        version: 9.39.5
+      eslint:
+        specifier: ^9.39.1
+        version: 9.39.5(jiti@2.7.0)(supports-color@7.2.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.66.0
+        version: 8.66.0(eslint@9.39.5(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
 
   packages/core:
     dependencies:

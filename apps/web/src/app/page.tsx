@@ -1,42 +1,61 @@
+import type {
+  CurrentIteration,
+  IterationStory,
+  RefinementStatus,
+} from "@sprint-griller/ado-client";
 import type { RepoConfig } from "@sprint-griller/core";
+import { loadCurrentIteration } from "@/lib/current-iteration";
+import type { CurrentIterationResult } from "@/lib/current-iteration";
 import { getSquadConfig } from "@/lib/squad-config";
 
-// A config é lida do disco a cada request; nada aqui é pré-renderizável.
+// A iteration é lida do Azure DevOps a cada request; nada aqui é pré-renderizável.
 export const dynamic = "force-dynamic";
 
-export default function Home() {
+/**
+ * Os três estados do refinamento. Cada um tem rótulo próprio — quem distingue
+ * cor não é o único a diferenciá-los.
+ */
+const REFINEMENT_BADGE = {
+  "sem-investigacao": {
+    label: "Sem investigação",
+    className: "border-line text-muted",
+  },
+  investigada: {
+    label: "Investigada",
+    className:
+      "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  },
+  refinada: {
+    label: "Refinada",
+    className:
+      "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-300",
+  },
+} satisfies Record<
+  RefinementStatus,
+  { readonly label: string; readonly className: string }
+>;
+
+export default async function Home() {
   const { azureDevOps, repos } = getSquadConfig();
+  const result = await loadCurrentIteration();
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-14 px-8 py-20">
       <header className="flex flex-col gap-3">
         <h1 className="text-4xl font-semibold tracking-tight">Sprint Griller</h1>
         <p className="text-lg text-muted">
-          Config da squad carregada. Definida uma vez — nenhuma cerimônia começa
-          escolhendo repositório.
+          As US da iteration atual de {azureDevOps.project}. O status vem dos
+          artefatos no Azure DevOps — a ferramenta não guarda estado próprio.
         </p>
       </header>
 
-      <section className="flex flex-col gap-5" aria-labelledby="ado-heading">
-        <h2
-          id="ado-heading"
-          className="text-xs font-medium uppercase tracking-[0.18em] text-muted"
-        >
-          Azure DevOps
-        </h2>
+      <Iteration result={result} />
+
+      <Section id="squad" heading="Config da squad">
         <dl className="grid gap-6 sm:grid-cols-2">
           <Field label="Organização" value={azureDevOps.organization} />
           <Field label="Projeto" value={azureDevOps.project} />
         </dl>
-      </section>
-
-      <section className="flex flex-col gap-5" aria-labelledby="repos-heading">
-        <h2
-          id="repos-heading"
-          className="text-xs font-medium uppercase tracking-[0.18em] text-muted"
-        >
-          Repos da squad
-        </h2>
         <ul className="flex flex-col gap-3">
           <RepoRow repo={repos.primary} role="principal" />
           {repos.related.map((repo) => (
@@ -49,8 +68,121 @@ export default function Home() {
             principal.
           </p>
         )}
-      </section>
+      </Section>
     </main>
+  );
+}
+
+function Iteration({ result }: { result: CurrentIterationResult }) {
+  if (result.status === "error") {
+    return (
+      <Section id="iteration" heading="Iteration atual">
+        <AdoFailure message={result.message} />
+      </Section>
+    );
+  }
+
+  if (!result.iteration) {
+    return (
+      <Section id="iteration" heading="Iteration atual">
+        <p className="text-lg text-muted">
+          Nenhuma iteration corrente no Azure DevOps. Abra a sprint no board e
+          recarregue esta tela.
+        </p>
+      </Section>
+    );
+  }
+
+  return (
+    <Section id="iteration" heading={result.iteration.name}>
+      <Stories iteration={result.iteration} />
+    </Section>
+  );
+}
+
+function Stories({ iteration }: { iteration: CurrentIteration }) {
+  if (iteration.stories.length === 0) {
+    return (
+      <p className="text-lg text-muted">
+        A iteration {iteration.name} ainda não tem nenhuma US — só tasks, ou
+        nada.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="flex flex-col gap-3">
+      {iteration.stories.map((story) => (
+        <StoryRow key={story.id} story={story} />
+      ))}
+    </ul>
+  );
+}
+
+function StoryRow({ story }: { story: IterationStory }) {
+  const badge = REFINEMENT_BADGE[story.refinement];
+
+  return (
+    <li>
+      <a
+        href={story.url}
+        target="_blank"
+        rel="noreferrer"
+        className="flex flex-col gap-3 rounded-lg border border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6"
+      >
+        <span className="flex flex-col gap-1">
+          <span className="text-xl font-medium tracking-tight">
+            {story.title}
+          </span>
+          <span className="text-sm text-muted">
+            #{story.id} · {story.type} · {story.state}
+            {story.assignedTo === undefined ? "" : ` · ${story.assignedTo}`}
+          </span>
+        </span>
+        <span
+          className={`shrink-0 self-start rounded-full border px-3 py-1 text-xs font-medium uppercase tracking-[0.14em] ${badge.className}`}
+        >
+          {badge.label}
+        </span>
+      </a>
+    </li>
+  );
+}
+
+/** Falha de conexão/auth com o ADO é conteúdo da tela, não tela quebrada. */
+function AdoFailure({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-2 rounded-lg border border-red-600/50 bg-red-600/5 px-5 py-4"
+    >
+      <p className="text-lg font-medium tracking-tight">
+        Não deu para ler o Azure DevOps
+      </p>
+      <p className="text-base text-muted">{message}</p>
+    </div>
+  );
+}
+
+function Section({
+  id,
+  heading,
+  children,
+}: {
+  id: string;
+  heading: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-5" aria-labelledby={`${id}-heading`}>
+      <h2
+        id={`${id}-heading`}
+        className="text-xs font-medium uppercase tracking-[0.18em] text-muted"
+      >
+        {heading}
+      </h2>
+      {children}
+    </section>
   );
 }
 

@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // `@sprint-griller/core` é consumido como TypeScript direto do monorepo.
-  transpilePackages: ["@sprint-griller/core"],
+  // Os pacotes do monorepo são consumidos como TypeScript direto.
+  transpilePackages: ["@sprint-griller/ado-client", "@sprint-griller/core"],
   // As instruções para agentes deste repo vivem na raiz, não em arquivos
   // gerados a cada `next dev`.
   agentRules: false,

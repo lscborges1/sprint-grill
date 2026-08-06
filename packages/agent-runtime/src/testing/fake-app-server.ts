@@ -8,7 +8,8 @@ import type { Logger } from "@sprint-griller/core";
 
 /** Roteiro do app-server falso. Ver `app-server-process.mjs` para o formato. */
 export interface FakeScript {
-  readonly reactions: Readonly<Record<string, FakeReaction>>;
+  /** Uma reação por método — ou uma lista, respondendo na ordem das chamadas (a última repete). */
+  readonly reactions: Readonly<Record<string, FakeReaction | readonly FakeReaction[]>>;
 }
 
 export interface FakeReaction {

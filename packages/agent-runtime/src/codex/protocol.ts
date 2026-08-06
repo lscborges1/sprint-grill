@@ -62,13 +62,20 @@ export const threadResponseSchema = z.object({ thread: z.object({ id: z.string()
 
 export const turnStartResponseSchema = z.object({ turn: z.object({ id: z.string() }) });
 
+/**
+ * Todo evento de turno vem carimbado com o turno de origem, e é isso que separa
+ * o turno corrente do rastro de um turno abandonado. `turn/completed` é a
+ * exceção: lá o id mora em `turn.id`.
+ */
 export const agentMessageDeltaSchema = z.object({
   threadId: z.string(),
+  turnId: z.string(),
   delta: z.string(),
 });
 
 export const itemCompletedSchema = z.object({
   threadId: z.string(),
+  turnId: z.string(),
   item: z.object({ type: z.string(), text: z.string().optional() }),
 });
 
@@ -84,6 +91,7 @@ export const turnCompletedSchema = z.object({
 
 export const errorNotificationSchema = z.object({
   threadId: z.string(),
+  turnId: z.string(),
   error: z.object({ message: z.string() }),
   willRetry: z.boolean(),
 });
@@ -93,6 +101,7 @@ const questionOptionSchema = z.object({ label: z.string(), description: z.string
 /** `item/tool/requestUserInput` — experimental, pode não existir na versão instalada. */
 export const requestUserInputParamsSchema = z.object({
   threadId: z.string(),
+  turnId: z.string(),
   questions: z
     .array(
       z.object({
@@ -109,6 +118,7 @@ export const requestUserInputParamsSchema = z.object({
 /** `item/tool/call` — a chamada da nossa `ask_operator`. */
 export const dynamicToolCallParamsSchema = z.object({
   threadId: z.string(),
+  turnId: z.string(),
   tool: z.string(),
   arguments: z.unknown(),
 });
@@ -143,6 +153,7 @@ export const askOperatorArgumentsSchema = z.object({
 /** Serve tanto para `item/commandExecution/requestApproval` quanto para o de arquivo. */
 export const approvalParamsSchema = z.object({
   threadId: z.string(),
+  turnId: z.string(),
   command: z.string().nullish(),
   reason: z.string().nullish(),
   grantRoot: z.string().nullish(),

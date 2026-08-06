@@ -78,7 +78,10 @@ export interface AgentSession {
    * chegam como eventos e são respondidas de dentro do próprio `for await`.
    */
   send(prompt: string): AsyncIterable<AgentEvent>;
-  /** Aborta o turno em andamento. Sem turno em andamento, não faz nada. */
+  /**
+   * Aborta o turno em andamento. Resolve quando o app-server aceita a interrupção;
+   * se o turno ainda está iniciando, espera o ID dele. Sem turno, não faz nada.
+   */
   interrupt(): Promise<void>;
 }
 

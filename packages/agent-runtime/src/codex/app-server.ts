@@ -93,6 +93,19 @@ export async function connectAppServer(
     });
   }
 
+  /**
+   * Responder é fire-and-forget e sai de dentro do handler de linha do stdout:
+   * um throw aqui viraria exceção não tratada no host. Se o processo já morreu
+   * não há mais para quem responder — registrar basta.
+   */
+  function reply(id: RequestId, payload: Record<string, unknown>): void {
+    try {
+      send({ id, ...payload });
+    } catch (error) {
+      logger.warn({ requestId: id, err: error }, "resposta ao app-server descartada");
+    }
+  }
+
   function handleMessage(line: string): void {
     let message: IncomingMessage | null;
     try {
@@ -176,10 +189,10 @@ export async function connectAppServer(
   const client: AppServerClient = {
     request,
     respond(id, result) {
-      send({ id, result });
+      reply(id, { result });
     },
     respondError(id, message) {
-      send({ id, error: { code: METHOD_NOT_FOUND, message } });
+      reply(id, { error: { code: METHOD_NOT_FOUND, message } });
     },
     async close() {
       if (closing || hasExited) return;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAgentRuntime } from "./runtime";
-import type { FakeEmission, FakeScript } from "./testing/fake-app-server";
+import type { FakeEmission, FakeReaction, FakeScript } from "./testing/fake-app-server";
 import {
   createTestLogger,
   fakeAppServerCommand,
@@ -11,6 +11,7 @@ import type { AgentEvent } from "./types";
 
 const THREAD_ID = "thread-1";
 const TURN_ID = "turn-1";
+const NEXT_TURN_ID = "turn-2";
 
 function notify(method: string, params: Record<string, unknown>): FakeEmission {
   return { notify: { method, params: { threadId: THREAD_ID, turnId: TURN_ID, ...params } } };
@@ -24,13 +25,34 @@ const turnCompleted = notify("turn/completed", {
   turn: { id: TURN_ID, status: "completed", durationMs: 42 },
 });
 
-function scriptWith(emit: readonly FakeEmission[]): FakeScript {
+function scriptWith(
+  emit: readonly FakeEmission[],
+  interruptEmit: readonly FakeEmission[] = [],
+): FakeScript {
   return {
     reactions: {
       "thread/start": { result: { thread: { id: THREAD_ID } } },
       "thread/resume": { result: { thread: { id: THREAD_ID } } },
       "turn/start": { result: { turn: { id: TURN_ID } }, emit },
-      "turn/interrupt": { result: {} },
+      "turn/interrupt": { result: {}, emit: interruptEmit },
+    },
+  };
+}
+
+/** Dois turnos na mesma sessão, com ids distintos — como o codex os gera. */
+function twoTurnScript(
+  first: readonly FakeEmission[],
+  second: readonly FakeEmission[],
+  interrupt: FakeReaction,
+): FakeScript {
+  return {
+    reactions: {
+      "thread/start": { result: { thread: { id: THREAD_ID } } },
+      "turn/start": [
+        { result: { turn: { id: TURN_ID } }, emit: first },
+        { result: { turn: { id: NEXT_TURN_ID } }, emit: second },
+      ],
+      "turn/interrupt": interrupt,
     },
   };
 }
@@ -316,12 +338,38 @@ describe("createAgentRuntime", () => {
 
   it("should interrupt the running turn", async () => {
     const transcript = transcriptPath();
-    const { runtime } = await runtimeWith(scriptWith([turnCompleted]), transcript);
+    const { runtime } = await runtimeWith(
+      scriptWith([notify("item/agentMessage/delta", { delta: "em andamento" })]),
+      transcript,
+    );
     const session = await runtime.startSession();
 
     const running = session.send("investigue");
     const iterator = running[Symbol.asyncIterator]();
     await iterator.next();
+    await session.interrupt();
+
+    await iterator.return?.(undefined);
+    expect(
+      readTranscript(transcript).filter((message) => message.method === "turn/interrupt"),
+    ).toEqual([
+      expect.objectContaining({
+        params: { threadId: THREAD_ID, turnId: TURN_ID },
+      }),
+    ]);
+    await runtime.close();
+  });
+
+  it("should interrupt when cancellation is requested before turn/start returns", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([], [notify("turn/completed", { turn: { id: TURN_ID, status: "interrupted" } })]),
+      transcript,
+    );
+    const session = await runtime.startSession();
+
+    const iterator = session.send("investigue")[Symbol.asyncIterator]();
+    const firstEvent = iterator.next();
     await session.interrupt();
 
     expect(readTranscript(transcript)).toContainEqual(
@@ -330,8 +378,132 @@ describe("createAgentRuntime", () => {
         params: { threadId: THREAD_ID, turnId: TURN_ID },
       }),
     );
+    await expect(firstEvent).resolves.toMatchObject({
+      value: { type: "turn-completed", turn: { status: "interrupted" } },
+    });
 
-    await iterator.return?.(undefined);
+    await runtime.close();
+  });
+
+  it("should interrupt an abandoned turn before starting the next one", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      twoTurnScript(
+        [notify("item/agentMessage/delta", { delta: "em andamento" })],
+        [notify("item/agentMessage/delta", { turnId: NEXT_TURN_ID, delta: "em andamento" })],
+        { result: {} },
+      ),
+      transcript,
+    );
+    const session = await runtime.startSession();
+
+    const first = session.send("primeiro")[Symbol.asyncIterator]();
+    await first.next();
+    await first.return?.(undefined);
+
+    const second = session.send("segundo")[Symbol.asyncIterator]();
+    await second.next();
+    await second.return?.(undefined);
+
+    expect(
+      readTranscript(transcript)
+        .map((message) => message.method)
+        .filter((method) => method === "turn/start" || method === "turn/interrupt"),
+    ).toEqual(["turn/start", "turn/interrupt", "turn/start", "turn/interrupt"]);
+
+    await runtime.close();
+  });
+
+  it("should release an abandoned turn when its interrupt fails", async () => {
+    const { runtime } = await runtimeWith(
+      twoTurnScript(
+        [notify("item/agentMessage/delta", { delta: "em andamento" })],
+        [notify("item/agentMessage/delta", { turnId: NEXT_TURN_ID, delta: "em andamento" })],
+        { error: { message: "interrupção indisponível" } },
+      ),
+    );
+    const session = await runtime.startSession();
+
+    const first = session.send("primeiro")[Symbol.asyncIterator]();
+    await first.next();
+    await expect(first.return!(undefined)).rejects.toThrowError(/interrupção indisponível/);
+
+    const second = session.send("segundo")[Symbol.asyncIterator]();
+    await expect(second.next()).resolves.toMatchObject({
+      value: { type: "message-delta", text: "em andamento" },
+    });
+    await expect(second.return!(undefined)).rejects.toThrowError(/interrupção indisponível/);
+
+    await runtime.close();
+  });
+
+  it("should ignore a turn/completed that arrives late from an abandoned turn", async () => {
+    const { runtime } = await runtimeWith(
+      twoTurnScript(
+        [notify("item/agentMessage/delta", { delta: "em andamento" })],
+        [
+          // Rastro do turno abandonado: o codex só o conclui depois que o
+          // próximo já começou.
+          notify("turn/completed", { turn: { id: TURN_ID, status: "interrupted" } }),
+          notify("item/completed", {
+            turnId: NEXT_TURN_ID,
+            item: { type: "agentMessage", text: "segundo" },
+          }),
+          notify("turn/completed", {
+            turnId: NEXT_TURN_ID,
+            turn: { id: NEXT_TURN_ID, status: "completed", durationMs: 7 },
+          }),
+        ],
+        { result: {} },
+      ),
+    );
+    const session = await runtime.startSession();
+
+    const first = session.send("primeiro")[Symbol.asyncIterator]();
+    await first.next();
+    await first.return?.(undefined);
+
+    const events = await drain(session.send("segundo"));
+
+    expect(events).toEqual([
+      { type: "message", text: "segundo" },
+      { type: "turn-completed", turn: { id: NEXT_TURN_ID, status: "completed", durationMs: 7 } },
+    ]);
+    await runtime.close();
+  });
+
+  it("should ignore an error that arrives late from an abandoned turn", async () => {
+    const { runtime } = await runtimeWith(
+      twoTurnScript(
+        [notify("item/agentMessage/delta", { delta: "em andamento" })],
+        [
+          notify("error", {
+            turnId: TURN_ID,
+            error: { message: "modelo indisponível" },
+            willRetry: false,
+          }),
+          notify("item/completed", {
+            turnId: NEXT_TURN_ID,
+            item: { type: "agentMessage", text: "segundo" },
+          }),
+          notify("turn/completed", {
+            turnId: NEXT_TURN_ID,
+            turn: { id: NEXT_TURN_ID, status: "completed", durationMs: 7 },
+          }),
+        ],
+        // A interrupção falhar é o que solta a sessão com o turno anterior vivo.
+        { error: { message: "interrupção indisponível" } },
+      ),
+    );
+    const session = await runtime.startSession();
+
+    const first = session.send("primeiro")[Symbol.asyncIterator]();
+    await first.next();
+    await expect(first.return!(undefined)).rejects.toThrowError(/interrupção indisponível/);
+
+    const events = await drain(session.send("segundo"));
+
+    expect(events.map((event) => event.type)).toEqual(["message", "turn-completed"]);
     await runtime.close();
   });
 
@@ -374,7 +546,7 @@ describe("createAgentRuntime", () => {
       if (event.type === "question") break;
     }
 
-    expect(responsesIn(transcript)).toContainEqual({ answers: {} });
+    await expect.poll(() => responsesIn(transcript)).toContainEqual({ answers: {} });
     await runtime.close();
   });
 

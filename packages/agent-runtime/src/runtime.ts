@@ -53,13 +53,26 @@ interface ActiveTurn {
   readonly queue: EventQueue<AgentEvent>;
   readonly pending: Map<RequestId, PendingHumanRequest>;
   readonly logger: Logger;
+  readonly turnIdReady: Promise<string | null>;
+  readonly resolveTurnId: (turnId: string | null) => void;
   turnId: string | null;
+  terminal: boolean;
+  interrupted: boolean;
+  interrupting: Promise<void> | null;
 }
 
 interface SessionState {
   readonly id: string;
   readonly logger: Logger;
   activeTurn: ActiveTurn | null;
+  /**
+   * Turnos largados sem `turn/completed` — a interrupção pode ter falhado, ou o
+   * codex ainda não a processou. Enquanto o id estiver aqui, o que chegar por
+   * ele é rastro do turno velho, não do turno da vez (que talvez ainda nem saiba
+   * o próprio id). Ids de turno são únicos por turno (UUIDv7 do codex), então
+   * marcar um id nunca cala o turno seguinte.
+   */
+  readonly abandonedTurnIds: Set<string>;
 }
 
 /**
@@ -99,8 +112,28 @@ export async function createAgentRuntime(
     );
   }
 
-  function activeTurnOf(threadId: string): ActiveTurn | null {
-    return sessions.get(threadId)?.activeTurn ?? null;
+  /**
+   * O turno da vez, se o evento for mesmo dele. `threadId` sozinho não basta: a
+   * thread sobrevive ao turno, então um evento atrasado terminaria ou quebraria
+   * o turno seguinte.
+   */
+  function activeTurnOf(threadId: string, turnId: string): ActiveTurn | null {
+    const session = sessions.get(threadId);
+    const active = session?.activeTurn;
+    if (!active) return null;
+
+    // `active.turnId` nulo é a janela entre registrar o turno e o `turn/start`
+    // responder: aí quem separa os dois é a lista de abandonados.
+    const current = active.turnId === null || active.turnId === turnId;
+    if (current && !session.abandonedTurnIds.has(turnId)) return active;
+
+    session.logger.debug({ turnId, activeTurnId: active.turnId }, "evento de outro turno descartado");
+    return null;
+  }
+
+  /** O turno abandonado morreu de fato: o rastro dele acabou aqui. */
+  function forgetAbandonedTurn(threadId: string, turnId: string): void {
+    sessions.get(threadId)?.abandonedTurnIds.delete(turnId);
   }
 
   function handleNotification(method: string, params: unknown): void {
@@ -108,7 +141,7 @@ export async function createAgentRuntime(
       case "item/agentMessage/delta": {
         const parsed = agentMessageDeltaSchema.safeParse(params);
         if (!parsed.success) return dropped(method, params);
-        activeTurnOf(parsed.data.threadId)?.queue.push({
+        activeTurnOf(parsed.data.threadId, parsed.data.turnId)?.queue.push({
           type: "message-delta",
           text: parsed.data.delta,
         });
@@ -121,7 +154,7 @@ export async function createAgentRuntime(
         // Comandos, tool calls e reasoning viram evento na UI de sessão (LSC-58);
         // aqui o stream é só a conversa.
         if (parsed.data.item.type !== "agentMessage") return;
-        const active = activeTurnOf(parsed.data.threadId);
+        const active = activeTurnOf(parsed.data.threadId, parsed.data.turnId);
         const text = parsed.data.item.text ?? "";
         active?.logger.debug({ length: text.length }, "mensagem do agente concluída");
         active?.queue.push({ type: "message", text });
@@ -132,8 +165,12 @@ export async function createAgentRuntime(
         const parsed = turnCompletedSchema.safeParse(params);
         if (!parsed.success) return dropped(method, params);
         const { turn } = parsed.data;
-        const active = activeTurnOf(parsed.data.threadId);
-        if (!active || turn.status === "inProgress") return;
+        if (turn.status === "inProgress") return;
+
+        // O id do turno aqui vem em `turn.id`, não no `turnId` das demais.
+        const active = activeTurnOf(parsed.data.threadId, turn.id);
+        forgetAbandonedTurn(parsed.data.threadId, turn.id);
+        if (!active) return;
 
         if (turn.status === "failed") {
           finishWithFailure(active, new AgentRuntimeError(turn.error?.message ?? "turno falhou."));
@@ -144,6 +181,7 @@ export async function createAgentRuntime(
           { turnId: turn.id, status: turn.status, durationMs: turn.durationMs },
           "turno concluído",
         );
+        active.terminal = true;
         active.queue.push({
           type: "turn-completed",
           turn: { id: turn.id, status: turn.status, durationMs: turn.durationMs ?? null },
@@ -155,7 +193,7 @@ export async function createAgentRuntime(
       case "error": {
         const parsed = errorNotificationSchema.safeParse(params);
         if (!parsed.success) return dropped(method, params);
-        const active = activeTurnOf(parsed.data.threadId);
+        const active = activeTurnOf(parsed.data.threadId, parsed.data.turnId);
         if (!active) return;
 
         // Com retry o codex continua sozinho: é aviso, não fim de turno.
@@ -175,6 +213,7 @@ export async function createAgentRuntime(
 
   function finishWithFailure(active: ActiveTurn, error: AgentRuntimeError): void {
     active.logger.error({ turnId: active.turnId, err: error }, "turno falhou");
+    active.terminal = true;
     active.queue.push({ type: "turn-failed", error });
     active.queue.finish();
   }
@@ -221,7 +260,7 @@ export async function createAgentRuntime(
       allowFreeText: question.isOther,
     }));
 
-    registerQuestion(request, parsed.data.threadId, questions, {
+    registerQuestion(request, parsed.data, questions, {
       reply: (answers) =>
         respond(request.id, {
           answers: Object.fromEntries(
@@ -261,7 +300,7 @@ export async function createAgentRuntime(
 
     const questions: AgentQuestion[] = args.data.questions;
 
-    registerQuestion(request, parsed.data.threadId, questions, {
+    registerQuestion(request, parsed.data, questions, {
       reply: (answers) => respond(request.id, toolAnswer(formatAnswers(questions, answers))),
       decline: () => respond(request.id, toolFailure("a sala não respondeu.")),
     });
@@ -269,11 +308,11 @@ export async function createAgentRuntime(
 
   function registerQuestion(
     request: ServerRequest,
-    threadId: string,
+    origin: { readonly threadId: string; readonly turnId: string },
     questions: readonly AgentQuestion[],
     handlers: QuestionHandlers,
   ): void {
-    const active = activeTurnOf(threadId);
+    const active = activeTurnOf(origin.threadId, origin.turnId);
     if (!active) {
       handlers.decline();
       return;
@@ -308,7 +347,7 @@ export async function createAgentRuntime(
     }
 
     const decline = (): void => respond(request.id, { decision: "decline" });
-    const active = activeTurnOf(parsed.data.threadId);
+    const active = activeTurnOf(parsed.data.threadId, parsed.data.turnId);
     if (!active) {
       decline();
       return;
@@ -346,6 +385,7 @@ export async function createAgentRuntime(
         finishWithFailure(active, error);
         continue;
       }
+      active.terminal = true;
       active.queue.finish();
     }
   }
@@ -363,6 +403,7 @@ export async function createAgentRuntime(
       id: threadId,
       logger: logger.child({ sessionId: threadId }),
       activeTurn: null,
+      abandonedTurnIds: new Set(),
     };
     sessions.set(threadId, state);
 
@@ -379,6 +420,10 @@ export async function createAgentRuntime(
           pending: new Map(),
           logger: state.logger,
           turnId: null,
+          terminal: false,
+          interrupted: false,
+          interrupting: null,
+          ...createTurnIdWaiter(),
         };
         // Registrado antes do `turn/start` porque as notificações do turno podem
         // chegar antes da resposta dele.
@@ -396,23 +441,65 @@ export async function createAgentRuntime(
           }
 
           active.turnId = started.data.turn.id;
+          active.resolveTurnId(active.turnId);
           state.logger.info({ turnId: active.turnId }, "turno iniciado");
 
           yield* active.queue.stream();
+        } catch (error) {
+          active.resolveTurnId(null);
+          throw error;
         } finally {
-          declinePending(active);
-          state.activeTurn = null;
+          try {
+            if (active.turnId !== null && !active.terminal) {
+              await interruptTurn(active, threadId);
+            }
+          } finally {
+            // Interrompido ou não, o turno só está calado quando o
+            // `turn/completed` dele chega — até lá o id fica marcado para o que
+            // ele ainda emitir não cair no turno seguinte.
+            if (active.turnId !== null && !active.terminal) {
+              state.abandonedTurnIds.add(active.turnId);
+            }
+            declinePending(active);
+            if (state.activeTurn === active) state.activeTurn = null;
+          }
         }
       },
 
       async interrupt(): Promise<void> {
-        const turnId = state.activeTurn?.turnId;
-        if (turnId === undefined || turnId === null) return;
+        const active = state.activeTurn;
+        if (!active) return;
 
-        await callAppServer("turn/interrupt", { threadId, turnId });
-        state.logger.info({ turnId }, "turno interrompido");
+        await interruptTurn(active, threadId);
       },
     };
+  }
+
+  function createTurnIdWaiter(): Pick<ActiveTurn, "turnIdReady" | "resolveTurnId"> {
+    let resolveTurnId!: (turnId: string | null) => void;
+    const turnIdReady = new Promise<string | null>((resolve) => {
+      resolveTurnId = resolve;
+    });
+    return { turnIdReady, resolveTurnId };
+  }
+
+  function interruptTurn(active: ActiveTurn, threadId: string): Promise<void> {
+    if (active.terminal || active.interrupted) return Promise.resolve();
+    if (active.interrupting) return active.interrupting;
+
+    const interrupting = (async (): Promise<void> => {
+      const turnId = await active.turnIdReady;
+      if (turnId === null || active.terminal) return;
+
+      await callAppServer("turn/interrupt", { threadId, turnId });
+      active.interrupted = true;
+      active.logger.info({ turnId }, "turno interrompido");
+    })();
+    active.interrupting = interrupting;
+    void interrupting.catch(() => {
+      if (active.interrupting === interrupting) active.interrupting = null;
+    });
+    return interrupting;
   }
 
   function declinePending(active: ActiveTurn): void {
@@ -506,4 +593,3 @@ function formatAnswers(
     })
     .join("\n\n");
 }
-

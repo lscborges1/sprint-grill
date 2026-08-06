@@ -16,7 +16,8 @@
 //         { "raw": "não é json" },
 //         { "exit": 1 }
 //       ]
-//     }
+//     },
+//     "<outro método>": [ { ... }, { ... } ] // uma reação por chamada, na ordem
 //   }
 // }
 //
@@ -32,6 +33,19 @@ const transcriptPath = process.argv[3];
 /** Respostas pendentes dos requests que *nós* mandamos para o cliente. */
 const pendingResponses = new Map();
 let nextRequestId = 1000;
+
+/** Chamadas já atendidas por método — o roteiro em lista responde na ordem. */
+const callCounts = new Map();
+
+function reactionFor(method) {
+  const scripted = script.reactions?.[method] ?? { result: {} };
+  if (!Array.isArray(scripted)) return scripted;
+
+  const seen = callCounts.get(method) ?? 0;
+  callCounts.set(method, seen + 1);
+  // A última reação repete: lista curta não trava o teste.
+  return scripted.at(Math.min(seen, scripted.length - 1)) ?? { result: {} };
+}
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -79,7 +93,7 @@ readline.on("line", (line) => {
   // Notificação do cliente (`initialized`): nada a responder.
   if (message.id === undefined) return;
 
-  const reaction = script.reactions?.[message.method] ?? { result: {} };
+  const reaction = reactionFor(message.method);
   if (reaction.error) {
     send({ jsonrpc: "2.0", id: message.id, error: reaction.error });
   } else {

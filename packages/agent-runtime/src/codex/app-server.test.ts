@@ -40,6 +40,29 @@ async function eventually(predicate: () => boolean): Promise<void> {
   throw new Error("condição não aconteceu a tempo");
 }
 
+/**
+ * Deixa um request do servidor sem resposta e mata o processo: é a corrida real
+ * em que a linha vem bufferizada no stdout e só é lida depois do `exit`.
+ */
+async function connectWithDeadServer() {
+  const context = await connectToFake({
+    reactions: {
+      "thread/start": {
+        result: {},
+        emit: [{ request: { method: "item/tool/requestUserInput", params: {} } }],
+      },
+      "turn/start": { result: {}, emit: [{ exit: 1 }] },
+    },
+  });
+
+  await context.client.request("thread/start", {});
+  await eventually(() => context.recorded.serverRequests.length > 0);
+  await context.client.request("turn/start", {});
+  await eventually(() => context.recorded.closes.length > 0);
+
+  return { ...context, serverRequestId: context.recorded.serverRequests[0]!.id };
+}
+
 describe("connectAppServer", () => {
   it("should complete the initialize handshake before resolving", async () => {
     const transcript = transcriptPath();
@@ -183,6 +206,31 @@ describe("connectAppServer", () => {
     await client.close();
 
     expect(recorded.closes).toEqual([null]);
+  });
+
+  it("should drop the reply instead of throwing when the app-server has already exited", async () => {
+    const { client, serverRequestId } = await connectWithDeadServer();
+
+    expect(() => client.respond(serverRequestId, { answers: {} })).not.toThrow();
+  });
+
+  it("should drop the refusal instead of throwing when the app-server has already exited", async () => {
+    const { client, serverRequestId } = await connectWithDeadServer();
+
+    expect(() => client.respondError(serverRequestId, "não tratamos isto")).not.toThrow();
+  });
+
+  it("should log the dropped reply with the request id", async () => {
+    const { client, lines, serverRequestId } = await connectWithDeadServer();
+
+    client.respond(serverRequestId, { answers: {} });
+
+    expect(lines).toContainEqual(
+      expect.objectContaining({
+        requestId: serverRequestId,
+        msg: "resposta ao app-server descartada",
+      }),
+    );
   });
 
   it("should point at the PATH when the codex binary is missing", async () => {

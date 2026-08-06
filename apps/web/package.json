@@ -10,6 +10,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@sprint-griller/ado-client": "workspace:*",
     "@sprint-griller/core": "workspace:*",
     "next": "16.3.0",
     "react": "19.2.8",

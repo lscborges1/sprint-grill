@@ -8,6 +8,10 @@ Linguagem ubíqua do domínio de refinamento. Termos cristalizados nas sessões 
 
 **Investigação** — mapeamento dos furos de uma US e do seu impacto na codebase (inclusive entre repositórios), produzido por um agente *antes* da cerimônia de refinamento. Existe porque esse trabalho não cabe na agenda de nenhum humano da squad.
 
+**Picker** — a tela inicial: as US da iteration atual com o Status de refinamento de cada uma. A única sobra legítima de "dashboard" no produto — existe para o Operador escolher o que investigar, não para acompanhar sprint (isso é papel do Azure DevOps).
+
+**Status de refinamento** — onde uma US está no fluxo: *sem Investigação*, *investigada* ou *refinada*. Não é estado da ferramenta: é o nome do artefato mais avançado que ela já gravou no Azure DevOps (a Investigação como comment, a Spec da US no despejo). Some do picker se alguém apagar o artefato — e é assim que tem que ser.
+
 **Grilling coletivo** — a cerimônia de refinamento reformulada: squad + PO grelham a US usando a Investigação como insumo, tomam as decisões ali, e tudo fica documentado e alinhado entre todos.
 
 **Registro de decisão** — artefato de primeira classe que documenta uma decisão tomada no grilling coletivo (pergunta, resposta, quem decidiu). O oposto de "ata perdida": é consultável e vinculado à US.

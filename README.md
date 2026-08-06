@@ -38,9 +38,21 @@ O caminho do arquivo de config pode ser trocado com `SPRINT_GRILLER_CONFIG`.
 ## Estrutura
 
 ```
-apps/web         app Next.js (App Router): UI de sessão e rotas
-packages/core    config da squad (zod) e logging estruturado
-docs/adr         decisões de arquitetura difíceis de reverter
+apps/web                  app Next.js (App Router): UI de sessão e rotas
+packages/core             config da squad (zod) e logging estruturado
+packages/agent-runtime    cliente do `codex app-server` (streaming, HITL, resume)
+docs/adr                  decisões de arquitetura difíceis de reverter
 ```
 
-Módulos previstos pela spec e ainda não escritos: `agent-runtime` (cliente do `codex app-server`) e `ado-client` (única porta de escrita no ADO). São as duas fronteiras onde vivem os logs estruturados e os testes de comportamento.
+Módulo previsto pela spec e ainda não escrito: `ado-client` (única porta de escrita no ADO).
+
+### Rodar o agente
+
+O `agent-runtime` fala com o `codex app-server` usando o login ChatGPT do Operador ([ADR 0001](docs/adr/0001-codex-app-server-como-runtime.md)). Requer o Codex CLI no PATH e `codex login`.
+
+```bash
+pnpm --filter @sprint-griller/agent-runtime harness "investigue o cache de sessão"
+pnpm --filter @sprint-griller/agent-runtime harness --resume <sessionId> "e o que ficou pendente?"
+```
+
+O harness mostra o turno streamando, pergunta no terminal quando o agente pede input, e imprime o id da sessão para retomar depois.

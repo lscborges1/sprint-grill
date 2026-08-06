@@ -1,1 +1,10 @@
 .DS_Store
+node_modules/
+.next/
+dist/
+*.tsbuildinfo
+
+# Config da squad: preenchida pelo Operador na própria máquina.
+sprint-griller.config.json
+.env
+.env.local

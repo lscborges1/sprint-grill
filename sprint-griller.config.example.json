@@ -1,0 +1,18 @@
+{
+  "azureDevOps": {
+    "organization": "minha-org",
+    "project": "Meu Projeto"
+  },
+  "repos": {
+    "primary": {
+      "name": "core-api",
+      "path": "/Users/voce/dev/core-api"
+    },
+    "related": [
+      {
+        "name": "web-app",
+        "path": "/Users/voce/dev/web-app"
+      }
+    ]
+  }
+}

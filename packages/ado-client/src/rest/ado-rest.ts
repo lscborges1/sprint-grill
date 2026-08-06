@@ -23,6 +23,11 @@ interface RequestSpec<TSchema extends z.ZodType> {
   readonly apiVersion?: string;
   readonly query?: Readonly<Record<string, string>>;
   readonly body?: unknown;
+  /**
+   * Mensagem de 404 quando o que sumiu é o recurso pedido, não a config: sem
+   * isto o Operador vai conferir org e projeto por causa de um id errado.
+   */
+  readonly notFound?: string;
 }
 
 const DEFAULT_API_VERSION = "7.1";
@@ -112,14 +117,17 @@ async function send(
   }
 
   if (response.ok) return response;
-  throw failedResponse(response, spec.operation);
+  throw failedResponse(response, spec);
 }
 
 /**
  * Cada código vira uma instrução diferente para o Operador: PAT, config ou
  * "isso não é problema seu". Mensagem genérica aqui custa uma cerimônia parada.
  */
-function failedResponse(response: Response, operation: string): AdoError {
+function failedResponse(
+  response: Response,
+  spec: RequestSpec<z.ZodType>,
+): AdoError {
   if (response.status === 401 || response.status === 403) {
     return new AdoError(
       "auth",
@@ -131,14 +139,15 @@ function failedResponse(response: Response, operation: string): AdoError {
   if (response.status === 404) {
     return new AdoError(
       "not-found",
-      "O Azure DevOps não encontrou a organização ou o projeto configurado. " +
-        "Confira azureDevOps.organization e azureDevOps.project na config da squad.",
+      spec.notFound ??
+        "O Azure DevOps não encontrou a organização ou o projeto configurado. " +
+          "Confira azureDevOps.organization e azureDevOps.project na config da squad.",
     );
   }
 
   return new AdoError(
     "unexpected",
-    `O Azure DevOps falhou em ${operation} (HTTP ${response.status}).`,
+    `O Azure DevOps falhou em ${spec.operation} (HTTP ${response.status}).`,
   );
 }
 

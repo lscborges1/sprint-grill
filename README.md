@@ -42,6 +42,7 @@ apps/web                  app Next.js (App Router): picker, UI de sessão e rota
 packages/core             config da squad (zod) e logging estruturado
 packages/ado-client       fronteira do Azure DevOps (REST tipado com zod)
 packages/agent-runtime    cliente do `codex app-server` (streaming, HITL, resume)
+packages/investigation    turno da Investigação + checagem de grounding + Markdown
 docs/adr                  decisões de arquitetura difíceis de reverter
 ```
 
@@ -68,3 +69,35 @@ A tela inicial lista as US da iteration atual e mostra em que ponto do fluxo cad
 | `<!-- sprint-griller:spec -->` | Spec da US gravada pelo despejo (comment ou description) | refinada |
 
 Quem grava um artefato novo precisa embutir o marcador correspondente (`INVESTIGATION_MARKER` / `SPEC_MARKER`, exportados por `@sprint-griller/ado-client`) — é o que fecha o ciclo entre despejo e picker.
+
+## Investigação
+
+**Investigar** no picker dispara um turno de agente e devolve a tela na hora: a
+Investigação roda **AFK**, no processo do Operador, e o preview espera em
+`/investigacao/<id da US>`. O agente lê a US no Azure DevOps e os repos do config
+(o principal como `cwd`, os relacionados por caminho absoluto), e devolve um
+relatório **estruturado** — o Markdown é renderizado por código, não pelo modelo
+([ADR 0002](docs/adr/0002-escrita-no-ado-e-deterministica.md)).
+
+Antes de valer alguma coisa, o relatório passa por uma **checagem mecânica de
+citações** (`verifyGrounding`), sem LLM nenhum no caminho:
+
+| Citação | Resultado |
+|---|---|
+| arquivo existe no repo citado | ok |
+| `symbol` aparece no arquivo | ok |
+| caminho não existe, ou aponta para fora do repo | relatório **reprovado** |
+| repo que não está na config da squad | relatório **reprovado** |
+
+Reprovado é relatório que não publica: o preview mostra o que o agente disse com
+o aviso de que não passou. O que o agente não conseguiu ancorar em código sai em
+**Não verificado**, e suspeita de impacto em repo fora do config sai em
+**Impacto suspeito fora do config** — nenhum dos dois entra no corpo como fato.
+
+O turno roda em sandbox read-only: comandos de leitura são liberados sozinhos
+(é o que deixa o agente varrer os repos AFK) e escrita em arquivo é sempre
+recusada. Se o agente perguntar algo, a resposta é que ninguém está na tela — a
+dúvida volta como furo da US.
+
+> As Investigações vivem na memória do processo: reiniciar o app perde os
+> previews que ainda não foram publicados no ADO.

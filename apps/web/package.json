@@ -11,10 +11,13 @@
   },
   "dependencies": {
     "@sprint-griller/ado-client": "workspace:*",
+    "@sprint-griller/agent-runtime": "workspace:*",
     "@sprint-griller/core": "workspace:*",
+    "@sprint-griller/investigation": "workspace:*",
     "next": "16.3.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

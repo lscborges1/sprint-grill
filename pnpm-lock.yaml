@@ -23,9 +23,15 @@ importers:
       '@sprint-griller/ado-client':
         specifier: workspace:*
         version: link:../../packages/ado-client
+      '@sprint-griller/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
       '@sprint-griller/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@sprint-griller/investigation':
+        specifier: workspace:*
+        version: link:../../packages/investigation
       next:
         specifier: 16.3.0
         version: 16.3.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@22.20.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -35,6 +41,9 @@ importers:
       react-dom:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4
@@ -113,6 +122,31 @@ importers:
       pino:
         specifier: ^10.3.1
         version: 10.3.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.39.1
+        version: 9.39.5
+      eslint:
+        specifier: ^9.39.1
+        version: 9.39.5(jiti@2.7.0)(supports-color@7.2.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.66.0
+        version: 8.66.0(eslint@9.39.5(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+
+  packages/investigation:
+    dependencies:
+      '@sprint-griller/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
+      '@sprint-griller/core':
+        specifier: workspace:*
+        version: link:../core
       zod:
         specifier: ^4.4.3
         version: 4.4.3

@@ -1,5 +1,10 @@
 export { AdoError } from "./ado-error";
 export type { AdoErrorKind } from "./ado-error";
+export { publishInvestigation } from "./investigation/publish-investigation";
+export type {
+  InvestigationToPublish,
+  PublishedInvestigation,
+} from "./investigation/publish-investigation";
 export { fetchCurrentIteration } from "./iteration/current-iteration";
 export type {
   CurrentIteration,

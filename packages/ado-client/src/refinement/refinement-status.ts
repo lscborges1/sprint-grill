@@ -7,8 +7,10 @@ export type RefinementStatus = "sem-investigacao" | "investigada" | "refinada";
 
 /**
  * Marcador que o `ado-client` embute na Investigação publicada como comment na
- * US. Invisível para quem lê no ADO (comment HTML) e o suficiente para o picker
- * inferir o status sem manter banco próprio.
+ * US. Sobrevive porque a leitura devolve o Markdown como foi gravado (`text`; o
+ * HTML renderizado é o `renderedText`, que não pedimos), e o renderizador do
+ * ADO não mostra comentário HTML — o suficiente para o picker inferir o status
+ * sem manter banco próprio.
  */
 export const INVESTIGATION_MARKER = "<!-- sprint-griller:investigacao -->";
 

@@ -280,6 +280,27 @@ describe("publishInvestigation", () => {
     expect(publishToAdo).toHaveBeenCalledTimes(1);
   });
 
+  it("should share one write when two publish requests arrive together", async () => {
+    const storyId = await investigated();
+    let resolvePublish: (() => void) | undefined;
+    publishToAdo.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePublish = () =>
+          resolve({
+            commentId: 77,
+            url: `https://dev.azure.com/acme/Plataforma/_workitems/edit/${storyId}`,
+          });
+      }),
+    );
+
+    const first = publishInvestigation(storyId);
+    const second = publishInvestigation(storyId);
+
+    expect(publishToAdo).toHaveBeenCalledTimes(1);
+    resolvePublish?.();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+  });
+
   it("should keep the ADO error on screen instead of claiming the US was updated", async () => {
     const storyId = await investigated();
     publishToAdo.mockRejectedValue(
@@ -295,14 +316,41 @@ describe("publishInvestigation", () => {
     expect(getInvestigation(storyId)?.publication).toEqual(publication);
   });
 
-  it("should let the operator retry after a failed publication", async () => {
+  it("should let the operator retry after a confirmed failed publication", async () => {
     const storyId = await investigated();
-    publishToAdo.mockRejectedValueOnce(new AdoError("connection", "sem rede"));
+    publishToAdo.mockRejectedValueOnce(new AdoError("auth", "sem permissão"));
 
     await publishInvestigation(storyId);
     const retry = await publishInvestigation(storyId);
 
     expect(retry.status).toBe("publicada");
+  });
+
+  it("should keep an uncertain publication from being retried", async () => {
+    const storyId = await investigated();
+    publishToAdo.mockRejectedValueOnce(new AdoError("connection", "sem rede"));
+
+    const first = await publishInvestigation(storyId);
+    const second = await publishInvestigation(storyId);
+
+    expect(first).toEqual({ status: "incerta", message: "sem rede" });
+    expect(second).toEqual(first);
+    expect(publishToAdo).toHaveBeenCalledTimes(1);
+  });
+
+  it("should treat a write-side 5xx as uncertain, not a safe retry", async () => {
+    const storyId = await investigated();
+    publishToAdo.mockRejectedValueOnce(
+      new AdoError(
+        "unexpected-response",
+        "O Azure DevOps falhou (HTTP 500) — Confira a US antes de tentar de novo.",
+      ),
+    );
+
+    const publication = await publishInvestigation(storyId);
+
+    expect(publication.status).toBe("incerta");
+    expect(getInvestigation(storyId)?.publication).toEqual(publication);
   });
 
   it("should not stamp the publication on a report a rerun already replaced", async () => {
@@ -328,5 +376,63 @@ describe("publishInvestigation", () => {
       status: "em-andamento",
       publication: undefined,
     });
+  });
+
+  it("should publish the new report even if the previous one's write is still in flight", async () => {
+    const storyId = await investigated();
+    const firstMarkdown = APPROVED_MARKDOWN;
+    const secondMarkdown = "# Investigação — segunda tentativa\n";
+    let resolveFirst: (() => void) | undefined;
+    publishToAdo.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = () =>
+            resolve({
+              storyId,
+              commentId: 77,
+              url: `https://dev.azure.com/acme/Plataforma/_workitems/edit/${storyId}`,
+            });
+        }),
+    );
+    publishToAdo.mockImplementationOnce(
+      async (_options: unknown, { storyId: id }: { storyId: number }) => ({
+        storyId: id,
+        commentId: 88,
+        url: `https://dev.azure.com/acme/Plataforma/_workitems/edit/${id}`,
+      }),
+    );
+
+    const publishingFirst = publishInvestigation(storyId);
+    runInvestigation.mockResolvedValue({
+      ...APPROVED,
+      markdown: secondMarkdown,
+    } satisfies InvestigationOutcome);
+    startInvestigation(storyId);
+    await vi.waitFor(() =>
+      expect(getInvestigation(storyId)).toMatchObject({
+        status: "aprovado",
+        markdown: secondMarkdown,
+      }),
+    );
+
+    const second = await publishInvestigation(storyId);
+    resolveFirst?.();
+    await publishingFirst;
+
+    expect(publishToAdo).toHaveBeenCalledTimes(2);
+    expect(publishToAdo).toHaveBeenNthCalledWith(1, expect.anything(), {
+      storyId,
+      markdown: firstMarkdown,
+    });
+    expect(publishToAdo).toHaveBeenNthCalledWith(2, expect.anything(), {
+      storyId,
+      markdown: secondMarkdown,
+    });
+    expect(second).toEqual({
+      status: "publicada",
+      commentId: 88,
+      url: `https://dev.azure.com/acme/Plataforma/_workitems/edit/${storyId}`,
+    });
+    expect(getInvestigation(storyId)?.publication).toEqual(second);
   });
 });

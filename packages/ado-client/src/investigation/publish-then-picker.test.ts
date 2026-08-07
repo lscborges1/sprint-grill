@@ -39,7 +39,7 @@ function fakeAdo() {
         if (init?.method === "POST") {
           const { text } = JSON.parse(String(init.body)) as { text: string };
           comments.push(text);
-          return json({ id: comments.length, workItemId: STORY_ID });
+          return json({ commentId: comments.length, workItemId: STORY_ID });
         }
 
         return json({ comments: comments.map((text) => ({ text })) });

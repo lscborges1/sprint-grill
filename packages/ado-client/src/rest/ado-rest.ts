@@ -30,10 +30,9 @@ interface RequestSpec<TSchema extends z.ZodType> {
   readonly notFound?: string;
   /**
    * Marca a operação como escrita (ADR 0002 — esta é a única porta de escrita
-   * no ADO). Muda duas coisas: o log sai em `info` com o payload inteiro, que é
-   * o rastro de auditoria de tudo que a ferramenta gravou; e cada falha passa a
-   * dizer se o Operador precisa conferir a US antes de tentar de novo, porque
-   * escrita que morre no meio não pode passar calada.
+   * no ADO). A escrita sai em `info` com metadados de auditoria, sem expor o
+   * conteúdo do artefato, e cada falha passa a dizer se o Operador precisa
+   * conferir a US antes de tentar de novo.
    */
   readonly write?: boolean;
 }
@@ -41,12 +40,11 @@ interface RequestSpec<TSchema extends z.ZodType> {
 const DEFAULT_API_VERSION = "7.1";
 
 /**
- * Comments ainda são rota preview, e a 7.2-preview.4 é a primeira que grava e
- * devolve Markdown. Leitura e escrita compartilham a versão de propósito: ler
- * os comments numa versão diferente da que os escreveu é como o marcador do
- * picker some no caminho e a US fica "sem Investigação" para sempre.
+ * Comments ainda são rota preview. Leitura e escrita compartilham a versão de
+ * propósito: ler os comments numa versão diferente da que os escreveu é como o
+ * marcador do picker some no caminho e a US fica "sem Investigação" para sempre.
  */
-export const COMMENTS_API_VERSION = "7.2-preview.4";
+export const COMMENTS_API_VERSION = "7.1-preview.4";
 
 /**
  * O que uma escrita que não terminou limpa exige do Operador. Prometer que nada
@@ -104,13 +102,16 @@ export function createAdoRest(options: AdoClientOptions): AdoRest {
       }
 
       if (spec.write) {
-        // Corpo inteiro no log, contra a regra geral de não logar payload: é o
-        // rastro de auditoria de tudo que a ferramenta gravou na squad, e sem
-        // ele "quem escreveu isso na minha US?" não tem resposta. O que passa
-        // por aqui é artefato de refinamento, não dado de usuário — e o
-        // `createLogger` já censura pat/token/authorization por caminho.
+        // URL e tamanho dão rastreabilidade sem copiar conteúdo de US ou do
+        // relatório para o log. A URL identifica o work item que recebeu a
+        // escrita; o corpo pode conter dados sensíveis da squad.
         logger.info(
-          { operation: spec.operation, url, payload: spec.body },
+          {
+            operation: spec.operation,
+            url,
+            bodyBytes:
+              spec.body === undefined ? 0 : Buffer.byteLength(JSON.stringify(spec.body)),
+          },
           "escrita no Azure DevOps concluída",
         );
       } else {
@@ -186,6 +187,16 @@ function failedResponse(
     );
   }
 
+  // 5xx numa escrita: o ADO pode ter gravado antes de devolver o erro. Dizer
+  // "nada foi gravado" liberaria o retry e criaria comment duplicado na US.
+  if (spec.write && response.status >= 500) {
+    return new AdoError(
+      "unexpected-response",
+      `O Azure DevOps falhou em ${spec.operation} (HTTP ${response.status})` +
+        ` — a gravação pode ter acontecido mesmo assim.${CHECK_THE_US}`,
+    );
+  }
+
   return new AdoError(
     "unexpected",
     `O Azure DevOps falhou em ${spec.operation} (HTTP ${response.status})` +
@@ -196,12 +207,22 @@ function failedResponse(
 /**
  * PAT expirado costuma vir como página de login com 200 — sem esta checagem o
  * erro apareceria como "formato inesperado" e mandaria o Operador caçar a config.
+ * Em escrita, porém, 2xx sem content-type JSON não pode virar `auth`: o ADO
+ * pode ter gravado o comment e o UI trataria como retry seguro (duplicata).
  */
 async function readJson(
   response: Response,
   spec: RequestSpec<z.ZodType>,
 ): Promise<unknown> {
   if (!response.headers.get("content-type")?.includes("json")) {
+    if (spec.write) {
+      throw new AdoError(
+        "unexpected-response",
+        `O Azure DevOps aceitou ${spec.operation} mas respondeu sem JSON ` +
+          `— a gravação provavelmente foi feita.${CHECK_THE_US}`,
+      );
+    }
+
     throw new AdoError(
       "auth",
       "O Azure DevOps respondeu com uma página de login em vez de dados. " +

@@ -1,7 +1,6 @@
 import { Writable } from "node:stream";
 import { createLogger } from "@sprint-griller/core";
 import { describe, expect, it, vi } from "vitest";
-import { AdoError } from "../ado-error";
 import { inferRefinementStatus } from "../refinement/refinement-status";
 import { publishInvestigation } from "./publish-investigation";
 
@@ -75,7 +74,9 @@ function bodyOf(call: Call): { text: string } {
 
 describe("publishInvestigation", () => {
   it("should post the report as a Markdown comment on the story itself", async () => {
-    const { promise, calls } = publish(() => json({ id: 77, workItemId: 4211 }));
+    const { promise, calls } = publish(() =>
+      json({ commentId: 77, workItemId: 4211 }),
+    );
     await promise;
 
     const [call] = calls;
@@ -83,13 +84,14 @@ describe("publishInvestigation", () => {
     expect(call?.url).toContain(
       "/acme/Plataforma/_apis/wit/workItems/4211/comments",
     );
-    // format=0 é Markdown; sem isso o ADO trata o relatório como HTML cru.
-    expect(call?.url).toContain("format=0");
+    // format=markdown: sem isso o ADO trata o relatório como HTML cru.
+    expect(call?.url).toContain("format=markdown");
+    expect(call?.url).toContain("api-version=7.1-preview.4");
     expect(bodyOf(call!).text).toContain(MARKDOWN);
   });
 
   it("should embed the marker the picker reads, so the US turns investigada", async () => {
-    const { promise, calls } = publish(() => json({ id: 77 }));
+    const { promise, calls } = publish(() => json({ commentId: 77 }));
     await promise;
 
     const published = bodyOf(calls[0]!).text;
@@ -100,7 +102,7 @@ describe("publishInvestigation", () => {
   });
 
   it("should return the comment and a link the operator can open", async () => {
-    const { promise } = publish(() => json({ id: 77 }));
+    const { promise } = publish(() => json({ commentId: 77 }));
 
     await expect(promise).resolves.toEqual({
       commentId: 77,
@@ -108,22 +110,23 @@ describe("publishInvestigation", () => {
     });
   });
 
-  it("should log the write with its payload, so every ADO write has a trail", async () => {
+  it("should log safe write metadata without retaining the report", async () => {
     const { logger, lines } = capturingLogger();
-    const { promise } = publish(() => json({ id: 77 }), logger);
+    const { promise } = publish(() => json({ commentId: 77 }), logger);
     await promise;
 
     expect(lines).toContainEqual(
       expect.objectContaining({
         level: "info",
-        payload: { text: expect.stringContaining(MARKDOWN) as unknown },
+        bodyBytes: expect.any(Number),
       }),
     );
+    expect(JSON.stringify(lines)).not.toContain(MARKDOWN);
   });
 
-  it("should never log the credential alongside the payload", async () => {
+  it("should never log the credential alongside write metadata", async () => {
     const { logger, lines } = capturingLogger();
-    const { promise } = publish(() => json({ id: 77 }), logger);
+    const { promise } = publish(() => json({ commentId: 77 }), logger);
     await promise;
 
     expect(JSON.stringify(lines)).not.toContain(CREDENTIALS.pat);
@@ -158,6 +161,23 @@ describe("publishInvestigation", () => {
     });
   });
 
+  it("should treat a successful write without JSON content-type as uncertain, not auth", async () => {
+    // 2xx com content-type errado/ausente: classificar como auth liberaria o
+    // retry e criaria comment duplicado se o ADO já tiver gravado.
+    const { promise } = publish(
+      () =>
+        new Response("<html>ok</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+
+    await expect(promise).rejects.toMatchObject({
+      kind: "unexpected-response",
+      message: expect.stringContaining("Confira a US"),
+    });
+  });
+
   it("should tell the operator to check the US when the connection dies mid-write", async () => {
     const { promise } = publish(() => {
       throw new TypeError("fetch failed");
@@ -169,9 +189,14 @@ describe("publishInvestigation", () => {
     });
   });
 
-  it("should fail with an AdoError, never a raw HTTP error, when the ADO breaks", async () => {
+  it("should tell the operator to check the US when the ADO returns 5xx on a write", async () => {
+    // 5xx depois de aceitar o comment: dizer "nada foi gravado" liberaria o
+    // retry e criaria comment duplicado na US.
     const { promise } = publish(() => json({ message: "boom" }, 500));
 
-    await expect(promise).rejects.toBeInstanceOf(AdoError);
+    await expect(promise).rejects.toMatchObject({
+      kind: "unexpected-response",
+      message: expect.stringContaining("Confira a US"),
+    });
   });
 });

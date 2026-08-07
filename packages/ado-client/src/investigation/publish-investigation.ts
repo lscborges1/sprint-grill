@@ -16,15 +16,15 @@ export interface InvestigationToPublish {
   readonly markdown: string;
 }
 
-const commentSchema = z.object({ id: z.number() });
+/** O contrato da API de comments usa `commentId`, não `id` (7.1-preview.4). */
+const commentSchema = z.object({ commentId: z.number() });
 
 /**
- * O `format` dos comments é numérico, não o nome: `0` é Markdown e `1` é HTML
- * (`CommentFormat` no `azure-devops-node-api`, e é assim que o MCP oficial da
- * Microsoft monta a query). Sem ele o relatório chega à US como texto cru, com
- * os `#` e os backticks aparecendo.
+ * O `format` dos comments usa o enum `CommentFormat` da API 7.1: `markdown` ou
+ * `html`. Sem ele o relatório chega à US como texto cru, com os `#` e os
+ * backticks aparecendo.
  */
-const MARKDOWN_FORMAT = "0";
+const MARKDOWN_FORMAT = "markdown";
 
 /**
  * Publica a Investigação aprovada como comment na própria US — onde a squad e o
@@ -55,5 +55,5 @@ export async function publishInvestigation(
       "nada foi publicado.",
   });
 
-  return { commentId: comment.id, url: rest.workItemUrl(storyId) };
+  return { commentId: comment.commentId, url: rest.workItemUrl(storyId) };
 }

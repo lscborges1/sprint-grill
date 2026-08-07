@@ -114,11 +114,12 @@ hoje. Nada sai sozinho: a publicação é um clique do Operador, e quem grava é
 O comment carrega o `INVESTIGATION_MARKER`, então o picker passa a mostrar a US
 como **investigada** na recarga seguinte — sem status guardado em lugar nenhum.
 
-Toda escrita sai no log estruturado em `info`, com o payload inteiro. Quando ela
-falha, a mensagem diz se o Operador precisa conferir a US antes de tentar de
-novo: `HTTP 4xx/5xx` garante que nada foi gravado, mas conexão que cai no meio ou
-resposta fora do contrato podem ter deixado o comment lá — republicar às cegas é
-o que produz comment duplicado na US.
+Toda escrita sai no log estruturado em `info`, com a URL da US e o tamanho do
+corpo — sem copiar o relatório para o log. Quando ela falha, a mensagem diz se o
+Operador precisa conferir a US antes de tentar de
+novo: `HTTP 4xx` garante que nada foi gravado, mas `5xx`, conexão que cai no meio
+ou resposta fora do contrato podem ter deixado o comment lá — republicar às cegas
+é o que produz comment duplicado na US.
 
 > O PAT precisa de escopo de **leitura e escrita** de work items. Só de leitura,
 > o disparo funciona e a publicação volta com 403.

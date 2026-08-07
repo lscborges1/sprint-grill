@@ -174,6 +174,32 @@ function Publish({ run }: { run: ReportRun }) {
     );
   }
 
+  if (publication?.status === "incerta") {
+    return (
+      <Section id="publicacao" heading="Confirme a publicação no Azure DevOps">
+        <Alert heading="A publicação pode ter acontecido">
+          <p className="text-base text-muted">{publication.message}</p>
+        </Alert>
+        <p className="text-base text-muted">
+          A conexão caiu depois de enviar o relatório, o Azure DevOps respondeu
+          com erro de servidor, ou devolveu uma resposta inválida. Confira a US
+          antes de publicar este relatório de novo, para não criar um comment
+          duplicado.
+        </p>
+        {run.story && (
+          <a
+            href={run.story.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-base underline underline-offset-4"
+          >
+            Abrir a US no Azure DevOps
+          </a>
+        )}
+      </Section>
+    );
+  }
+
   return (
     <Section id="publicacao" heading="Publicar no Azure DevOps">
       {publication?.status === "falhou" && (

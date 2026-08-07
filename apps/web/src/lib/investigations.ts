@@ -45,7 +45,8 @@ export type Publication =
       readonly commentId: number;
       readonly url: string;
     }
-  | { readonly status: "falhou"; readonly message: string };
+  | { readonly status: "falhou"; readonly message: string }
+  | { readonly status: "incerta"; readonly message: string };
 
 /**
  * Uma Investigação disparada nesta máquina. `em-andamento` é o estado AFK: o
@@ -70,6 +71,20 @@ export type ReportRun = Extract<
 const runs: Map<number, InvestigationRun> = ((
   globalThis as { __sprintGrillerRuns?: Map<number, InvestigationRun> }
 ).__sprintGrillerRuns ??= new Map());
+
+/**
+ * Uma escrita em voo por relatório (`storyId:startedAt`), não por US: redisparar
+ * troca o relatório, e a publicação do anterior não pode responder pelo novo.
+ */
+const publicationsInFlight: Map<string, Promise<Publication>> = ((
+  globalThis as {
+    __sprintGrillerPublicationsInFlight?: Map<string, Promise<Publication>>;
+  }
+).__sprintGrillerPublicationsInFlight ??= new Map());
+
+function publicationKey(storyId: number, startedAt: number): string {
+  return `${storyId}:${startedAt}`;
+}
 
 export function getInvestigation(storyId: number): InvestigationRun | undefined {
   return runs.get(storyId);
@@ -166,9 +181,27 @@ function finish(
  * Só o relatório aprovado passa: o reprovado não é fato (ver `verifyGrounding`),
  * e mandá-lo para a US seria publicar citação que não fecha com o código.
  */
-export async function publishInvestigation(
-  storyId: number,
-): Promise<Publication> {
+export function publishInvestigation(storyId: number): Promise<Publication> {
+  const run = runs.get(storyId);
+  // Sem relatório aprovado não há escrita no ADO — e sem `startedAt` de um
+  // relatório concreto não há chave de coalescência que faça sentido.
+  if (run?.status !== "aprovado") return publishApprovedInvestigation(storyId);
+
+  const key = publicationKey(storyId, run.startedAt);
+  const inFlight = publicationsInFlight.get(key);
+  if (inFlight) return inFlight;
+
+  const publication = publishApprovedInvestigation(storyId);
+  publicationsInFlight.set(key, publication);
+  void publication.then(
+    () => releasePublication(key, publication),
+    () => releasePublication(key, publication),
+  );
+
+  return publication;
+}
+
+async function publishApprovedInvestigation(storyId: number): Promise<Publication> {
   const run = runs.get(storyId);
   if (run?.status !== "aprovado") {
     return {
@@ -181,6 +214,7 @@ export async function publishInvestigation(
 
   // Republicar duplicaria o comment, e o segundo não corrige o primeiro.
   if (run.publication?.status === "publicada") return run.publication;
+  if (run.publication?.status === "incerta") return run.publication;
 
   try {
     const { azureDevOps } = getSquadConfig();
@@ -200,7 +234,16 @@ export async function publishInvestigation(
       { err: error, storyId, ...(error instanceof AdoError && { kind: error.kind }) },
       "não foi possível publicar a Investigação",
     );
-    return stampPublication(run, { status: "falhou", message: error.message });
+    return stampPublication(run, {
+      status: publicationMayHaveLanded(error) ? "incerta" : "falhou",
+      message: error.message,
+    });
+  }
+}
+
+function releasePublication(key: string, publication: Promise<Publication>): void {
+  if (publicationsInFlight.get(key) === publication) {
+    publicationsInFlight.delete(key);
   }
 }
 
@@ -210,6 +253,14 @@ export async function publishInvestigation(
  */
 function isOperatorError(error: unknown): error is AdoError | ConfigError {
   return error instanceof AdoError || error instanceof ConfigError;
+}
+
+/** Só esses erros podem acontecer depois de o ADO já ter aceitado a escrita. */
+function publicationMayHaveLanded(error: AdoError | ConfigError): boolean {
+  return (
+    error instanceof AdoError &&
+    (error.kind === "connection" || error.kind === "unexpected-response")
+  );
 }
 
 /**

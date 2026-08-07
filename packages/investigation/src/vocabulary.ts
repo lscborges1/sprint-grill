@@ -34,6 +34,17 @@ export const REJECTED_BLURB =
   "Citação que não fecha com o código é ruído com cara de fato. " +
   "Nada disto vai para o Azure DevOps — redispare a Investigação.";
 
+/**
+ * O rótulo do preview do Markdown, indexado pelo veredito: só o relatório
+ * aprovado vira comment no ADO. Mora ao lado do REJECTED_BLURB porque é a mesma
+ * afirmação — e uma tela que promete publicação logo abaixo do aviso de que
+ * nada será publicado é a contradição que este par existe para evitar.
+ */
+export const MARKDOWN_PREVIEW = {
+  aprovado: "Ver o Markdown que vai para o Azure DevOps",
+  reprovado: "Ver o Markdown reprovado — este não vai para o Azure DevOps",
+} as const;
+
 /** Como uma citação aparece para quem lê, no Markdown e na tela. */
 export function formatCitation(citation: Citation): string {
   const anchor = `${citation.repo}:${citation.path}`;

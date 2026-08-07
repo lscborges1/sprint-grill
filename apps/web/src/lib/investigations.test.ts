@@ -44,6 +44,8 @@ const STORY = {
   url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/1",
 };
 
+const APPROVED_MARKDOWN = "# Investigação\n";
+
 const APPROVED: InvestigationOutcome = {
   status: "aprovado",
   report: {
@@ -53,7 +55,7 @@ const APPROVED: InvestigationOutcome = {
     externalRepos: [],
     unverified: [],
   },
-  markdown: "# Investigação\n",
+  markdown: APPROVED_MARKDOWN,
 };
 
 const close = vi.fn(async () => undefined);
@@ -122,5 +124,87 @@ describe("startInvestigation", () => {
     await vi.waitFor(() =>
       expect(getInvestigation(nextStoryId)?.status).toBe("falhou"),
     );
+  });
+});
+
+describe("redisparo", () => {
+  /** Uma US que já tem relatório na mão — o ponto de partida do redisparo. */
+  async function investigated(): Promise<number> {
+    const storyId = nextStoryId;
+    startInvestigation(storyId);
+    await vi.waitFor(() =>
+      expect(getInvestigation(storyId)?.status).toBe("aprovado"),
+    );
+    return storyId;
+  }
+
+  it("should keep the previous report on screen while the new turn runs", async () => {
+    const storyId = await investigated();
+
+    const rerun = startInvestigation(storyId);
+
+    expect(rerun).toMatchObject({
+      status: "em-andamento",
+      previous: { status: "aprovado", markdown: APPROVED_MARKDOWN },
+      story: { title: STORY.title },
+    });
+  });
+
+  it("should keep the previous report when the new turn fails", async () => {
+    const storyId = await investigated();
+    runInvestigation.mockResolvedValue({
+      status: "falhou",
+      message: "o agente caiu no meio do turno",
+    } satisfies InvestigationOutcome);
+
+    startInvestigation(storyId);
+
+    await vi.waitFor(() =>
+      expect(getInvestigation(storyId)).toMatchObject({
+        status: "falhou",
+        previous: { status: "aprovado", markdown: APPROVED_MARKDOWN },
+      }),
+    );
+  });
+
+  it("should drop the previous report once a new one lands", async () => {
+    const storyId = await investigated();
+    runInvestigation.mockResolvedValue({
+      ...APPROVED,
+      markdown: "# Investigação — segunda tentativa\n",
+    } satisfies InvestigationOutcome);
+
+    startInvestigation(storyId);
+
+    await vi.waitFor(() =>
+      expect(getInvestigation(storyId)).toMatchObject({
+        markdown: "# Investigação — segunda tentativa\n",
+        previous: undefined,
+      }),
+    );
+  });
+
+  it("should not stack previous reports across repeated failures", async () => {
+    const storyId = await investigated();
+    runInvestigation.mockResolvedValue({
+      status: "falhou",
+      message: "o agente caiu de novo",
+    } satisfies InvestigationOutcome);
+
+    startInvestigation(storyId);
+    await vi.waitFor(() =>
+      expect(getInvestigation(storyId)?.status).toBe("falhou"),
+    );
+    startInvestigation(storyId);
+    await vi.waitFor(() =>
+      expect(getInvestigation(storyId)?.status).toBe("falhou"),
+    );
+
+    const run = getInvestigation(storyId);
+    expect(run?.previous).toMatchObject({
+      status: "aprovado",
+      markdown: APPROVED_MARKDOWN,
+      previous: undefined,
+    });
   });
 });

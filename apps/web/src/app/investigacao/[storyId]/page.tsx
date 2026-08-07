@@ -1,4 +1,5 @@
 import {
+  MARKDOWN_PREVIEW,
   REJECTED_BLURB,
   REJECTED_HEADING,
   REPORT_SECTIONS,
@@ -12,7 +13,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Section } from "@/components/section";
 import { getInvestigation, storyIdSchema } from "@/lib/investigations";
-import type { InvestigationRun } from "@/lib/investigations";
+import type { InvestigationRun, ReportRun } from "@/lib/investigations";
 import { AutoRefresh } from "./auto-refresh";
 
 // O preview mostra o estado do turno agora; nada aqui é pré-renderizável.
@@ -79,18 +80,45 @@ function Outcome({ run }: { run: InvestigationRun | undefined }) {
           esta tela: o turno segue rodando e o relatório espera aqui.
         </p>
         <AutoRefresh seconds={REFRESH_SECONDS} />
+        <Previous run={run.previous} />
       </>
     );
   }
 
   if (run.status === "falhou") {
     return (
-      <Alert heading="A Investigação não terminou">
-        <p className="text-base text-muted">{run.message}</p>
-      </Alert>
+      <>
+        <Alert heading="A Investigação não terminou">
+          <p className="text-base text-muted">{run.message}</p>
+        </Alert>
+        <Previous run={run.previous} />
+      </>
     );
   }
 
+  return <Result run={run} />;
+}
+
+/**
+ * O relatório do disparo anterior, enquanto o turno em curso não entrega outro.
+ * Dito com todas as letras que é o antigo: relatório sem data de validade na
+ * tela vira fato de sprint passada.
+ */
+function Previous({ run }: { run: ReportRun | undefined }) {
+  if (!run) return null;
+
+  return (
+    <>
+      <p className="text-lg text-muted">
+        Abaixo, o relatório do disparo anterior desta US — ele fica até um turno
+        novo entregar outro.
+      </p>
+      <Result run={run} />
+    </>
+  );
+}
+
+function Result({ run }: { run: ReportRun }) {
   return (
     <>
       {run.status === "reprovado" && <Violations violations={run.violations} />}
@@ -98,7 +126,7 @@ function Outcome({ run }: { run: InvestigationRun | undefined }) {
       <Section id="markdown" heading="Markdown do relatório">
         <details className="rounded-lg border border-line px-5 py-4">
           <summary className="cursor-pointer text-base">
-            Ver o Markdown que vai para o Azure DevOps
+            {MARKDOWN_PREVIEW[run.status]}
           </summary>
           <pre className="mt-4 overflow-x-auto whitespace-pre-wrap font-mono text-sm text-muted">
             {run.markdown}

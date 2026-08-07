@@ -16,6 +16,13 @@ interface RunBase {
   /** Só depois de ler a US no ADO — até lá a tela mostra o número. */
   readonly story: StoryDetails | undefined;
   readonly startedAt: number;
+  /**
+   * O relatório do disparo anterior, enquanto o turno em curso não entrega
+   * outro: redisparar é aposta, e uma aposta que falha não pode ser o que apaga
+   * o único relatório que o Operador tinha. Volta a `undefined` assim que um
+   * relatório novo toma o lugar dele.
+   */
+  readonly previous: ReportRun | undefined;
 }
 
 /**
@@ -25,6 +32,12 @@ interface RunBase {
 export type InvestigationRun =
   | (RunBase & { readonly status: "em-andamento" })
   | (RunBase & { readonly finishedAt: number } & InvestigationOutcome);
+
+/** Um run que chegou a ter relatório — o que sobrevive a um redisparo. */
+export type ReportRun = Extract<
+  InvestigationRun,
+  { readonly status: "aprovado" | "reprovado" }
+>;
 
 /**
  * ponytail: as Investigações vivem na memória do processo do Operador — teto
@@ -46,13 +59,16 @@ export function getInvestigation(storyId: number): InvestigationRun | undefined 
  * não abre uma segunda — o Operador só volta a olhar o mesmo run.
  */
 export function startInvestigation(storyId: number): InvestigationRun {
-  const running = runs.get(storyId);
-  if (running?.status === "em-andamento") return running;
+  const current = runs.get(storyId);
+  if (current?.status === "em-andamento") return current;
 
   const run: InvestigationRun = {
     storyId,
-    story: undefined,
+    // A US é a mesma: o título já lido continua na tela enquanto o turno novo
+    // não relê o ADO.
+    story: current?.story,
     startedAt: Date.now(),
+    previous: lastReport(current),
     status: "em-andamento",
   };
   runs.set(storyId, run);
@@ -86,6 +102,7 @@ async function execute(run: InvestigationRun): Promise<void> {
     storyId: run.storyId,
     story,
     startedAt: run.startedAt,
+    previous: run.previous,
     status: "em-andamento",
   });
 
@@ -108,9 +125,23 @@ function finish(
     storyId: run.storyId,
     story: story ?? run.story,
     startedAt: run.startedAt,
+    // Um relatório novo substitui o antigo; uma falha não substitui nada.
+    previous: outcome.status === "falhou" ? run.previous : undefined,
     finishedAt: Date.now(),
     ...outcome,
   });
+}
+
+/**
+ * O relatório que atravessa o próximo disparo: o do run que acabou de sair de
+ * cena, ou — se ele mesmo falhou — o que ele já estava segurando. Guardado sem
+ * o `previous` dele para a corrente não crescer a cada redisparo.
+ */
+function lastReport(run: InvestigationRun | undefined): ReportRun | undefined {
+  if (run === undefined) return undefined;
+  return run.status === "aprovado" || run.status === "reprovado"
+    ? { ...run, previous: undefined }
+    : run.previous;
 }
 
 /**

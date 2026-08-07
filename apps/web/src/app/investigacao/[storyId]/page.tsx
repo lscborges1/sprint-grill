@@ -14,7 +14,9 @@ import { notFound } from "next/navigation";
 import { Section } from "@/components/section";
 import { getInvestigation, storyIdSchema } from "@/lib/investigations";
 import type { InvestigationRun, ReportRun } from "@/lib/investigations";
+import { publishInvestigationAction } from "../actions";
 import { AutoRefresh } from "./auto-refresh";
+import { PublishButton } from "./publish-button";
 
 // O preview mostra o estado do turno agora; nada aqui é pré-renderizável.
 export const dynamic = "force-dynamic";
@@ -96,7 +98,14 @@ function Outcome({ run }: { run: InvestigationRun | undefined }) {
     );
   }
 
-  return <Result run={run} />;
+  return (
+    <>
+      <Result run={run} />
+      {/* Só o relatório em cena publica: o do disparo anterior aparece em
+          `Previous`, e a própria tela já o chamou de antigo. */}
+      {run.status === "aprovado" && <Publish run={run} />}
+    </>
+  );
 }
 
 /**
@@ -134,6 +143,82 @@ function Result({ run }: { run: ReportRun }) {
         </details>
       </Section>
     </>
+  );
+}
+
+/**
+ * A única escrita no Azure DevOps que a tela oferece, e ela é um clique — nada
+ * sai daqui sozinho. Só o relatório aprovado a ganha: o reprovado já vem com o
+ * aviso de que não vai para o ADO.
+ */
+function Publish({ run }: { run: ReportRun }) {
+  const publication = run.publication;
+
+  if (publication?.status === "publicada") {
+    return (
+      <Section id="publicacao" heading="Publicada no Azure DevOps">
+        <p className="text-base text-muted">
+          A Investigação está na US #{run.storyId} como comment (
+          {publication.commentId}). O picker passa a mostrar esta US como{" "}
+          <strong className="font-medium">investigada</strong>.
+        </p>
+        <a
+          href={publication.url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-base underline underline-offset-4"
+        >
+          Abrir a US no Azure DevOps
+        </a>
+      </Section>
+    );
+  }
+
+  if (publication?.status === "incerta") {
+    return (
+      <Section id="publicacao" heading="Confirme a publicação no Azure DevOps">
+        <Alert heading="A publicação pode ter acontecido">
+          <p className="text-base text-muted">{publication.message}</p>
+        </Alert>
+        <p className="text-base text-muted">
+          A conexão caiu depois de enviar o relatório, o Azure DevOps respondeu
+          com erro de servidor, ou devolveu uma resposta inválida. Confira a US
+          antes de publicar este relatório de novo, para não criar um comment
+          duplicado.
+        </p>
+        {run.story && (
+          <a
+            href={run.story.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-base underline underline-offset-4"
+          >
+            Abrir a US no Azure DevOps
+          </a>
+        )}
+      </Section>
+    );
+  }
+
+  return (
+    <Section id="publicacao" heading="Publicar no Azure DevOps">
+      {publication?.status === "falhou" && (
+        <Alert heading="Nada foi publicado">
+          <p className="text-base text-muted">{publication.message}</p>
+        </Alert>
+      )}
+      <p className="text-base text-muted">
+        A Investigação vira um comment Markdown na própria US, onde a squad e o
+        PO já trabalham. Até este clique, nada foi gravado no Azure DevOps.
+      </p>
+      <form action={publishInvestigationAction} className="flex">
+        <input type="hidden" name="storyId" value={run.storyId} />
+        <PublishButton
+          storyId={run.storyId}
+          retry={publication?.status === "falhou"}
+        />
+      </form>
+    </Section>
   );
 }
 

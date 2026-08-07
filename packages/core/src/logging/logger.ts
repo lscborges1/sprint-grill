@@ -25,7 +25,7 @@ const DEFAULT_LOG_LEVEL: LogLevel = "info";
 
 /**
  * Campos que nunca podem sair no log. O PAT do Azure DevOps é o motivo principal:
- * cada escrita no ADO é logada com payload, e payload passa perto de credencial.
+ * as escritas no ADO incluem metadados da requisição para auditoria.
  */
 const SECRET_FIELDS = ["pat", "token", "password", "authorization"] as const;
 

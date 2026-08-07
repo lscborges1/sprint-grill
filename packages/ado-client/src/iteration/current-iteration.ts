@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { inferRefinementStatus } from "../refinement/refinement-status";
 import type { RefinementStatus } from "../refinement/refinement-status";
-import { createAdoRest } from "../rest/ado-rest";
+import { COMMENTS_API_VERSION, createAdoRest } from "../rest/ado-rest";
 import type { AdoClientOptions, AdoRest } from "../rest/ado-rest";
 
 /** Uma US da iteration como o picker precisa dela: identidade + onde ela está. */
@@ -58,9 +58,6 @@ const workItemsBatchSchema = z.object({
 const commentsSchema = z.object({
   comments: z.array(z.object({ text: z.string() })).default([]),
 });
-
-/** Comments ainda são rota preview na 7.1 — ver `research/superficie-azure-devops.md`. */
-const COMMENTS_API_VERSION = "7.1-preview.4";
 
 /**
  * Categoria de processo que o ADO usa para "o que é item de backlog": resolve

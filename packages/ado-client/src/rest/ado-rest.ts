@@ -28,9 +28,29 @@ interface RequestSpec<TSchema extends z.ZodType> {
    * isto o Operador vai conferir org e projeto por causa de um id errado.
    */
   readonly notFound?: string;
+  /**
+   * Marca a operação como escrita (ADR 0002 — esta é a única porta de escrita
+   * no ADO). A escrita sai em `info` com metadados de auditoria, sem expor o
+   * conteúdo do artefato, e cada falha passa a dizer se o Operador precisa
+   * conferir a US antes de tentar de novo.
+   */
+  readonly write?: boolean;
 }
 
 const DEFAULT_API_VERSION = "7.1";
+
+/**
+ * Comments ainda são rota preview. Leitura e escrita compartilham a versão de
+ * propósito: ler os comments numa versão diferente da que os escreveu é como o
+ * marcador do picker some no caminho e a US fica "sem Investigação" para sempre.
+ */
+export const COMMENTS_API_VERSION = "7.1-preview.4";
+
+/**
+ * O que uma escrita que não terminou limpa exige do Operador. Prometer que nada
+ * foi gravado quando não dá para saber é o que produz comment duplicado na US.
+ */
+const CHECK_THE_US = " Confira a US antes de tentar de novo.";
 
 export interface AdoRest {
   readonly logger: Logger;
@@ -62,7 +82,7 @@ export function createAdoRest(options: AdoClientOptions): AdoRest {
       });
 
       const response = await send(doFetch, url, spec, authorization);
-      const payload = await readJson(response, spec.operation);
+      const payload = await readJson(response, spec);
       const parsed = spec.schema.safeParse(payload);
 
       if (!parsed.success) {
@@ -72,16 +92,35 @@ export function createAdoRest(options: AdoClientOptions): AdoRest {
         );
         throw new AdoError(
           "unexpected-response",
-          `O Azure DevOps respondeu ${spec.operation} num formato inesperado. ` +
-            `Confira se a organização "${organization}" e o projeto "${project}" estão certos.`,
+          spec.write
+            ? `O Azure DevOps aceitou ${spec.operation} mas respondeu num formato ` +
+                `inesperado — a gravação provavelmente foi feita.${CHECK_THE_US}`
+            : `O Azure DevOps respondeu ${spec.operation} num formato inesperado. ` +
+                `Confira se a organização "${organization}" e o projeto "${project}" estão certos.`,
           { cause: parsed.error },
         );
       }
 
-      logger.debug(
-        { operation: spec.operation, url },
-        "leitura no Azure DevOps concluída",
-      );
+      if (spec.write) {
+        // URL e tamanho dão rastreabilidade sem copiar conteúdo de US ou do
+        // relatório para o log. A URL identifica o work item que recebeu a
+        // escrita; o corpo pode conter dados sensíveis da squad.
+        logger.info(
+          {
+            operation: spec.operation,
+            url,
+            bodyBytes:
+              spec.body === undefined ? 0 : Buffer.byteLength(JSON.stringify(spec.body)),
+          },
+          "escrita no Azure DevOps concluída",
+        );
+      } else {
+        logger.debug(
+          { operation: spec.operation, url },
+          "leitura no Azure DevOps concluída",
+        );
+      }
+
       return parsed.data;
     },
   };
@@ -111,7 +150,9 @@ async function send(
     throw new AdoError(
       "connection",
       `Não foi possível falar com o Azure DevOps (${spec.operation}). ` +
-        `Verifique a conexão e se ${new URL(url).origin} está acessível.`,
+        `Verifique a conexão e se ${new URL(url).origin} está acessível.` +
+        // A requisição pode ter chegado lá antes de a conexão cair.
+        (spec.write ? CHECK_THE_US : ""),
       { cause },
     );
   }
@@ -132,7 +173,8 @@ function failedResponse(
     return new AdoError(
       "auth",
       "O Azure DevOps recusou a credencial. Gere um novo Personal Access Token " +
-        "com escopo de leitura de work items e atualize AZURE_DEVOPS_PAT.",
+        `com escopo de ${spec.write ? "leitura e escrita" : "leitura"} de work items ` +
+        "e atualize AZURE_DEVOPS_PAT.",
     );
   }
 
@@ -145,18 +187,42 @@ function failedResponse(
     );
   }
 
+  // 5xx numa escrita: o ADO pode ter gravado antes de devolver o erro. Dizer
+  // "nada foi gravado" liberaria o retry e criaria comment duplicado na US.
+  if (spec.write && response.status >= 500) {
+    return new AdoError(
+      "unexpected-response",
+      `O Azure DevOps falhou em ${spec.operation} (HTTP ${response.status})` +
+        ` — a gravação pode ter acontecido mesmo assim.${CHECK_THE_US}`,
+    );
+  }
+
   return new AdoError(
     "unexpected",
-    `O Azure DevOps falhou em ${spec.operation} (HTTP ${response.status}).`,
+    `O Azure DevOps falhou em ${spec.operation} (HTTP ${response.status})` +
+      (spec.write ? " — nada foi gravado." : "."),
   );
 }
 
 /**
  * PAT expirado costuma vir como página de login com 200 — sem esta checagem o
  * erro apareceria como "formato inesperado" e mandaria o Operador caçar a config.
+ * Em escrita, porém, 2xx sem content-type JSON não pode virar `auth`: o ADO
+ * pode ter gravado o comment e o UI trataria como retry seguro (duplicata).
  */
-async function readJson(response: Response, operation: string): Promise<unknown> {
+async function readJson(
+  response: Response,
+  spec: RequestSpec<z.ZodType>,
+): Promise<unknown> {
   if (!response.headers.get("content-type")?.includes("json")) {
+    if (spec.write) {
+      throw new AdoError(
+        "unexpected-response",
+        `O Azure DevOps aceitou ${spec.operation} mas respondeu sem JSON ` +
+          `— a gravação provavelmente foi feita.${CHECK_THE_US}`,
+      );
+    }
+
     throw new AdoError(
       "auth",
       "O Azure DevOps respondeu com uma página de login em vez de dados. " +
@@ -169,7 +235,8 @@ async function readJson(response: Response, operation: string): Promise<unknown>
   } catch (cause) {
     throw new AdoError(
       "unexpected-response",
-      `O Azure DevOps respondeu ${operation} com um corpo que não é JSON válido.`,
+      `O Azure DevOps respondeu ${spec.operation} com um corpo que não é JSON válido.` +
+        (spec.write ? CHECK_THE_US : ""),
       { cause },
     );
   }

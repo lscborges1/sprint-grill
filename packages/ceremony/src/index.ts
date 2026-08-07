@@ -27,6 +27,7 @@ export type {
   CeremonyQuestionOption,
   CeremonySession,
   ConsultationOutcome,
+  PersistedCeremonyQuestion,
   PalcoPhase,
   PalcoState,
   SessionStatus,

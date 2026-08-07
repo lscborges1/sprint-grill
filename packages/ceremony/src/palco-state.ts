@@ -11,6 +11,7 @@ import type { CeremonyConsultation, PalcoState } from "./types";
  */
 
 const decisionSchema = z.object({
+  questionSeq: z.number(),
   questionId: z.string(),
   question: z.string(),
   recommendation: z.string(),
@@ -20,6 +21,7 @@ const decisionSchema = z.object({
 });
 
 const questionSchema = z.object({
+  questionSeq: z.number(),
   id: z.string(),
   header: z.string(),
   question: z.string(),

@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import { AgentRuntimeError } from "@sprint-griller/agent-runtime";
 import type {
   AgentEvent,
@@ -9,7 +10,8 @@ import type {
   AgentSession,
   StartSessionOptions,
 } from "@sprint-griller/agent-runtime";
-import type { SquadConfig } from "@sprint-griller/core";
+import { createLogger } from "@sprint-griller/core";
+import type { Logger, SquadConfig } from "@sprint-griller/core";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { createCeremony } from "./ceremony";
 import { openCeremonyStore } from "./store";
@@ -197,6 +199,7 @@ describe("start", () => {
       expect(ceremony.palco(SESSION_ID)?.current).toEqual({
         phase: "perguntando",
         question: {
+          questionSeq: 1,
           id: "q1",
           header: "Arredondamento",
           question: "A comissão arredonda para cima?",
@@ -491,6 +494,34 @@ describe("consult", () => {
     return fake;
   }
 
+  it("should fail an orphaned consultation during process recovery", async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "sprint-griller-recovery-")), "cerimonias.db");
+    const previousStore = openCeremonyStore(file);
+    previousStore.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+    });
+    previousStore.openConsultation(SESSION_ID, "Quem chama o createOrder?");
+    previousStore.close();
+
+    const recoveredStore = openCeremonyStore(file);
+    stores.push(recoveredStore);
+    const fake = fakeRuntime([[{ type: "ask", questions: [agentQuestion()] }]]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store: recoveredStore, repos });
+
+    expect(recoveredStore.lastConsultation(SESSION_ID)).toMatchObject({
+      status: "falhou",
+      message: /processo foi reiniciado/i,
+    });
+    expect(ceremony.palco(SESSION_ID)?.consultation).toMatchObject({ status: "falhou" });
+    expect(() =>
+      ceremony.consult({ sessionId: SESSION_ID, question: "E o cancelOrder?" }),
+    ).not.toThrow();
+  });
+
   it("should put the room question on the stage while the agent is still looking", async () => {
     const { ceremony } = await grilling([
       factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
@@ -506,6 +537,19 @@ describe("consult", () => {
       question: "Quem chama o createOrder?",
       status: "buscando",
     });
+  });
+
+  it("should refuse a second consultation while the first is still looking", async () => {
+    const { ceremony } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
+      TURN_DONE,
+    ]);
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    expect(() =>
+      ceremony.consult({ sessionId: SESSION_ID, question: "E o cancelOrder?" }),
+    ).toThrow(/espere a consulta/i);
   });
 
   it("should answer live with the citation that sustains it", async () => {
@@ -579,9 +623,88 @@ describe("consult", () => {
     await vi.waitFor(() =>
       expect(ceremony.palco(SESSION_ID)?.consultation).toMatchObject({
         status: "falhou",
-        message: "o codex caiu",
+        message: "A consulta parou por um erro inesperado.",
       }),
     );
+  });
+
+  it("should include the ceremony session in consultation logs", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    const fake = fakeRuntime(
+      [[{ type: "ask", questions: [agentQuestion()] }]],
+      [factAnswer([{ repo: "core-api", path: "src/order.ts" }]), TURN_DONE],
+    );
+    const logger: Logger = createLogger({ destination, level: "info" });
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos, logger });
+    await start(ceremony);
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(lines).toContainEqual(
+        expect.objectContaining({
+          msg: "consulta respondida",
+          sessionId: SESSION_ID,
+          storyId: story.id,
+        }),
+      ),
+    );
+  });
+
+  it("should surface a write failure instead of leaving the consultation searching", async () => {
+    const { ceremony, store } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
+      TURN_DONE,
+    ]);
+    const answer = store.answerConsultation.bind(store);
+    let failuresLeft = 1;
+    store.answerConsultation = (consultationId, outcome) => {
+      if (failuresLeft > 0) {
+        failuresLeft -= 1;
+        throw new Error("disco cheio");
+      }
+      answer(consultationId, outcome);
+    };
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.consultation).toMatchObject({
+        status: "falhou",
+        message: /não foi possível gravar/i,
+      }),
+    );
+  });
+
+  it("should keep the stage unstuck when even the failure cannot be written", async () => {
+    const { ceremony, store } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
+      TURN_DONE,
+    ]);
+    store.answerConsultation = () => {
+      throw new Error("disco cheio");
+    };
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.consultation).toMatchObject({
+        status: "falhou",
+        message: /não foi possível gravar/i,
+      }),
+    );
+    // A falha em memória não pode travar a próxima pergunta da sala.
+    expect(() =>
+      ceremony.consult({ sessionId: SESSION_ID, question: "E o cancelOrder?" }),
+    ).not.toThrow();
   });
 
   it("should notify the stage when the consultation opens and when it answers", async () => {
@@ -617,6 +740,25 @@ describe("consult", () => {
 });
 
 describe("palco", () => {
+  it("should keep repeated agent ids distinct with the persisted question sequence", async () => {
+    const { ceremony } = ceremonyWith([
+      [{ type: "ask", questions: [agentQuestion({ id: "q1" })] }],
+      [{ type: "ask", questions: [agentQuestion({ id: "q1" })] }],
+    ]);
+    await start(ceremony);
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+
+    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Sim", decidedBy: "PO" });
+    await ceremony.resume(SESSION_ID);
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)).toMatchObject({
+        decisions: [{ questionId: "q1", questionSeq: 1 }],
+        pendingQuestions: [{ id: "q1", questionSeq: 2 }],
+      }),
+    );
+  });
+
   it("should expose decided and pending questions for the stage progress", async () => {
     const { ceremony } = ceremonyWith([
       [

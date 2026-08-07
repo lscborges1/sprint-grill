@@ -16,6 +16,7 @@ import type {
   CeremonyDecision,
   CeremonyQuestion,
   CeremonySession,
+  ConsultationOutcome,
   PalcoState,
 } from "./types";
 
@@ -74,6 +75,11 @@ interface LiveTurn {
 export function createCeremony(options: CreateCeremonyOptions): Ceremony {
   const { runtime, store, repos } = options;
   const lives = new Map<string, LiveTurn>();
+  /**
+   * Escape hatch quando o banco não aceita nem o `falhou`: sem isto a sala
+   * fica eternamente em "buscando" neste processo. Some no crash — como o turno.
+   */
+  const writeFailures = new Map<string, CeremonyConsultation>();
 
   function changed(sessionId: string): void {
     options.onChange?.(sessionId);
@@ -81,6 +87,66 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
 
   function sessionLogger(sessionId: string): Logger | undefined {
     return options.logger?.child({ sessionId });
+  }
+
+  function consultationInFlight(sessionId: string): boolean {
+    const last = store.lastConsultation(sessionId);
+    if (last?.status !== "buscando") return false;
+    const failed = writeFailures.get(sessionId);
+    return !(failed && failed.id === last.id);
+  }
+
+  function sessionPalco(sessionId: string): PalcoState | undefined {
+    const state = readPalco(store, sessionId, lives.get(sessionId)?.running === true);
+    if (!state) return undefined;
+
+    const failed = writeFailures.get(sessionId);
+    if (
+      failed &&
+      state.consultation?.id === failed.id &&
+      state.consultation.status === "buscando"
+    ) {
+      return { ...state, consultation: failed };
+    }
+    return state;
+  }
+
+  /** Persiste o desfecho; se a gravação cair, a sala ainda vê um estado terminal. */
+  function settleConsultation(
+    sessionId: string,
+    consultation: CeremonyConsultation,
+    outcome: ConsultationOutcome,
+  ): void {
+    try {
+      store.answerConsultation(consultation.id, outcome);
+      writeFailures.delete(sessionId);
+      return;
+    } catch (error) {
+      sessionLogger(sessionId)?.error({ err: error }, "não foi possível gravar a consulta");
+    }
+
+    const failed: CeremonyConsultation = {
+      id: consultation.id,
+      question: consultation.question,
+      askedAt: consultation.askedAt,
+      status: "falhou",
+      message: "Não foi possível gravar a resposta. Pergunte de novo.",
+      answeredAt: Date.now(),
+    };
+
+    try {
+      store.answerConsultation(consultation.id, {
+        status: "falhou",
+        message: failed.message,
+      });
+      writeFailures.delete(sessionId);
+    } catch (persistError) {
+      sessionLogger(sessionId)?.error(
+        { err: persistError },
+        "consulta ficou sem estado terminal no banco — Palco usa falha em memória",
+      );
+      writeFailures.set(sessionId, failed);
+    }
   }
 
   /** Solta o turno: a request que dispara não espera a cerimônia inteira. */
@@ -264,18 +330,27 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       if (session.status !== "ativa") {
         throw new CeremonyError(`a cerimônia da US #${session.storyId} já está encerrada.`);
       }
+      // O Palco só projeta a última consulta: se outra entrar enquanto esta ainda
+      // busca, a resposta da primeira some da tela (fica só no transcript).
+      if (consultationInFlight(sessionId)) {
+        throw new CeremonyError(
+          "espere a consulta em andamento terminar antes de perguntar de novo.",
+        );
+      }
 
+      writeFailures.delete(sessionId);
       const consultation = store.openConsultation(sessionId, question);
       changed(sessionId);
 
       // Solta a busca: a sala vê "buscando" e a resposta chega pelo SSE. O turno
       // do grilling continua parado na decisão da vez — é sessão à parte.
+      const logger = sessionLogger(sessionId);
       void runConsultation({
         runtime,
         repos,
         story: { id: session.storyId, title: session.storyTitle },
         question: consultation.question,
-        ...(options.logger ? { logger: options.logger } : {}),
+        ...(logger ? { logger } : {}),
       })
         .catch((error: unknown) => {
           sessionLogger(sessionId)?.error({ err: error }, "consulta factual morreu fora do fluxo");
@@ -285,11 +360,8 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
           } as const;
         })
         .then((outcome) => {
-          store.answerConsultation(consultation.id, outcome);
+          settleConsultation(sessionId, consultation, outcome);
           changed(sessionId);
-        })
-        .catch((error: unknown) => {
-          sessionLogger(sessionId)?.error({ err: error }, "não foi possível gravar a consulta");
         });
 
       return consultation;
@@ -307,7 +379,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     },
 
     palco(sessionId) {
-      return readPalco(store, sessionId, lives.get(sessionId)?.running === true);
+      return sessionPalco(sessionId);
     },
   };
 }

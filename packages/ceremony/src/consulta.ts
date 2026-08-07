@@ -29,8 +29,13 @@ export interface RunConsultationOptions {
  */
 const consultationAnswerSchema = z.object({
   answer: z.string().min(1, "responda a pergunta da sala"),
-  citations: z.array(citationSchema).default([]),
 });
+const consultationCitationsFieldSchema = z.object({ citations: z.unknown().optional() });
+const consultationCitationsSchema = z.array(citationSchema);
+
+const INVALID_CITATIONS_REASON =
+  "a resposta trouxe citações em formato inválido, então as evidências não puderam ser conferidas.";
+const CONSULTATION_FAILURE_MESSAGE = "A consulta parou por um erro inesperado.";
 
 /**
  * Uma dúvida **factual** da sala resolvida ao vivo: o agente abre uma sessão
@@ -91,7 +96,7 @@ export async function runConsultation(
 
   if (failure !== undefined) {
     logger?.error({ reason: failure }, "consulta factual falhou");
-    return { status: "falhou", message: failure };
+    return { status: "falhou", message: CONSULTATION_FAILURE_MESSAGE };
   }
 
   return grade(options, lastMessage, logger);
@@ -107,18 +112,36 @@ function grade(
   lastMessage: string,
   logger: Logger | undefined,
 ): ConsultationOutcome {
-  const parsed = consultationAnswerSchema.safeParse(readJsonBlock(lastMessage));
-  if (!parsed.success) {
-    logger?.error({ question }, "resposta da consulta ilegível");
+  // A dúvida é input livre do Operador — pode trazer PII. Nos logs fica só o
+  // tamanho; storyId já vem no child do logger.
+  const questionLength = question.length;
+
+  const candidate = readJsonBlock(lastMessage);
+  const parsedAnswer = consultationAnswerSchema.safeParse(candidate);
+  if (!parsedAnswer.success) {
+    logger?.error({ questionLength }, "resposta da consulta ilegível");
     return {
       status: "falhou",
       message: "O agente terminou sem devolver a resposta no formato combinado. Pergunte de novo.",
     };
   }
 
-  const { answer, citations } = parsed.data;
+  const answer = parsedAnswer.data.answer;
+  const citationsField = consultationCitationsFieldSchema.parse(candidate).citations;
+  const parsedCitations = consultationCitationsSchema.safeParse(citationsField ?? []);
+  if (!parsedCitations.success) {
+    logger?.warn({ questionLength }, "consulta respondeu com citações em formato inválido");
+    return {
+      status: "sem-lastro",
+      answer,
+      citations: [],
+      motivo: INVALID_CITATIONS_REASON,
+    };
+  }
+
+  const citations = parsedCitations.data;
   if (citations.length === 0) {
-    logger?.warn({ question }, "consulta respondida sem citação");
+    logger?.warn({ questionLength }, "consulta respondida sem citação");
     return {
       status: "sem-lastro",
       answer,
@@ -134,7 +157,10 @@ function grade(
 
   if (grounding.status === "reprovado") {
     logger?.warn(
-      { question, violations: grounding.violations.map((violation) => violation.detail) },
+      {
+        questionLength,
+        violations: grounding.violations.map((violation) => violation.detail),
+      },
       "consulta reprovada na checagem de citações",
     );
     return {
@@ -145,7 +171,7 @@ function grade(
     };
   }
 
-  logger?.info({ question, citations: citations.length }, "consulta respondida");
+  logger?.info({ questionLength, citations: citations.length }, "consulta respondida");
   return { status: "respondida", answer, citations };
 }
 

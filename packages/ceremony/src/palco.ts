@@ -1,5 +1,5 @@
 import type { CeremonyStore } from "./store";
-import type { CeremonyQuestion, CeremonySession, PalcoState } from "./types";
+import type { CeremonySession, PalcoState, PersistedCeremonyQuestion } from "./types";
 
 /**
  * O que a sala vê, projetado do que está gravado. Nada aqui vem de memória do
@@ -35,7 +35,7 @@ export function readPalco(
 function phaseOf(
   session: CeremonySession,
   live: boolean,
-  currentQuestion: CeremonyQuestion | undefined,
+  currentQuestion: PersistedCeremonyQuestion | undefined,
 ): PalcoState["current"] {
   if (session.status === "falhou") {
     return { phase: "falhou", message: session.failureMessage ?? "A cerimônia parou." };

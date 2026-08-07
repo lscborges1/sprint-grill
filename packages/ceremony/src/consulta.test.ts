@@ -24,6 +24,18 @@ const SILENT_LOGGER = createLogger({
   level: "fatal",
 });
 
+/** Captura as linhas JSON emitidas pelo logger, uma por chamada. */
+function captureLines() {
+  const lines: Record<string, unknown>[] = [];
+  const destination = new Writable({
+    write(chunk, _encoding, done) {
+      lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+      done();
+    },
+  });
+  return { lines, destination };
+}
+
 const root = mkdtempSync(path.join(tmpdir(), "sprint-griller-consulta-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -154,6 +166,22 @@ describe("runConsultation", () => {
     expect(outcome.status === "sem-lastro" && outcome.motivo).toMatch(/sem citar/i);
   });
 
+  it("should keep a readable answer unverified when a citation is malformed", async () => {
+    const fake = fakeRuntime([
+      answerMessage([{ repo: "core-api" }]),
+      TURN_COMPLETED,
+    ]);
+
+    const outcome = await consult(fake.runtime);
+
+    expect(outcome).toMatchObject({
+      status: "sem-lastro",
+      answer: "O createOrder só é chamado pelo checkout.",
+      citations: [],
+    });
+    expect(outcome.status === "sem-lastro" && outcome.motivo).toMatch(/formato inválido/i);
+  });
+
   it("should fail when the agent never returns a readable answer", async () => {
     const fake = fakeRuntime([{ type: "message", text: "não achei nada" }, TURN_COMPLETED]);
 
@@ -162,14 +190,25 @@ describe("runConsultation", () => {
     expect(outcome.status).toBe("falhou");
   });
 
-  it("should fail with the runtime message when the turn breaks", async () => {
+  it("should persist a stable failure message while logging the runtime message", async () => {
     const fake = fakeRuntime([
       { type: "turn-failed", error: new AgentRuntimeError("o codex caiu") },
     ]);
 
-    const outcome = await consult(fake.runtime);
+    const { lines, destination } = captureLines();
+    const outcome = await runConsultation({
+      runtime: fake.runtime,
+      repos: REPOS,
+      story: STORY,
+      question: "Quem chama o createOrder?",
+      logger: createLogger({ destination, level: "info" }),
+    });
 
-    expect(outcome).toEqual({ status: "falhou", message: "o codex caiu" });
+    expect(outcome).toEqual({
+      status: "falhou",
+      message: "A consulta parou por um erro inesperado.",
+    });
+    expect(lines).toContainEqual(expect.objectContaining({ reason: "o codex caiu" }));
   });
 
   it("should send the room back to the stage instead of hanging when the agent asks something", async () => {
@@ -224,5 +263,26 @@ describe("runConsultation", () => {
     await consult(fake.runtime);
 
     expect(decided).toEqual(["decline"]);
+  });
+
+  it("should log question length instead of the raw operator question", async () => {
+    const { lines, destination } = captureLines();
+    const logger = createLogger({ destination, level: "info" });
+    const question = "O CPF 123.456.789-00 já tem parcelas no contrato?";
+    const fake = fakeRuntime([
+      answerMessage([{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }]),
+      TURN_COMPLETED,
+    ]);
+
+    await runConsultation({
+      runtime: fake.runtime,
+      repos: REPOS,
+      story: STORY,
+      question,
+      logger,
+    });
+
+    expect(lines.some((line) => JSON.stringify(line).includes(question))).toBe(false);
+    expect(lines.some((line) => line.questionLength === question.length)).toBe(true);
   });
 });

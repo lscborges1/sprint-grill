@@ -117,7 +117,8 @@ describe("askQuestions", () => {
 
     store.askQuestions("thread-1", [question()]);
 
-    expect(store.currentQuestion("thread-1")).toEqual(question());
+    expect(store.currentQuestion("thread-1")).toMatchObject(question());
+    expect(store.currentQuestion("thread-1")?.questionSeq).toBe(1);
   });
 
   it("should skip questions that were already decided", () => {
@@ -382,6 +383,66 @@ describe("consultations", () => {
     expect(store.listTranscript("thread-1").at(-1)?.event).toMatchObject({
       kind: "resposta-factual",
       verificada: false,
+      motivo: "sem citação nenhuma.",
+    });
+  });
+
+  it("should preserve an earlier unverified reason after another consultation", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const first = store.openConsultation("thread-1", "Existe cache?");
+
+    store.answerConsultation(first.id, {
+      status: "sem-lastro",
+      answer: "Existe um cache em memória.",
+      citations: [],
+      motivo: "sem citação nenhuma.",
+    });
+
+    const second = store.openConsultation("thread-1", "Quem chama o CreateOrder?");
+    store.answerConsultation(second.id, {
+      status: "respondida",
+      answer: "Só o checkout.",
+      citations: [{ repo: "core-api", path: "src/order.ts" }],
+    });
+
+    const firstAnswer = store
+      .listTranscript("thread-1")
+      .find(
+        (entry) =>
+          entry.event.kind === "resposta-factual" && entry.event.consultationId === first.id,
+      );
+
+    expect(firstAnswer?.event).toMatchObject({
+      kind: "resposta-factual",
+      verificada: false,
+      motivo: "sem citação nenhuma.",
+    });
+  });
+
+  it("should recover a missing legacy reason from the consultation row", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    const consultation = store.openConsultation("thread-1", "Existe cache?");
+
+    store.answerConsultation(consultation.id, {
+      status: "sem-lastro",
+      answer: "Existe um cache em memória.",
+      citations: [],
+      motivo: "sem citação nenhuma.",
+    });
+
+    const database = new Database(file);
+    database
+      .prepare("UPDATE events SET payload = json_remove(payload, '$.motivo') WHERE kind = ?")
+      .run("resposta-factual");
+    database.close();
+
+    expect(store.listTranscript("thread-1").at(-1)?.event).toMatchObject({
+      kind: "resposta-factual",
+      verificada: false,
+      motivo: "sem citação nenhuma.",
     });
   });
 

@@ -20,6 +20,7 @@ import type {
   CeremonyConsultation,
   CeremonyDecision,
   CeremonyQuestion,
+  PersistedCeremonyQuestion,
   CeremonySession,
   ConsultationOutcome,
   TranscriptEntry,
@@ -61,8 +62,8 @@ export interface CeremonyStore {
   findOpenSessionByStory(storyId: number): CeremonySession | undefined;
   finishSession(sessionId: string, outcome: FinishSessionOutcome): void;
   askQuestions(sessionId: string, asked: readonly CeremonyQuestion[]): void;
-  currentQuestion(sessionId: string): CeremonyQuestion | undefined;
-  listOpenQuestions(sessionId: string): readonly CeremonyQuestion[];
+  currentQuestion(sessionId: string): PersistedCeremonyQuestion | undefined;
+  listOpenQuestions(sessionId: string): readonly PersistedCeremonyQuestion[];
   abandonPendingQuestions(sessionId: string): void;
   recordDecision(input: RecordDecisionInput): CeremonyDecision;
   countDecisions(sessionId: string): number;
@@ -87,8 +88,11 @@ const citationsSchema: z.ZodType<readonly CeremonyCitation[]> = z.array(
   z.object({ repo: z.string(), path: z.string(), symbol: z.string().optional() }),
 );
 
+const ORPHANED_CONSULTATION_MESSAGE =
+  "A consulta foi interrompida porque o processo foi reiniciado. Pergunte de novo.";
+
 /** O transcript é lido de volta como dado externo: arquivo antigo não pode virar `any`. */
-const transcriptEventSchema: z.ZodType<TranscriptEvent> = z.discriminatedUnion("kind", [
+const transcriptEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("mensagem"), text: z.string() }),
   z.object({
     kind: z.literal("pergunta"),
@@ -110,6 +114,7 @@ const transcriptEventSchema: z.ZodType<TranscriptEvent> = z.discriminatedUnion("
     answer: z.string(),
     citations: citationsSchema,
     verificada: z.boolean(),
+    motivo: z.string().optional(),
   }),
   z.object({ kind: z.literal("turno-encerrado") }),
   z.object({ kind: z.literal("turno-falhou"), message: z.string() }),
@@ -126,6 +131,24 @@ export function openCeremonyStore(
   // WAL: a cerimônia grava a cada evento enquanto o Palco lê na mesma máquina.
   sqlite.pragma("journal_mode = WAL");
   applySchema(sqlite, dbPath, options.logger);
+
+  // Um worker de Consulta vive só neste processo. Qualquer busca que sobre no
+  // banco quando ele abre já perdeu o worker e não pode continuar bloqueando a
+  // sala.
+  const recoveredAt = Date.now();
+  const recovered = sqlite
+    .prepare(
+      `UPDATE consultations
+       SET status = 'falhou', message = ?, answered_at = ?
+       WHERE status = 'buscando'`,
+    )
+    .run(ORPHANED_CONSULTATION_MESSAGE, recoveredAt);
+  if (recovered.changes > 0) {
+    options.logger?.warn(
+      { consultations: recovered.changes },
+      "consultas órfãs marcadas como falhas durante a recuperação",
+    );
+  }
 
   const db = drizzle(sqlite);
 
@@ -260,6 +283,7 @@ export function openCeremonyStore(
       }
 
       const decision: CeremonyDecision = {
+        questionSeq: pending.seq,
         questionId,
         question: pending.question,
         recommendation: pending.recommendation,
@@ -271,7 +295,7 @@ export function openCeremonyStore(
       db.transaction((tx) => {
         tx.update(questions).set({ status: "respondida" }).where(eq(questions.seq, pending.seq)).run();
         tx.insert(decisions)
-          .values({ sessionId, questionSeq: pending.seq, ...decision })
+          .values({ sessionId, ...decision })
           .run();
         tx.insert(events)
           .values({
@@ -377,18 +401,30 @@ export function openCeremonyStore(
         // registro é do que o código respondeu, não do que se tentou perguntar.
         if (outcome.status === "falhou") return;
 
+        const factualEvent: TranscriptEvent =
+          outcome.status === "respondida"
+            ? {
+                kind: "resposta-factual",
+                consultationId,
+                answer: outcome.answer,
+                citations: outcome.citations,
+                verificada: true,
+              }
+            : {
+                kind: "resposta-factual",
+                consultationId,
+                answer: outcome.answer,
+                citations: outcome.citations,
+                verificada: false,
+                motivo: outcome.motivo,
+              };
+
         tx.insert(events)
           .values({
             sessionId: open.sessionId,
             at: answeredAt,
             kind: "resposta-factual",
-            payload: JSON.stringify({
-              kind: "resposta-factual",
-              consultationId,
-              answer: outcome.answer,
-              citations: outcome.citations,
-              verificada: outcome.status === "respondida",
-            } satisfies TranscriptEvent),
+            payload: JSON.stringify(factualEvent),
           })
           .run();
       });
@@ -419,7 +455,19 @@ export function openCeremonyStore(
         .all()
         .map((row) => ({
           at: row.at,
-          event: transcriptEventSchema.parse(JSON.parse(row.payload)),
+          event: normalizeTranscriptEvent(
+            transcriptEventSchema.parse(JSON.parse(row.payload)),
+            (consultationId) => {
+              const seq = Number(consultationId);
+              if (!Number.isInteger(seq)) return undefined;
+
+              return db
+                .select({ motivo: consultations.motivo })
+                .from(consultations)
+                .where(eq(consultations.seq, seq))
+                .get()?.motivo;
+            },
+          ),
         }));
     },
 
@@ -460,9 +508,40 @@ function applySchema(sqlite: Database.Database, dbPath: string, logger?: Logger)
 type QuestionRow = typeof questions.$inferSelect;
 type DecisionRow = typeof decisions.$inferSelect;
 type ConsultationRow = typeof consultations.$inferSelect;
+type ParsedTranscriptEvent = z.infer<typeof transcriptEventSchema>;
 
-function toQuestion(row: QuestionRow): CeremonyQuestion {
+const LEGACY_UNVERIFIED_REASON = "a citação não fechou com o código.";
+
+function normalizeTranscriptEvent(
+  event: ParsedTranscriptEvent,
+  getConsultationMotivo: (consultationId: string) => string | null | undefined,
+): TranscriptEvent {
+  if (event.kind !== "resposta-factual") return event;
+
+  if (event.verificada) {
+    return {
+      kind: "resposta-factual",
+      consultationId: event.consultationId,
+      answer: event.answer,
+      citations: event.citations,
+      verificada: true,
+    };
+  }
+
   return {
+    kind: "resposta-factual",
+    consultationId: event.consultationId,
+    answer: event.answer,
+    citations: event.citations,
+    verificada: false,
+    motivo:
+      event.motivo ?? getConsultationMotivo(event.consultationId) ?? LEGACY_UNVERIFIED_REASON,
+  };
+}
+
+function toQuestion(row: QuestionRow): PersistedCeremonyQuestion {
+  return {
+    questionSeq: row.seq,
     id: row.questionId,
     header: row.header,
     question: row.question,
@@ -509,6 +588,7 @@ function toConsultation(row: ConsultationRow): CeremonyConsultation {
 
 function toDecision(row: DecisionRow): CeremonyDecision {
   return {
+    questionSeq: row.questionSeq,
     questionId: row.questionId,
     question: row.question,
     recommendation: row.recommendation,

@@ -80,12 +80,12 @@ function decisionTree(state: PalcoState): readonly DecisionNode[] {
 
   return [
     ...state.decisions.map(
-      (decision) => ({ key: decision.questionId, status: "decidida", decision }) as const,
+      (decision) => ({ key: `question-${decision.questionSeq}`, status: "decidida", decision }) as const,
     ),
     ...state.pendingQuestions.map(
       (question) =>
         ({
-          key: question.id,
+          key: `question-${question.questionSeq}`,
           status: question.id === currentQuestionId ? "atual" : "aberta",
           question,
         }) as const,
@@ -248,6 +248,9 @@ function LiveFacts({ state }: { state: PalcoState }) {
           // Consulta nova é campo limpo: sem a `key`, a dúvida anterior fica no input.
           key={state.consultation?.id ?? "primeira"}
           sessionId={state.sessionId}
+          // Uma de cada vez: o Palco só projeta a última, e outra no meio da busca
+          // faria a resposta anterior sumir da tela.
+          looking={state.consultation?.status === "buscando"}
         />
       )}
     </section>
@@ -302,8 +305,16 @@ function Consultation({ consultation }: { consultation: CeremonyConsultation }) 
   );
 }
 
-function FactForm({ sessionId }: { sessionId: string }) {
+function FactForm({
+  sessionId,
+  looking,
+}: {
+  sessionId: string;
+  /** Já tem consulta em voo — o submit fica fechado até ela terminar. */
+  looking: boolean;
+}) {
   const [error, ask, pending] = useActionState(askFactAction, null);
+  const blocked = pending || looking;
 
   return (
     <form action={ask} className="flex flex-wrap items-end gap-3">
@@ -314,13 +325,14 @@ function FactForm({ sessionId }: { sessionId: string }) {
           type="text"
           name="question"
           required
+          disabled={blocked}
           placeholder="O contrato de CreateOrder já tem campo de parcelas?"
-          className="min-w-64 rounded-lg border border-line bg-transparent px-4 py-2.5 text-base text-foreground"
+          className="min-w-64 rounded-lg border border-line bg-transparent px-4 py-2.5 text-base text-foreground disabled:opacity-50"
         />
       </label>
       <button
         type="submit"
-        disabled={pending}
+        disabled={blocked}
         className="rounded-xl border border-line px-6 py-2.5 text-base font-medium disabled:opacity-50"
       >
         Perguntar ao agente

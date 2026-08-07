@@ -22,6 +22,7 @@ const story = {
 };
 
 const decision = (overrides: Partial<CeremonyDecision> = {}): CeremonyDecision => ({
+  questionSeq: 1,
   questionId: "q1",
   question: "A comissão arredonda para cima?",
   recommendation: "Seguir a regra bancária.",

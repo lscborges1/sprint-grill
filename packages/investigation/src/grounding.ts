@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { RepoConfig } from "@sprint-griller/core";
-import type { Citation, InvestigationReport } from "./report";
+import type { Citation, Impact } from "./report";
 
 export type ViolationReason =
   | "repo-fora-do-config"
@@ -27,20 +27,23 @@ export type GroundingResult =
     };
 
 /**
- * A checagem mecânica (não-LLM) que decide se o relatório vale: cada afirmação
- * de impacto é ancorada num arquivo que existe de verdade num repo do config.
- * Uma citação furada reprova o relatório inteiro — um relatório que cita
- * caminho inventado não é "quase certo", é ruído com cara de fato.
+ * A checagem mecânica (não-LLM) que decide se uma afirmação vale: cada uma é
+ * ancorada num arquivo que existe de verdade num repo do config. Uma citação
+ * furada reprova o conjunto inteiro — texto que cita caminho inventado não é
+ * "quase certo", é ruído com cara de fato.
  *
  * Não julga conteúdo: só confere que a evidência existe onde o agente disse.
+ *
+ * Vale para o relatório da Investigação e para a resposta de uma Consulta ao
+ * vivo na cerimônia: as duas são afirmação + citações, e a regra é a mesma.
  */
 export function verifyGrounding(
-  report: InvestigationReport,
+  claims: readonly Impact[],
   repos: readonly RepoConfig[],
 ): GroundingResult {
   const roots = new Map(repos.map((repo) => [repo.name, repo.path]));
 
-  const violations = report.impacts.flatMap((impact) =>
+  const violations = claims.flatMap((impact) =>
     impact.citations.flatMap((citation) => {
       const failure = checkCitation(citation, roots);
       return failure === undefined ? [] : [{ claim: impact.claim, citation, ...failure }];

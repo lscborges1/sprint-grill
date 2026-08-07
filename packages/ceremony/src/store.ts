@@ -6,11 +6,23 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { CeremonyError } from "./ceremony-error";
-import { SCHEMA_DDL, SCHEMA_VERSION, decisions, events, questions, sessions } from "./schema";
+import {
+  SCHEMA_DDL,
+  SCHEMA_VERSION,
+  consultations,
+  decisions,
+  events,
+  questions,
+  sessions,
+} from "./schema";
 import type {
+  CeremonyCitation,
+  CeremonyConsultation,
   CeremonyDecision,
   CeremonyQuestion,
+  PersistedCeremonyQuestion,
   CeremonySession,
+  ConsultationOutcome,
   TranscriptEntry,
   TranscriptEvent,
 } from "./types";
@@ -50,12 +62,21 @@ export interface CeremonyStore {
   findOpenSessionByStory(storyId: number): CeremonySession | undefined;
   finishSession(sessionId: string, outcome: FinishSessionOutcome): void;
   askQuestions(sessionId: string, asked: readonly CeremonyQuestion[]): void;
-  currentQuestion(sessionId: string): CeremonyQuestion | undefined;
+  currentQuestion(sessionId: string): PersistedCeremonyQuestion | undefined;
+  listOpenQuestions(sessionId: string): readonly PersistedCeremonyQuestion[];
   abandonPendingQuestions(sessionId: string): void;
   recordDecision(input: RecordDecisionInput): CeremonyDecision;
   countDecisions(sessionId: string): number;
   lastDecision(sessionId: string): CeremonyDecision | undefined;
   listDecisions(sessionId: string): readonly CeremonyDecision[];
+  /**
+   * Abre uma Consulta factual. Não tem `decidedBy` porque não é decisão: quem
+   * responde é o repositório. É a contraparte de `recordDecision`, e as duas
+   * escritas nunca se cruzam.
+   */
+  openConsultation(sessionId: string, question: string): CeremonyConsultation;
+  answerConsultation(consultationId: string, outcome: ConsultationOutcome): void;
+  lastConsultation(sessionId: string): CeremonyConsultation | undefined;
   appendEvent(sessionId: string, event: TranscriptEvent): void;
   listTranscript(sessionId: string): readonly TranscriptEntry[];
   close(): void;
@@ -63,9 +84,15 @@ export interface CeremonyStore {
 
 const evidenceSchema = z.array(z.string());
 const optionsSchema = z.array(z.object({ label: z.string(), description: z.string() }));
+const citationsSchema: z.ZodType<readonly CeremonyCitation[]> = z.array(
+  z.object({ repo: z.string(), path: z.string(), symbol: z.string().optional() }),
+);
+
+const ORPHANED_CONSULTATION_MESSAGE =
+  "A consulta foi interrompida porque o processo foi reiniciado. Pergunte de novo.";
 
 /** O transcript é lido de volta como dado externo: arquivo antigo não pode virar `any`. */
-const transcriptEventSchema: z.ZodType<TranscriptEvent> = z.discriminatedUnion("kind", [
+const transcriptEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("mensagem"), text: z.string() }),
   z.object({
     kind: z.literal("pergunta"),
@@ -80,6 +107,15 @@ const transcriptEventSchema: z.ZodType<TranscriptEvent> = z.discriminatedUnion("
     decidedBy: z.string(),
   }),
   z.object({ kind: z.literal("pergunta-recusada"), question: z.string(), motivo: z.string() }),
+  z.object({ kind: z.literal("consulta"), consultationId: z.string(), question: z.string() }),
+  z.object({
+    kind: z.literal("resposta-factual"),
+    consultationId: z.string(),
+    answer: z.string(),
+    citations: citationsSchema,
+    verificada: z.boolean(),
+    motivo: z.string().optional(),
+  }),
   z.object({ kind: z.literal("turno-encerrado") }),
   z.object({ kind: z.literal("turno-falhou"), message: z.string() }),
   z.object({ kind: z.literal("retomada") }),
@@ -95,6 +131,24 @@ export function openCeremonyStore(
   // WAL: a cerimônia grava a cada evento enquanto o Palco lê na mesma máquina.
   sqlite.pragma("journal_mode = WAL");
   applySchema(sqlite, dbPath, options.logger);
+
+  // Um worker de Consulta vive só neste processo. Qualquer busca que sobre no
+  // banco quando ele abre já perdeu o worker e não pode continuar bloqueando a
+  // sala.
+  const recoveredAt = Date.now();
+  const recovered = sqlite
+    .prepare(
+      `UPDATE consultations
+       SET status = 'falhou', message = ?, answered_at = ?
+       WHERE status = 'buscando'`,
+    )
+    .run(ORPHANED_CONSULTATION_MESSAGE, recoveredAt);
+  if (recovered.changes > 0) {
+    options.logger?.warn(
+      { consultations: recovered.changes },
+      "consultas órfãs marcadas como falhas durante a recuperação",
+    );
+  }
 
   const db = drizzle(sqlite);
 
@@ -187,6 +241,16 @@ export function openCeremonyStore(
       return row && toQuestion(row);
     },
 
+    listOpenQuestions(sessionId) {
+      return db
+        .select()
+        .from(questions)
+        .where(and(eq(questions.sessionId, sessionId), eq(questions.status, "aberta")))
+        .orderBy(asc(questions.seq))
+        .all()
+        .map(toQuestion);
+    },
+
     abandonPendingQuestions(sessionId) {
       db.update(questions)
         .set({ status: "abandonada" })
@@ -219,6 +283,7 @@ export function openCeremonyStore(
       }
 
       const decision: CeremonyDecision = {
+        questionSeq: pending.seq,
         questionId,
         question: pending.question,
         recommendation: pending.recommendation,
@@ -230,7 +295,7 @@ export function openCeremonyStore(
       db.transaction((tx) => {
         tx.update(questions).set({ status: "respondida" }).where(eq(questions.seq, pending.seq)).run();
         tx.insert(decisions)
-          .values({ sessionId, questionSeq: pending.seq, ...decision })
+          .values({ sessionId, ...decision })
           .run();
         tx.insert(events)
           .values({
@@ -279,6 +344,102 @@ export function openCeremonyStore(
         .map(toDecision);
     },
 
+    openConsultation(sessionId, question) {
+      requireSession(sessionId);
+
+      const asked = question.trim();
+      if (asked === "") throw new CeremonyError("escreva a pergunta de fato para o agente.");
+
+      const askedAt = Date.now();
+      return db.transaction((tx) => {
+        const row = tx
+          .insert(consultations)
+          .values({ sessionId, question: asked, askedAt, status: "buscando" })
+          .returning()
+          .get();
+        tx.insert(events)
+          .values({
+            sessionId,
+            at: askedAt,
+            kind: "consulta",
+            payload: JSON.stringify({
+              kind: "consulta",
+              consultationId: String(row.seq),
+              question: asked,
+            } satisfies TranscriptEvent),
+          })
+          .run();
+        return toConsultation(row);
+      });
+    },
+
+    answerConsultation(consultationId, outcome) {
+      const seq = Number(consultationId);
+      const open = db
+        .select()
+        .from(consultations)
+        .where(and(eq(consultations.seq, seq), eq(consultations.status, "buscando")))
+        .get();
+
+      if (!open) throw new CeremonyError(`a consulta ${consultationId} não está aberta.`);
+
+      const answeredAt = Date.now();
+      db.transaction((tx) => {
+        tx.update(consultations)
+          .set({
+            status: outcome.status,
+            answer: outcome.status === "falhou" ? null : outcome.answer,
+            citations: outcome.status === "falhou" ? null : JSON.stringify(outcome.citations),
+            motivo: outcome.status === "sem-lastro" ? outcome.motivo : null,
+            message: outcome.status === "falhou" ? outcome.message : null,
+            answeredAt,
+          })
+          .where(eq(consultations.seq, seq))
+          .run();
+
+        // Consulta que não chegou a responder não deixa fato no transcript: o
+        // registro é do que o código respondeu, não do que se tentou perguntar.
+        if (outcome.status === "falhou") return;
+
+        const factualEvent: TranscriptEvent =
+          outcome.status === "respondida"
+            ? {
+                kind: "resposta-factual",
+                consultationId,
+                answer: outcome.answer,
+                citations: outcome.citations,
+                verificada: true,
+              }
+            : {
+                kind: "resposta-factual",
+                consultationId,
+                answer: outcome.answer,
+                citations: outcome.citations,
+                verificada: false,
+                motivo: outcome.motivo,
+              };
+
+        tx.insert(events)
+          .values({
+            sessionId: open.sessionId,
+            at: answeredAt,
+            kind: "resposta-factual",
+            payload: JSON.stringify(factualEvent),
+          })
+          .run();
+      });
+    },
+
+    lastConsultation(sessionId) {
+      const row = db
+        .select()
+        .from(consultations)
+        .where(eq(consultations.sessionId, sessionId))
+        .orderBy(desc(consultations.seq))
+        .get();
+      return row && toConsultation(row);
+    },
+
     appendEvent(sessionId, event) {
       db.insert(events)
         .values({ sessionId, at: Date.now(), kind: event.kind, payload: JSON.stringify(event) })
@@ -294,7 +455,19 @@ export function openCeremonyStore(
         .all()
         .map((row) => ({
           at: row.at,
-          event: transcriptEventSchema.parse(JSON.parse(row.payload)),
+          event: normalizeTranscriptEvent(
+            transcriptEventSchema.parse(JSON.parse(row.payload)),
+            (consultationId) => {
+              const seq = Number(consultationId);
+              if (!Number.isInteger(seq)) return undefined;
+
+              return db
+                .select({ motivo: consultations.motivo })
+                .from(consultations)
+                .where(eq(consultations.seq, seq))
+                .get()?.motivo;
+            },
+          ),
         }));
     },
 
@@ -334,9 +507,41 @@ function applySchema(sqlite: Database.Database, dbPath: string, logger?: Logger)
 
 type QuestionRow = typeof questions.$inferSelect;
 type DecisionRow = typeof decisions.$inferSelect;
+type ConsultationRow = typeof consultations.$inferSelect;
+type ParsedTranscriptEvent = z.infer<typeof transcriptEventSchema>;
 
-function toQuestion(row: QuestionRow): CeremonyQuestion {
+const LEGACY_UNVERIFIED_REASON = "a citação não fechou com o código.";
+
+function normalizeTranscriptEvent(
+  event: ParsedTranscriptEvent,
+  getConsultationMotivo: (consultationId: string) => string | null | undefined,
+): TranscriptEvent {
+  if (event.kind !== "resposta-factual") return event;
+
+  if (event.verificada) {
+    return {
+      kind: "resposta-factual",
+      consultationId: event.consultationId,
+      answer: event.answer,
+      citations: event.citations,
+      verificada: true,
+    };
+  }
+
   return {
+    kind: "resposta-factual",
+    consultationId: event.consultationId,
+    answer: event.answer,
+    citations: event.citations,
+    verificada: false,
+    motivo:
+      event.motivo ?? getConsultationMotivo(event.consultationId) ?? LEGACY_UNVERIFIED_REASON,
+  };
+}
+
+function toQuestion(row: QuestionRow): PersistedCeremonyQuestion {
+  return {
+    questionSeq: row.seq,
     id: row.questionId,
     header: row.header,
     question: row.question,
@@ -347,8 +552,43 @@ function toQuestion(row: QuestionRow): CeremonyQuestion {
   };
 }
 
+/**
+ * A linha guarda os campos das quatro variantes lado a lado (é SQL), então a
+ * volta para o domínio é onde o estado impossível deixa de existir: quem lê uma
+ * Consulta `respondida` tem `answer` e `citations`, e ponto.
+ */
+function toConsultation(row: ConsultationRow): CeremonyConsultation {
+  const asked = { id: String(row.seq), question: row.question, askedAt: row.askedAt };
+  if (row.status === "buscando") return { ...asked, status: "buscando" };
+
+  const answeredAt = row.answeredAt ?? row.askedAt;
+  if (row.status === "falhou") {
+    return {
+      ...asked,
+      status: "falhou",
+      message: row.message ?? "a consulta não devolveu resposta.",
+      answeredAt,
+    };
+  }
+
+  const answer = row.answer ?? "";
+  const citations = citationsSchema.parse(JSON.parse(row.citations ?? "[]"));
+
+  return row.status === "respondida"
+    ? { ...asked, status: "respondida", answer, citations, answeredAt }
+    : {
+        ...asked,
+        status: "sem-lastro",
+        answer,
+        citations,
+        motivo: row.motivo ?? "a citação não fechou com o código.",
+        answeredAt,
+      };
+}
+
 function toDecision(row: DecisionRow): CeremonyDecision {
   return {
+    questionSeq: row.questionSeq,
     questionId: row.questionId,
     question: row.question,
     recommendation: row.recommendation,

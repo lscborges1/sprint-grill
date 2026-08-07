@@ -131,6 +131,9 @@ importers:
       '@sprint-griller/core':
         specifier: workspace:*
         version: link:../core
+      '@sprint-griller/investigation':
+        specifier: workspace:*
+        version: link:../investigation
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3

@@ -9,6 +9,19 @@ export interface CeremonyStory {
   readonly url: string;
 }
 
+/** A US como a Consulta precisa dela: só para o agente saber do que se trata. */
+export interface ConsultationStory {
+  readonly id: number;
+  readonly title: string;
+}
+
+/** Os repos da squad como o agente os enxerga: nome e caminho absoluto. */
+function repoList(repos: SquadConfig["repos"]): string[] {
+  return [repos.primary, ...repos.related].map(
+    (repo) => `- \`${repo.name}\` — ${repo.path}${repo === repos.primary ? " (principal)" : ""}`,
+  );
+}
+
 /**
  * O papel do agente no grilling coletivo. Vai como `developerInstructions` da
  * sessão, então vale para todos os turnos — inclusive os de retomada.
@@ -18,8 +31,6 @@ export interface CeremonyStory {
  * texto existe para o agente não gastar um turno descobrindo isso na marra.
  */
 export function ceremonyInstructions(repos: SquadConfig["repos"]): string {
-  const all = [repos.primary, ...repos.related];
-
   return [
     "Você conduz o grilling coletivo de refinamento de uma User Story. Na sala estão",
     "a squad e o PO, com a tela projetada. Escreva sempre em pt-BR, direto, sem floreio.",
@@ -29,10 +40,7 @@ export function ceremonyInstructions(repos: SquadConfig["repos"]): string {
     "Estes são os únicos repos que você pode ler. Para navegar e buscar, use o",
     "caminho absoluto de cada um:",
     "",
-    ...all.map(
-      (repo) =>
-        `- \`${repo.name}\` — ${repo.path}${repo === repos.primary ? " (principal)" : ""}`,
-    ),
+    ...repoList(repos),
     "",
     "## O que você pergunta, e o que você não pergunta",
     "",
@@ -80,6 +88,61 @@ export function ceremonyOpeningPrompt(
     investigationMarkdown,
     "",
     "Faça a primeira pergunta à sala.",
+  ].join("\n");
+}
+
+/**
+ * O papel do agente numa **Consulta**: achar o fato, não opinar. Sem
+ * `ask_operator` e sem recomendação — isto aqui é o oposto de uma decisão, e é o
+ * mesmo contrato estruturado da Investigação porque a citação precisa ser
+ * conferível, não decorativa (ADR 0002).
+ */
+export function consultationInstructions(repos: SquadConfig["repos"]): string {
+  return [
+    "Uma sala de refinamento está parada esperando um fato sobre o código. Sua única",
+    "tarefa é lê-lo e responder. Escreva em pt-BR, direto, sem floreio.",
+    "",
+    "## Repositórios da squad",
+    "",
+    "Estes são os únicos repos que você pode ler, pelo caminho absoluto:",
+    "",
+    ...repoList(repos),
+    "",
+    "## Regras",
+    "",
+    "1. Não pergunte nada: ninguém vai responder. Abra os arquivos e descubra.",
+    "2. Não recomende, não opine, não proponha solução — a decisão é da sala.",
+    "3. Toda resposta se apoia em arquivo que você abriu. Sem citação, a resposta é",
+    "   descartada como não verificada.",
+    "4. Se o código não responder, diga isso em `answer` e cite o que você olhou.",
+    "5. Você roda em sandbox somente-leitura: pedido de escalar permissão é recusado.",
+    "",
+    "## Formato da resposta",
+    "",
+    "Termine com um único bloco ```json, e nada depois dele:",
+    "",
+    "```json",
+    "{",
+    '  "answer": "a resposta em 1-3 frases, legível numa tela projetada",',
+    '  "citations": [{ "repo": "nome-do-repo", "path": "caminho/relativo.ts", "symbol": "opcional" }]',
+    "}",
+    "```",
+    "",
+    "`path` é relativo à raiz do repo. `symbol` é um trecho literal que aparece no",
+    "arquivo — ele é conferido contra o disco, então não invente.",
+  ].join("\n");
+}
+
+/** A dúvida de fato da sala, com a US só como contexto do que se está refinando. */
+export function consultationPrompt(story: ConsultationStory, question: string): string {
+  return [
+    `A sala está refinando a US #${story.id} — "${story.title}" — e travou numa dúvida de fato.`,
+    "",
+    "Pergunta da sala:",
+    "",
+    question,
+    "",
+    "Leia os repos e responda no formato combinado.",
   ].join("\n");
 }
 

@@ -117,7 +117,8 @@ describe("askQuestions", () => {
 
     store.askQuestions("thread-1", [question()]);
 
-    expect(store.currentQuestion("thread-1")).toEqual(question());
+    expect(store.currentQuestion("thread-1")).toMatchObject(question());
+    expect(store.currentQuestion("thread-1")?.questionSeq).toBe(1);
   });
 
   it("should skip questions that were already decided", () => {
@@ -267,6 +268,206 @@ describe("finishSession", () => {
       status: "falhou",
       failureMessage: "o agente caiu",
     });
+  });
+});
+
+describe("consultations", () => {
+  it("should open a consultation still looking for the answer", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    const consultation = store.openConsultation("thread-1", "Quem mais consome o CreateOrder?");
+
+    expect(consultation).toMatchObject({
+      question: "Quem mais consome o CreateOrder?",
+      status: "buscando",
+    });
+    expect(store.lastConsultation("thread-1")).toEqual(consultation);
+  });
+
+  it("should keep the answer with the citations that sustain it", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const { id } = store.openConsultation("thread-1", "Quem mais consome o CreateOrder?");
+
+    store.answerConsultation(id, {
+      status: "respondida",
+      answer: "Só o checkout.",
+      citations: [{ repo: "core-api", path: "src/api/order.ts", symbol: "createOrder" }],
+    });
+
+    expect(store.lastConsultation("thread-1")).toMatchObject({
+      status: "respondida",
+      answer: "Só o checkout.",
+      citations: [{ repo: "core-api", path: "src/api/order.ts", symbol: "createOrder" }],
+    });
+  });
+
+  it("should keep an answer whose citations did not check out marked as such", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const { id } = store.openConsultation("thread-1", "Existe cache?");
+
+    store.answerConsultation(id, {
+      status: "sem-lastro",
+      answer: "Existe um cache em memória.",
+      citations: [{ repo: "core-api", path: "src/cache.ts" }],
+      motivo: 'core-api: o arquivo "src/cache.ts" não existe.',
+    });
+
+    expect(store.lastConsultation("thread-1")).toMatchObject({
+      status: "sem-lastro",
+      motivo: 'core-api: o arquivo "src/cache.ts" não existe.',
+    });
+  });
+
+  it("should keep the failure of a consultation that never got an answer", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const { id } = store.openConsultation("thread-1", "Existe cache?");
+
+    store.answerConsultation(id, { status: "falhou", message: "o agente caiu" });
+
+    expect(store.lastConsultation("thread-1")).toMatchObject({
+      status: "falhou",
+      message: "o agente caiu",
+    });
+  });
+
+  it("should hand out the most recent consultation of the session", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    store.openConsultation("thread-1", "primeira");
+    const segunda = store.openConsultation("thread-1", "segunda");
+
+    expect(store.lastConsultation("thread-1")?.id).toBe(segunda.id);
+  });
+
+  it("should write the factual answer into the transcript, apart from any decision", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const { id } = store.openConsultation("thread-1", "Quem mais consome o CreateOrder?");
+
+    store.answerConsultation(id, {
+      status: "respondida",
+      answer: "Só o checkout.",
+      citations: [{ repo: "core-api", path: "src/api/order.ts" }],
+    });
+
+    expect(store.listTranscript("thread-1").map((entry) => entry.event)).toEqual([
+      { kind: "consulta", consultationId: id, question: "Quem mais consome o CreateOrder?" },
+      {
+        kind: "resposta-factual",
+        consultationId: id,
+        answer: "Só o checkout.",
+        citations: [{ repo: "core-api", path: "src/api/order.ts" }],
+        verificada: true,
+      },
+    ]);
+    expect(store.countDecisions("thread-1")).toBe(0);
+  });
+
+  it("should mark an unsustained answer as unverified in the transcript", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const { id } = store.openConsultation("thread-1", "Existe cache?");
+
+    store.answerConsultation(id, {
+      status: "sem-lastro",
+      answer: "Existe um cache em memória.",
+      citations: [],
+      motivo: "sem citação nenhuma.",
+    });
+
+    expect(store.listTranscript("thread-1").at(-1)?.event).toMatchObject({
+      kind: "resposta-factual",
+      verificada: false,
+      motivo: "sem citação nenhuma.",
+    });
+  });
+
+  it("should preserve an earlier unverified reason after another consultation", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const first = store.openConsultation("thread-1", "Existe cache?");
+
+    store.answerConsultation(first.id, {
+      status: "sem-lastro",
+      answer: "Existe um cache em memória.",
+      citations: [],
+      motivo: "sem citação nenhuma.",
+    });
+
+    const second = store.openConsultation("thread-1", "Quem chama o CreateOrder?");
+    store.answerConsultation(second.id, {
+      status: "respondida",
+      answer: "Só o checkout.",
+      citations: [{ repo: "core-api", path: "src/order.ts" }],
+    });
+
+    const firstAnswer = store
+      .listTranscript("thread-1")
+      .find(
+        (entry) =>
+          entry.event.kind === "resposta-factual" && entry.event.consultationId === first.id,
+      );
+
+    expect(firstAnswer?.event).toMatchObject({
+      kind: "resposta-factual",
+      verificada: false,
+      motivo: "sem citação nenhuma.",
+    });
+  });
+
+  it("should recover a missing legacy reason from the consultation row", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    const consultation = store.openConsultation("thread-1", "Existe cache?");
+
+    store.answerConsultation(consultation.id, {
+      status: "sem-lastro",
+      answer: "Existe um cache em memória.",
+      citations: [],
+      motivo: "sem citação nenhuma.",
+    });
+
+    const database = new Database(file);
+    database
+      .prepare("UPDATE events SET payload = json_remove(payload, '$.motivo') WHERE kind = ?")
+      .run("resposta-factual");
+    database.close();
+
+    expect(store.listTranscript("thread-1").at(-1)?.event).toMatchObject({
+      kind: "resposta-factual",
+      verificada: false,
+      motivo: "sem citação nenhuma.",
+    });
+  });
+
+  it("should refuse a consultation with no question behind it", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    expect(() => store.openConsultation("thread-1", "   ")).toThrow(/pergunta/i);
+  });
+
+  it("should refuse a consultation on a ceremony that does not exist", () => {
+    const store = open(dbPath());
+
+    expect(() => store.openConsultation("thread-fantasma", "Existe cache?")).toThrow(/não existe/i);
+  });
+
+  it("should refuse to answer a consultation that is not open", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const { id } = store.openConsultation("thread-1", "Existe cache?");
+    store.answerConsultation(id, { status: "falhou", message: "o agente caiu" });
+
+    expect(() =>
+      store.answerConsultation(id, { status: "falhou", message: "de novo" }),
+    ).toThrow(/consulta/i);
   });
 });
 

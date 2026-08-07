@@ -20,20 +20,10 @@ const REPOS = [
   { name: "web-app", path: root },
 ] as const;
 
-function reportWith(impacts: InvestigationReport["impacts"]): InvestigationReport {
-  return {
-    summary: "resumo",
-    gaps: [],
-    impacts,
-    externalRepos: [],
-    unverified: [],
-  };
-}
-
 const CLAIM = "O TTL do cache precisa virar configurável.";
 
 function verify(citations: InvestigationReport["impacts"][number]["citations"]) {
-  return verifyGrounding(reportWith([{ claim: CLAIM, citations }]), REPOS);
+  return verifyGrounding([{ claim: CLAIM, citations }], REPOS);
 }
 
 describe("verifyGrounding", () => {
@@ -52,7 +42,7 @@ describe("verifyGrounding", () => {
   });
 
   it("should approve a report with no impact claims at all", () => {
-    expect(verifyGrounding(reportWith([]), REPOS)).toEqual({ status: "aprovado" });
+    expect(verifyGrounding([], REPOS)).toEqual({ status: "aprovado" });
   });
 
   it("should reject a citation whose path does not exist", () => {
@@ -129,10 +119,10 @@ describe("verifyGrounding", () => {
 
   it("should report every violation, not just the first", () => {
     const result = verifyGrounding(
-      reportWith([
+      [
         { claim: "a", citations: [{ repo: "core-api", path: "nao-existe.ts" }] },
         { claim: "b", citations: [{ repo: "billing", path: "src/index.ts" }] },
-      ]),
+      ],
       REPOS,
     );
 

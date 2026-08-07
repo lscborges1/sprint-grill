@@ -4,9 +4,13 @@ import type {
   RefinementStatus,
 } from "@sprint-griller/ado-client";
 import type { RepoConfig } from "@sprint-griller/core";
+import Link from "next/link";
+import { Section } from "@/components/section";
 import { loadCurrentIteration } from "@/lib/current-iteration";
 import type { CurrentIterationResult } from "@/lib/current-iteration";
+import { getInvestigation } from "@/lib/investigations";
 import { getSquadConfig } from "@/lib/squad-config";
+import { startInvestigationAction } from "./investigacao/actions";
 
 // A iteration é lida do Azure DevOps a cada request; nada aqui é pré-renderizável.
 export const dynamic = "force-dynamic";
@@ -121,31 +125,61 @@ function Stories({ iteration }: { iteration: CurrentIteration }) {
 
 function StoryRow({ story }: { story: IterationStory }) {
   const badge = REFINEMENT_BADGE[story.refinement];
+  const run = getInvestigation(story.id);
 
   return (
-    <li>
-      <a
-        href={story.url}
-        target="_blank"
-        rel="noreferrer"
-        className="flex flex-col gap-3 rounded-lg border border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6"
-      >
-        <span className="flex flex-col gap-1">
-          <span className="text-xl font-medium tracking-tight">
-            {story.title}
-          </span>
-          <span className="text-sm text-muted">
-            #{story.id} · {story.type} · {story.state}
-            {story.assignedTo === undefined ? "" : ` · ${story.assignedTo}`}
-          </span>
+    <li className="flex flex-col gap-3 rounded-lg border border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <span className="flex flex-col gap-1">
+        <a
+          href={story.url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xl font-medium tracking-tight underline-offset-4 hover:underline"
+        >
+          {story.title}
+        </a>
+        <span className="text-sm text-muted">
+          #{story.id} · {story.type} · {story.state}
+          {story.assignedTo === undefined ? "" : ` · ${story.assignedTo}`}
         </span>
+      </span>
+
+      <span className="flex shrink-0 items-center gap-3">
         <span
-          className={`shrink-0 self-start rounded-full border px-3 py-1 text-xs font-medium uppercase tracking-[0.14em] ${badge.className}`}
+          className={`rounded-full border px-3 py-1 text-xs font-medium uppercase tracking-[0.14em] ${badge.className}`}
         >
           {badge.label}
         </span>
-      </a>
+        {run && (
+          <Link
+            href={`/investigacao/${story.id}`}
+            className="text-sm text-muted underline underline-offset-4"
+          >
+            {run.status === "em-andamento" ? "investigando…" : "preview"}
+          </Link>
+        )}
+        <InvestigateButton story={story} />
+      </span>
     </li>
+  );
+}
+
+/**
+ * O disparo em um clique. A partir daqui o Operador pode fechar a tela: quem
+ * roda a Investigação é o processo, não a request.
+ */
+function InvestigateButton({ story }: { story: IterationStory }) {
+  return (
+    <form action={startInvestigationAction}>
+      <input type="hidden" name="storyId" value={story.id} />
+      <button
+        type="submit"
+        className="rounded-full border border-line px-4 py-1.5 text-sm font-medium hover:bg-foreground/5"
+      >
+        Investigar
+        <span className="sr-only"> a US {story.title}</span>
+      </button>
+    </form>
   );
 }
 
@@ -161,28 +195,6 @@ function AdoFailure({ message }: { message: string }) {
       </p>
       <p className="text-base text-muted">{message}</p>
     </div>
-  );
-}
-
-function Section({
-  id,
-  heading,
-  children,
-}: {
-  id: string;
-  heading: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-5" aria-labelledby={`${id}-heading`}>
-      <h2
-        id={`${id}-heading`}
-        className="text-xs font-medium uppercase tracking-[0.18em] text-muted"
-      >
-        {heading}
-      </h2>
-      {children}
-    </section>
   );
 }
 

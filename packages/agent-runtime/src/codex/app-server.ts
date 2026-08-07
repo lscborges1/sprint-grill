@@ -60,7 +60,11 @@ export async function connectAppServer(
   const [command, ...args] = options.command ?? DEFAULT_APP_SERVER_COMMAND;
   const { logger } = options;
 
-  const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+  // O binário do codex é do PATH do Operador, não um arquivo deste projeto: sem
+  // isto o bundler do Next traça o repo inteiro achando que é dependência.
+  const child = spawn(/*turbopackIgnore: true*/ command, args, {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   const pending = new Map<number, PendingRequest>();
   let nextId = 1;
   let closing = false;

@@ -5,7 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./palco-state": "./src/palco-state.ts"
+    "./session-state": "./src/session-state.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

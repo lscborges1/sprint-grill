@@ -1,0 +1,103 @@
+// A Spec carimba quem decidiu e quando, e o "quando" é hora local do Operador.
+// Fixar o fuso aqui é o que deixa o carimbo verificável em qualquer máquina.
+process.env.TZ = "UTC";
+
+import { describe, expect, it } from "vitest";
+import { renderSpecMarkdown } from "./spec";
+import { SPEC_SECTIONS } from "./spec-vocabulary";
+import type { DossieDocument } from "./types";
+
+const EMPTY: DossieDocument = {
+  story: {
+    id: 4211,
+    title: "TTL de sessão configurável",
+    url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+  },
+  decisions: [],
+  pending: [],
+  investigation: { impact: "", unverified: "" },
+};
+
+const REFINED: DossieDocument = {
+  ...EMPTY,
+  decisions: [
+    {
+      questionId: "q1",
+      question: "O TTL vira configurável por cliente ou global?",
+      recommendation: "Global: nenhum cliente pediu valor próprio.",
+      answer: "Global",
+      decidedBy: "PO + squad",
+      decidedAt: Date.UTC(2026, 7, 6, 14, 30),
+    },
+  ],
+  pending: ["O mobile entra nesta US?"],
+  investigation: {
+    impact: "- O TTL do cache precisa virar configurável.\n  - `core-api:src/cache/session.ts`",
+    unverified: "- O mobile talvez dependa do TTL.",
+  },
+};
+
+describe("renderSpecMarkdown", () => {
+  it("should title the spec with the story id and title", () => {
+    expect(renderSpecMarkdown(REFINED)).toContain(
+      "# Spec da US #4211 — TTL de sessão configurável",
+    );
+  });
+
+  it("should link back to the story in Azure DevOps", () => {
+    expect(renderSpecMarkdown(REFINED)).toContain(REFINED.story.url);
+  });
+
+  it("should record each decision with what was decided, by whom and when", () => {
+    const markdown = renderSpecMarkdown(REFINED);
+
+    expect(markdown).toContain("**O TTL vira configurável por cliente ou global?** — Global");
+    expect(markdown).toContain("_Decidido por PO + squad em 06/08/2026 às 14:30._");
+  });
+
+  it("should keep the agent recommendation next to the decision it produced", () => {
+    expect(renderSpecMarkdown(REFINED)).toContain(
+      "Recomendação do agente: Global: nenhum cliente pediu valor próprio.",
+    );
+  });
+
+  it("should carry the impact context from the Investigação", () => {
+    const markdown = renderSpecMarkdown(REFINED);
+    const impactAt = markdown.indexOf(`## ${SPEC_SECTIONS.impact.heading}`);
+
+    expect(impactAt).toBeGreaterThan(-1);
+    expect(markdown.indexOf("`core-api:src/cache/session.ts`")).toBeGreaterThan(impactAt);
+  });
+
+  it("should keep unverified claims under their own heading, never in the body", () => {
+    const markdown = renderSpecMarkdown(REFINED);
+    const unverifiedAt = markdown.indexOf(`## ${SPEC_SECTIONS.unverified.heading}`);
+
+    expect(unverifiedAt).toBeGreaterThan(-1);
+    expect(markdown.indexOf("O mobile talvez dependa do TTL.")).toBeGreaterThan(unverifiedAt);
+  });
+
+  it("should list what the room has not answered as a pending item", () => {
+    const markdown = renderSpecMarkdown(REFINED);
+    const pendingAt = markdown.indexOf(`## ${SPEC_SECTIONS.pending.heading}`);
+
+    expect(pendingAt).toBeGreaterThan(-1);
+    expect(markdown.indexOf("O mobile entra nesta US?")).toBeGreaterThan(pendingAt);
+  });
+
+  it("should render every section even when nothing was decided yet", () => {
+    const markdown = renderSpecMarkdown(EMPTY);
+
+    for (const section of Object.values(SPEC_SECTIONS)) {
+      expect(markdown).toContain(`## ${section.heading}`);
+      expect(markdown).toContain(section.empty);
+    }
+  });
+
+  it("should end with a single trailing newline", () => {
+    const markdown = renderSpecMarkdown(REFINED);
+
+    expect(markdown.endsWith("\n")).toBe(true);
+    expect(markdown.endsWith("\n\n")).toBe(false);
+  });
+});

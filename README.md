@@ -44,7 +44,7 @@ packages/core             config da squad (zod) e logging estruturado
 packages/ado-client       fronteira do Azure DevOps (REST tipado com zod) + script de rolagem
 packages/agent-runtime    cliente do `codex app-server` (streaming, HITL, resume)
 packages/investigation    turno da Investigação + checagem de grounding + Markdown
-packages/ceremony         sessão do grilling + persistência (SQLite) + estado do Palco
+packages/ceremony         sessão do grilling + persistência (SQLite) + Palco e Dossiê
 docs/adr                  decisões de arquitetura difíceis de reverter
 ```
 
@@ -226,3 +226,36 @@ O que entra no transcript é `resposta-factual`, **nunca** `decisao`: a distinç
 é de tipo, não de convenção — Consulta não tem `decidedBy` porque ninguém
 decidiu nada, quem respondeu foi o repositório. E o despejo, quando existir, sabe
 separar o que a sala decidiu do que ela só descobriu.
+depois do despejo, nada precisa ser consultado nele.
+
+> Mudança no schema do banco sobe o `SCHEMA_VERSION`, e um arquivo de versão
+> anterior é recusado na abertura com a mensagem mandando apagá-lo.
+
+## Dossiê: documento vivo e preview do despejo
+
+**Abrir o Dossiê**, no Palco, leva à outra superfície da cerimônia
+(`/cerimonia/<id da sessão>/dossie`) — em outra aba, de propósito: a sala segue
+vendo o Palco enquanto o Operador revisa o documento na tela dele.
+
+O Dossiê é a **Spec da US se formando ao vivo**, montada só do que a cerimônia
+gravou:
+
+| Seção | De onde vem |
+|---|---|
+| Decisões | Registros de decisão, com quem decidiu e quando |
+| Pendências | perguntas que a sala não respondeu (inclusive as que um crash abandonou) |
+| Contexto de impacto | seção da Investigação que passou na checagem de citações |
+| Não verificado | o que o agente não conseguiu ancorar — hipótese, nunca fato |
+| Fora de escopo | vazio até o Operador escrever |
+
+Embaixo fica o **preview do despejo**: o mesmo documento em Markdown, renderizado
+por código ([ADR 0002](docs/adr/0002-escrita-no-ado-e-deterministica.md)) e
+**editável**. A IA redige, o humano assina — e o que o Operador salvar é o que o
+despejo vai levar. A edição é gravada na sessão, no mesmo SQLite: sobrevive ao F5
+e ao restart do app. Nada disto vai para o Azure DevOps antes do despejo.
+
+O editor não é sobrescrito pelo que chega ao vivo — texto sendo digitado não pode
+sumir porque a sala acabou de decidir. Em troca, quando o documento anda por
+baixo da edição, a tela avisa e oferece **regenerar** (que descarta a edição):
+despejar uma Spec sem a última decisão é o erro que esta aba existe para não
+deixar passar calado.

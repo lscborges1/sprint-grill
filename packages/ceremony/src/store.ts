@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Logger } from "@sprint-griller/core";
 import Database from "better-sqlite3";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { CeremonyError } from "./ceremony-error";
@@ -14,6 +14,7 @@ import {
   events,
   questions,
   sessions,
+  specDrafts,
 } from "./schema";
 import type {
   CeremonyCitation,
@@ -23,6 +24,7 @@ import type {
   PersistedCeremonyQuestion,
   CeremonySession,
   ConsultationOutcome,
+  SpecDraft,
   TranscriptEntry,
   TranscriptEvent,
 } from "./types";
@@ -46,6 +48,20 @@ export interface RecordDecisionInput {
   readonly decidedBy: string;
 }
 
+export interface SaveSpecDraftInput {
+  readonly sessionId: string;
+  readonly markdown: string;
+  /** O Markdown gerado que estava na tela quando o Operador editou. */
+  readonly base: string;
+}
+
+export interface SaveSpecDraftInput {
+  readonly sessionId: string;
+  readonly markdown: string;
+  /** O Markdown gerado que estava na tela quando o Operador editou. */
+  readonly base: string;
+}
+
 export type FinishSessionOutcome =
   | { readonly status: "encerrada" }
   | { readonly status: "falhou"; readonly message: string };
@@ -64,6 +80,7 @@ export interface CeremonyStore {
   askQuestions(sessionId: string, asked: readonly CeremonyQuestion[]): void;
   currentQuestion(sessionId: string): PersistedCeremonyQuestion | undefined;
   listOpenQuestions(sessionId: string): readonly PersistedCeremonyQuestion[];
+  unansweredQuestions(sessionId: string): readonly CeremonyQuestion[];
   abandonPendingQuestions(sessionId: string): void;
   recordDecision(input: RecordDecisionInput): CeremonyDecision;
   countDecisions(sessionId: string): number;
@@ -79,6 +96,12 @@ export interface CeremonyStore {
   lastConsultation(sessionId: string): CeremonyConsultation | undefined;
   appendEvent(sessionId: string, event: TranscriptEvent): void;
   listTranscript(sessionId: string): readonly TranscriptEntry[];
+  saveSpecDraft(input: SaveSpecDraftInput): SpecDraft;
+  getSpecDraft(sessionId: string): SpecDraft | undefined;
+  discardSpecDraft(sessionId: string): void;
+  saveSpecDraft(input: SaveSpecDraftInput): SpecDraft;
+  getSpecDraft(sessionId: string): SpecDraft | undefined;
+  discardSpecDraft(sessionId: string): void;
   close(): void;
 }
 
@@ -249,6 +272,23 @@ export function openCeremonyStore(
         .orderBy(asc(questions.seq))
         .all()
         .map(toQuestion);
+    },
+
+    unansweredQuestions(sessionId) {
+      const rows = db
+        .select()
+        .from(questions)
+        .where(and(eq(questions.sessionId, sessionId), ne(questions.status, "respondida")))
+        .orderBy(asc(questions.seq))
+        .all();
+
+      /**
+       * Uma pergunta abandonada por crash costuma voltar igual depois da
+       * retomada. Sem esta chave, ela apareceria duas vezes nas pendências da
+       * Spec — e pendência repetida é ruído no documento que o PO vai ler.
+       */
+      const unica = new Map(rows.map((row) => [row.question, row]));
+      return [...unica.values()].map(toQuestion);
     },
 
     abandonPendingQuestions(sessionId) {
@@ -469,6 +509,36 @@ export function openCeremonyStore(
             },
           ),
         }));
+    },
+
+    saveSpecDraft({ sessionId, markdown, base }) {
+      requireSession(sessionId);
+
+      const text = markdown.trim();
+      if (text === "") {
+        throw new CeremonyError("a Spec da US não pode ficar vazia — regenere o documento.");
+      }
+
+      const draft: SpecDraft = { markdown: text, base, savedAt: Date.now() };
+      db.insert(specDrafts)
+        .values({ sessionId, ...draft })
+        .onConflictDoUpdate({ target: specDrafts.sessionId, set: draft })
+        .run();
+
+      return draft;
+    },
+
+    getSpecDraft(sessionId) {
+      const row = db
+        .select()
+        .from(specDrafts)
+        .where(eq(specDrafts.sessionId, sessionId))
+        .get();
+      return row && { markdown: row.markdown, base: row.base, savedAt: row.savedAt };
+    },
+
+    discardSpecDraft(sessionId) {
+      db.delete(specDrafts).where(eq(specDrafts.sessionId, sessionId)).run();
     },
 
     close() {

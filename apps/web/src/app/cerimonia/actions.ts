@@ -7,8 +7,11 @@ import {
   askFact,
   consultationSchema,
   decisionSchema,
+  discardSpecDraft,
   resumeCeremony,
+  saveSpecDraft,
   sessionIdSchema,
+  specDraftSchema,
   startCeremony,
   submitDecision,
 } from "@/lib/ceremonies";
@@ -85,6 +88,43 @@ export async function askFactAction(
   }
 }
 
+/**
+ * A assinatura do Operador sobre o Markdown do despejo. Nada aqui vai para o
+ * Azure DevOps: é rascunho gravado na sessão, para sobreviver ao F5 e chegar
+ * revisado no despejo.
+ */
+export async function saveSpecDraftAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string | null> {
+  const parsed = specDraftSchema.safeParse({
+    sessionId: formData.get("sessionId"),
+    markdown: formData.get("markdown"),
+    base: formData.get("base") ?? "",
+  });
+
+  if (!parsed.success) {
+    return parsed.error.issues[0]?.message ?? "Documento inválido.";
+  }
+
+  try {
+    saveSpecDraft(parsed.data);
+    return null;
+  } catch (error) {
+    if (!(error instanceof CeremonyError)) throw error;
+    logger.error({ err: error, sessionId: parsed.data.sessionId }, "edição do Dossiê recusada");
+    return error.message;
+  }
+}
+
+/** Joga a edição fora e volta ao documento gerado do que a cerimônia gravou. */
+export async function discardSpecDraftAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string | null> {
+  discardSpecDraft(sessionIdSchema.parse(formData.get("sessionId")));
+  return null;
+}
 /** Retoma uma cerimônia cujo turno morreu com o processo. */
 export async function resumeCeremonyAction(
   _previous: string | null,

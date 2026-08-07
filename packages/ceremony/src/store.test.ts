@@ -238,6 +238,110 @@ describe("abandonPendingQuestions", () => {
   });
 });
 
+describe("unansweredQuestions", () => {
+  it("should list what the room still owes a decision on", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [
+      question({ id: "q1" }),
+      question({ id: "q2", question: "Entra nesta sprint?" }),
+    ]);
+
+    store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+
+    expect(store.unansweredQuestions("thread-1").map((asked) => asked.question)).toEqual([
+      "Entra nesta sprint?",
+    ]);
+  });
+
+  it("should keep a question abandoned by a crash pending, not answered", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+
+    store.abandonPendingQuestions("thread-1");
+
+    expect(store.unansweredQuestions("thread-1")).toHaveLength(1);
+  });
+
+  it("should count a question asked again after a resume only once", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question({ id: "q1" })]);
+    store.abandonPendingQuestions("thread-1");
+
+    store.askQuestions("thread-1", [question({ id: "q2" })]);
+
+    expect(store.unansweredQuestions("thread-1")).toHaveLength(1);
+  });
+});
+
+describe("saveSpecDraft", () => {
+  it("should hand back the edit the Operator saved after a restart", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+
+    first.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "# Spec da US #4242\n\nFora de escopo: relatório mensal.",
+      base: "# Spec da US #4242",
+    });
+    first.close();
+    opened.pop();
+
+    expect(open(file).getSpecDraft("thread-1")).toMatchObject({
+      markdown: "# Spec da US #4242\n\nFora de escopo: relatório mensal.",
+      base: "# Spec da US #4242",
+    });
+  });
+
+  it("should keep a single edit per ceremony, the last one", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    store.saveSpecDraft({ sessionId: "thread-1", markdown: "rascunho", base: "gerado" });
+    store.saveSpecDraft({ sessionId: "thread-1", markdown: "revisado", base: "gerado" });
+
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe("revisado");
+  });
+
+  it("should refuse an empty Spec instead of letting the despejo write nothing", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    expect(() =>
+      store.saveSpecDraft({ sessionId: "thread-1", markdown: "   \n ", base: "gerado" }),
+    ).toThrow(/vazia/i);
+    expect(store.getSpecDraft("thread-1")).toBeUndefined();
+  });
+
+  it("should refuse an edit for a ceremony that does not exist", () => {
+    const store = open(dbPath());
+
+    expect(() =>
+      store.saveSpecDraft({ sessionId: "fantasma", markdown: "rascunho", base: "gerado" }),
+    ).toThrow(/não existe/i);
+  });
+});
+
+describe("discardSpecDraft", () => {
+  it("should drop the edit so the document goes back to what was generated", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.saveSpecDraft({ sessionId: "thread-1", markdown: "rascunho", base: "gerado" });
+
+    store.discardSpecDraft("thread-1");
+
+    expect(store.getSpecDraft("thread-1")).toBeUndefined();
+  });
+});
+
 describe("findOpenSessionByStory", () => {
   it("should find the open ceremony of a story", () => {
     const store = open(dbPath());

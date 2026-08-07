@@ -36,7 +36,16 @@ vi.stubEnv(
   path.join(mkdtempSync(path.join(tmpdir(), "sprint-griller-web-")), "cerimonias.db"),
 );
 
-const { getPalco, startCeremony, submitDecision, subscribeToPalco } = await import("./ceremonies");
+const {
+  discardSpecDraft,
+  getDossie,
+  getPalco,
+  saveSpecDraft,
+  startCeremony,
+  submitDecision,
+  subscribeToDossie,
+  subscribeToPalco,
+} = await import("./ceremonies");
 
 const STORY = {
   id: 1,
@@ -192,6 +201,65 @@ describe("submitDecision", () => {
       decisionCount: 1,
       lastDecision: { answer: "Regra bancária", decidedBy: "PO + squad" },
     });
+  });
+});
+
+describe("getDossie", () => {
+  it("should form the document from the decisions taken in the room", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+
+    await submitDecision({
+      sessionId: session.id,
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO + squad",
+    });
+
+    expect(getDossie(session.id)?.spec.generated).toContain("Decidido por PO + squad");
+  });
+
+  it("should hand the Operator edit back after a refresh, ahead of the generated text", async () => {
+    const session = await startCeremony(nextStoryId);
+    const generated = getDossie(session.id)?.spec.generated ?? "";
+
+    saveSpecDraft({
+      sessionId: session.id,
+      markdown: `${generated}\n\nFora de escopo: relatório mensal.`,
+      base: generated,
+    });
+
+    expect(getDossie(session.id)?.spec.draft?.markdown).toContain(
+      "Fora de escopo: relatório mensal.",
+    );
+  });
+
+  it("should go back to the generated document when the edit is discarded", async () => {
+    const session = await startCeremony(nextStoryId);
+    saveSpecDraft({ sessionId: session.id, markdown: "assinado", base: "gerado" });
+
+    discardSpecDraft(session.id);
+
+    expect(getDossie(session.id)?.spec.draft).toBeNull();
+  });
+});
+
+describe("subscribeToDossie", () => {
+  it("should push the new document to the Operator when a decision lands", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+    const seen: number[] = [];
+    const unsubscribe = subscribeToDossie(session.id, (state) => seen.push(state.decisions.length));
+
+    await submitDecision({
+      sessionId: session.id,
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+
+    expect(seen).toContain(1);
+    unsubscribe();
   });
 });
 

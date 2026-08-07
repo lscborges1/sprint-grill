@@ -80,6 +80,18 @@ export const consultations = sqliteTable(
   (table) => [index("consultations_por_sessao").on(table.sessionId)],
 );
 
+ * A edição do Operador sobre o Markdown do despejo — uma por sessão. Fica aqui,
+ * e não em memória, porque a promessa da aba Dossiê é sobreviver ao F5.
+ */
+export const specDrafts = sqliteTable("spec_drafts", {
+  sessionId: text("session_id").primaryKey(),
+  markdown: text("markdown").notNull(),
+  // O texto gerado de que a edição partiu: é como o Dossiê percebe que a
+  // cerimônia andou desde então, em vez de despejar um documento desatualizado.
+  base: text("base").notNull(),
+  savedAt: integer("saved_at").notNull(),
+});
+
 export const events = sqliteTable(
   "events",
   {
@@ -97,7 +109,7 @@ export const events = sqliteTable(
  * é recusado na abertura, com a mensagem mandando apagar o arquivo — descobrir
  * a divergência no meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -160,6 +172,13 @@ CREATE TABLE IF NOT EXISTS consultations (
   answered_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS consultations_por_sessao ON consultations (session_id);
+
+CREATE TABLE IF NOT EXISTS spec_drafts (
+  session_id TEXT PRIMARY KEY NOT NULL,
+  markdown TEXT NOT NULL,
+  base TEXT NOT NULL,
+  saved_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,

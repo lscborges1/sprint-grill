@@ -36,8 +36,15 @@ export interface CeremonyQuestion {
   readonly allowFreeText: boolean;
 }
 
+/** A pergunta como ela volta do store, com a identidade persistida da linha. */
+export interface PersistedCeremonyQuestion extends CeremonyQuestion {
+  readonly questionSeq: number;
+}
+
 /** Registro de decisão: o artefato que a cerimônia existe para produzir. */
 export interface CeremonyDecision {
+  /** Sequência da pergunta persistida, não o id efêmero que o agente forneceu. */
+  readonly questionSeq: number;
   readonly questionId: string;
   readonly question: string;
   readonly recommendation: string;
@@ -45,6 +52,51 @@ export interface CeremonyDecision {
   readonly decidedBy: string;
   readonly decidedAt: number;
 }
+
+/**
+ * Evidência de uma resposta factual: um arquivo de um repo do config da squad.
+ * Mesma forma da citação da Investigação — é o que a checagem mecânica confere
+ * contra o disco antes de a resposta valer como fato.
+ */
+export interface CeremonyCitation {
+  readonly repo: string;
+  readonly path: string;
+  /** `| undefined` explícito: é o que `exactOptionalPropertyTypes` exige do zod. */
+  readonly symbol?: string | undefined;
+}
+
+/** Como uma Consulta termina. `buscando` é o único estado que não está aqui. */
+export type ConsultationOutcome =
+  | {
+      readonly status: "respondida";
+      readonly answer: string;
+      readonly citations: readonly CeremonyCitation[];
+    }
+  | {
+      /** Respondeu, mas a citação não fechou com o disco: não pode se apresentar como fato. */
+      readonly status: "sem-lastro";
+      readonly answer: string;
+      readonly citations: readonly CeremonyCitation[];
+      readonly motivo: string;
+    }
+  | { readonly status: "falhou"; readonly message: string };
+
+interface ConsultationAsked {
+  readonly id: string;
+  readonly question: string;
+  readonly askedAt: number;
+}
+
+/**
+ * Consulta: dúvida **factual** que surge na sala e o agente resolve ao vivo,
+ * lendo o código. É o mecanismo que mata o "alguém verifica depois".
+ *
+ * Nada disto é Registro de decisão: consulta não tem `decidedBy` porque não há
+ * o que decidir — quem responde é o repositório, não a sala.
+ */
+export type CeremonyConsultation =
+  | (ConsultationAsked & { readonly status: "buscando" })
+  | (ConsultationAsked & ConsultationOutcome & { readonly answeredAt: number });
 
 /** O transcript. Deltas de mensagem não entram: ruído não é registro. */
 export type TranscriptEvent =
@@ -62,6 +114,27 @@ export type TranscriptEvent =
       readonly decidedBy: string;
     }
   | { readonly kind: "pergunta-recusada"; readonly question: string; readonly motivo: string }
+  | { readonly kind: "consulta"; readonly consultationId: string; readonly question: string }
+  | {
+      /**
+       * Fato resolvido ao vivo — não é `decisao`, e é de propósito: o transcript
+       * precisa dizer o que a sala **decidiu** e o que ela só **descobriu**.
+       */
+      readonly kind: "resposta-factual";
+      readonly consultationId: string;
+      readonly answer: string;
+      readonly citations: readonly CeremonyCitation[];
+      readonly verificada: true;
+    }
+  | {
+      readonly kind: "resposta-factual";
+      readonly consultationId: string;
+      readonly answer: string;
+      readonly citations: readonly CeremonyCitation[];
+      readonly verificada: false;
+      /** Por que a resposta não pôde ser tratada como fato conferido. */
+      readonly motivo: string;
+    }
   | { readonly kind: "turno-encerrado" }
   | { readonly kind: "turno-falhou"; readonly message: string }
   | { readonly kind: "retomada" };
@@ -76,7 +149,7 @@ export interface TranscriptEntry {
  * aberta no banco mas nenhum turno vive neste processo.
  */
 export type PalcoPhase =
-  | { readonly phase: "perguntando"; readonly question: CeremonyQuestion }
+  | { readonly phase: "perguntando"; readonly question: PersistedCeremonyQuestion }
   | { readonly phase: "pensando" }
   | { readonly phase: "retomavel" }
   | { readonly phase: "encerrada" }
@@ -90,7 +163,17 @@ export interface PalcoState {
     readonly url: string;
   };
   readonly decisionCount: number;
+  /** Histórico completo para a árvore de decisões do Palco. */
+  readonly decisions: readonly CeremonyDecision[];
+  /** Perguntas já levantadas pelo agente, ainda sem decisão da sala. */
+  readonly pendingQuestions: readonly PersistedCeremonyQuestion[];
   readonly lastDecision: CeremonyDecision | null;
+  /**
+   * A Consulta da vez. Só a última: o Palco orienta a sala *agora*, e o
+   * histórico de fatos já está no transcript. Por isso a cerimônia serializa —
+   * uma consulta nova no meio da busca faria a anterior sumir da tela.
+   */
+  readonly consultation: CeremonyConsultation | null;
   /** Se existe um turno de agente vivo neste processo. `false` depois de um crash. */
   readonly live: boolean;
   readonly current: PalcoPhase;

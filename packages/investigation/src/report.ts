@@ -64,13 +64,9 @@ export type ParsedReport =
 
 const FENCE = /```(?:json)?\s*\r?\n([\s\S]*?)```/g;
 
-/**
- * Lê o relatório da última mensagem do agente. O contrato pedido é um único
- * bloco ```json, mas modelo põe prosa em volta e às vezes mostra um rascunho
- * antes — por isso o último bloco vence, e o texto cru é o último recurso.
- */
+/** Lê o relatório da última mensagem do agente. */
 export function parseReport(text: string): ParsedReport {
-  const candidate = jsonCandidate(text);
+  const candidate = readJsonBlock(text);
   if (candidate === undefined) {
     return {
       ok: false,
@@ -91,8 +87,15 @@ export function parseReport(text: string): ParsedReport {
   return { ok: true, report: parsed.data };
 }
 
-/** Blocos cercados do mais recente para o mais antigo; o texto inteiro por último. */
-function jsonCandidate(text: string): unknown {
+/**
+ * O JSON que o agente devolveu, de dentro da prosa: blocos cercados do mais
+ * recente para o mais antigo, e o texto inteiro por último. `undefined` quando
+ * não há nenhum.
+ *
+ * O contrato pedido é sempre um único bloco ```json, mas modelo põe prosa em
+ * volta e às vezes mostra um rascunho antes — daí o último bloco vencer.
+ */
+export function readJsonBlock(text: string): unknown {
   const fences = [...text.matchAll(FENCE)].map((match) => match[1] ?? "").reverse();
 
   for (const source of [...fences, text]) {

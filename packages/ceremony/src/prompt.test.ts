@@ -1,6 +1,12 @@
 import type { SquadConfig } from "@sprint-griller/core";
 import { describe, expect, it } from "vitest";
-import { ceremonyInstructions, ceremonyOpeningPrompt, ceremonyResumePrompt } from "./prompt";
+import {
+  ceremonyInstructions,
+  ceremonyOpeningPrompt,
+  ceremonyResumePrompt,
+  consultationInstructions,
+  consultationPrompt,
+} from "./prompt";
 import type { CeremonyDecision } from "./types";
 
 const repos: SquadConfig["repos"] = {
@@ -16,6 +22,7 @@ const story = {
 };
 
 const decision = (overrides: Partial<CeremonyDecision> = {}): CeremonyDecision => ({
+  questionSeq: 1,
   questionId: "q1",
   question: "A comissão arredonda para cima?",
   recommendation: "Seguir a regra bancária.",
@@ -59,6 +66,40 @@ describe("ceremonyOpeningPrompt", () => {
     const prompt = ceremonyOpeningPrompt({ ...story, description: undefined }, "## Furos da US");
 
     expect(prompt).toContain("sem descrição");
+  });
+});
+
+describe("consultationInstructions", () => {
+  it("should list every repo the agent may read with its absolute path", () => {
+    const instructions = consultationInstructions(repos);
+
+    expect(instructions).toContain("`core-api` — /dev/core-api");
+    expect(instructions).toContain("`web-app` — /dev/web-app");
+  });
+
+  it("should forbid asking anything, because nobody is there to answer", () => {
+    expect(consultationInstructions(repos)).toMatch(/não pergunte/i);
+  });
+
+  it("should forbid recommending, so a fact never comes back dressed as a decision", () => {
+    expect(consultationInstructions(repos)).toMatch(/não recomende/i);
+  });
+
+  it("should ask for the answer with citations in the structured contract", () => {
+    const instructions = consultationInstructions(repos);
+
+    expect(instructions).toContain('"citations"');
+    expect(instructions).toContain("```json");
+  });
+});
+
+describe("consultationPrompt", () => {
+  it("should carry the room question with the story as context", () => {
+    const prompt = consultationPrompt(story, "Quem mais consome o CreateOrder?");
+
+    expect(prompt).toContain("Quem mais consome o CreateOrder?");
+    expect(prompt).toContain("#4242");
+    expect(prompt).toContain("Exportar relatório de comissões");
   });
 });
 

@@ -16,6 +16,8 @@ Linguagem ubíqua do domínio de refinamento. Termos cristalizados nas sessões 
 
 **Registro de decisão** — artefato de primeira classe que documenta uma decisão tomada no grilling coletivo (pergunta, resposta, quem decidiu). O oposto de "ata perdida": é consultável e vinculado à US.
 
+**Consulta** — dúvida *factual* levantada na sala durante o grilling coletivo e resolvida ao vivo: o agente lê o código na hora e responde citando o arquivo. É o oposto do Registro de decisão — não tem quem decidiu, porque não houve decisão: quem respondeu foi o repositório. Existe para matar o "alguém verifica depois", que é como uma dúvida de dez segundos vira Explosão três semanas depois.
+
 **Explosão** — descoberta de dependência ou restrição técnica no meio da implementação, depois da US já estimada e em sprint: a estimativa dobra e a decisão final é tomada às pressas, sem o PO saber que houve uma decisão. É a consequência dominante que o produto existe para evitar.
 
 **US madura** — estado que uma US atinge quando o grilling coletivo não tem mais perguntas abertas: nuances mapeadas, decisões registradas, sem dúvidas silenciosamente assumidas.

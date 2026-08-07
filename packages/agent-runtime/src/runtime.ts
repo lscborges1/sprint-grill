@@ -256,6 +256,8 @@ export async function createAgentRuntime(
       id: question.id,
       header: question.header,
       question: question.question,
+      recommendation: null,
+      evidence: [],
       options: question.options ?? [],
       allowFreeText: question.isOther,
     }));
@@ -292,7 +294,10 @@ export async function createAgentRuntime(
       respond(
         request.id,
         toolFailure(
-          `argumentos inválidos para ${ASK_OPERATOR_TOOL_NAME}: informe de 1 a 3 perguntas com id, header e question.`,
+          `argumentos inválidos para ${ASK_OPERATOR_TOOL_NAME}: informe de 1 a 3 perguntas com ` +
+            `id único, header, question, recommendation e ao menos uma evidence; e deixe a sala ` +
+            `responder (opções e/ou allowFreeText). Sem recommendation a pergunta é um fato que ` +
+            `você mesmo tem que buscar no código — não é decisão da sala.`,
         ),
       );
       return;

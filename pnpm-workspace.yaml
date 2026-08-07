@@ -5,3 +5,5 @@ allowBuilds:
   # tsx (harness do agent-runtime) roda em cima do esbuild.
   esbuild: true
   unrs-resolver: true
+  # SQLite da cerimônia: binding nativo, precisa do build no install.
+  better-sqlite3: true

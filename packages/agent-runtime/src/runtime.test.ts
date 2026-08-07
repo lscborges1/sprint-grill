@@ -154,6 +154,9 @@ describe("createAgentRuntime", () => {
             question: "Quando o cache invalida?",
             allowFreeText: true,
             options: [{ label: "Na escrita", description: "Invalida ao salvar" }],
+            // O HITL nativo não tem onde carregar recomendação: quem exibe decide o que fazer.
+            recommendation: null,
+            evidence: [],
           },
         ],
       },
@@ -173,7 +176,15 @@ describe("createAgentRuntime", () => {
           callId: "call-1",
           tool: "ask_operator",
           arguments: {
-            questions: [{ id: "q1", header: "Escopo", question: "Vale para o app mobile?" }],
+            questions: [
+              {
+                id: "q1",
+                header: "Escopo",
+                question: "Vale para o app mobile?",
+                recommendation: "Só web: o mobile não consome esse endpoint.",
+                evidence: ["core-api · src/routes/commissions.ts"],
+              },
+            ],
           },
         }),
         turnCompleted,
@@ -186,12 +197,102 @@ describe("createAgentRuntime", () => {
 
     expect(events[0]).toMatchObject({
       type: "question",
-      question: { questions: [{ id: "q1", header: "Escopo", allowFreeText: true }] },
+      question: {
+        questions: [
+          {
+            id: "q1",
+            header: "Escopo",
+            allowFreeText: true,
+            recommendation: "Só web: o mobile não consome esse endpoint.",
+            evidence: ["core-api · src/routes/commissions.ts"],
+          },
+        ],
+      },
     });
     expect(responsesIn(transcript)).toContainEqual({
       success: true,
       contentItems: [
         { type: "inputText", text: expect.stringContaining("Não, só web") as unknown as string },
+      ],
+    });
+    await runtime.close();
+  });
+
+  it("should refuse an ask_operator question that comes with no recommendation", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "ask_operator",
+          arguments: {
+            questions: [
+              {
+                id: "q1",
+                header: "Cache",
+                question: "Onde o cache invalida?",
+                evidence: ["core-api · src/cache.ts"],
+              },
+            ],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession();
+
+    const events = await drain(session.send("grelhe"));
+
+    // Pergunta sem recomendação é fato disfarçado: não chega na sala.
+    expect(events.some((event) => event.type === "question")).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [
+        {
+          type: "inputText",
+          text: expect.stringContaining("recommendation") as unknown as string,
+        },
+      ],
+    });
+    await runtime.close();
+  });
+
+  it("should refuse an ask_operator question that comes with no evidence", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "ask_operator",
+          arguments: {
+            questions: [
+              {
+                id: "q1",
+                header: "Cache",
+                question: "Onde o cache invalida?",
+                recommendation: "Na escrita.",
+                evidence: [],
+              },
+            ],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession();
+
+    const events = await drain(session.send("grelhe"));
+
+    expect(events.some((event) => event.type === "question")).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [
+        {
+          type: "inputText",
+          text: expect.stringContaining("evidence") as unknown as string,
+        },
       ],
     });
     await runtime.close();

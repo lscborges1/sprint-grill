@@ -12,6 +12,7 @@
   "dependencies": {
     "@sprint-griller/ado-client": "workspace:*",
     "@sprint-griller/agent-runtime": "workspace:*",
+    "@sprint-griller/ceremony": "workspace:*",
     "@sprint-griller/core": "workspace:*",
     "@sprint-griller/investigation": "workspace:*",
     "next": "16.3.0",

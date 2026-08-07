@@ -1,0 +1,359 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+import type { Logger } from "@sprint-griller/core";
+import Database from "better-sqlite3";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { z } from "zod";
+import { CeremonyError } from "./ceremony-error";
+import { SCHEMA_DDL, SCHEMA_VERSION, decisions, events, questions, sessions } from "./schema";
+import type {
+  CeremonyDecision,
+  CeremonyQuestion,
+  CeremonySession,
+  TranscriptEntry,
+  TranscriptEvent,
+} from "./types";
+
+export interface OpenCeremonyStoreOptions {
+  readonly logger?: Logger;
+}
+
+export interface CreateSessionInput {
+  readonly id: string;
+  readonly storyId: number;
+  readonly storyTitle: string;
+  readonly storyUrl: string;
+  readonly investigationMarkdown: string;
+}
+
+export interface RecordDecisionInput {
+  readonly sessionId: string;
+  readonly questionId: string;
+  readonly answer: string;
+  readonly decidedBy: string;
+}
+
+export type FinishSessionOutcome =
+  | { readonly status: "encerrada" }
+  | { readonly status: "falhou"; readonly message: string };
+
+/**
+ * A única porta do estado de cerimônia. `recordDecision` é a única escrita em
+ * `decisions` do repositório inteiro — e ela exige `decidedBy`, que só o
+ * formulário do Palco tem. É assim que "nenhum Registro de decisão sem humano"
+ * deixa de ser promessa de prompt e vira tipo.
+ */
+export interface CeremonyStore {
+  createSession(input: CreateSessionInput): CeremonySession;
+  getSession(sessionId: string): CeremonySession | undefined;
+  findOpenSessionByStory(storyId: number): CeremonySession | undefined;
+  finishSession(sessionId: string, outcome: FinishSessionOutcome): void;
+  askQuestions(sessionId: string, asked: readonly CeremonyQuestion[]): void;
+  currentQuestion(sessionId: string): CeremonyQuestion | undefined;
+  abandonPendingQuestions(sessionId: string): void;
+  recordDecision(input: RecordDecisionInput): CeremonyDecision;
+  countDecisions(sessionId: string): number;
+  lastDecision(sessionId: string): CeremonyDecision | undefined;
+  listDecisions(sessionId: string): readonly CeremonyDecision[];
+  appendEvent(sessionId: string, event: TranscriptEvent): void;
+  listTranscript(sessionId: string): readonly TranscriptEntry[];
+  close(): void;
+}
+
+const evidenceSchema = z.array(z.string());
+const optionsSchema = z.array(z.object({ label: z.string(), description: z.string() }));
+
+/** O transcript é lido de volta como dado externo: arquivo antigo não pode virar `any`. */
+const transcriptEventSchema: z.ZodType<TranscriptEvent> = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("mensagem"), text: z.string() }),
+  z.object({
+    kind: z.literal("pergunta"),
+    questionId: z.string(),
+    question: z.string(),
+    recommendation: z.string(),
+  }),
+  z.object({
+    kind: z.literal("decisao"),
+    questionId: z.string(),
+    answer: z.string(),
+    decidedBy: z.string(),
+  }),
+  z.object({ kind: z.literal("pergunta-recusada"), question: z.string(), motivo: z.string() }),
+  z.object({ kind: z.literal("turno-encerrado") }),
+  z.object({ kind: z.literal("turno-falhou"), message: z.string() }),
+  z.object({ kind: z.literal("retomada") }),
+]);
+
+export function openCeremonyStore(
+  dbPath: string,
+  options: OpenCeremonyStoreOptions = {},
+): CeremonyStore {
+  mkdirSync(path.dirname(dbPath), { recursive: true });
+
+  const sqlite = new Database(dbPath);
+  // WAL: a cerimônia grava a cada evento enquanto o Palco lê na mesma máquina.
+  sqlite.pragma("journal_mode = WAL");
+  applySchema(sqlite, dbPath, options.logger);
+
+  const db = drizzle(sqlite);
+
+  function requireSession(sessionId: string): CeremonySession {
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+    return session;
+  }
+
+  const store: CeremonyStore = {
+    createSession(input) {
+      const session: CeremonySession = {
+        ...input,
+        createdAt: Date.now(),
+        status: "ativa",
+        failureMessage: null,
+      };
+      db.insert(sessions).values(session).run();
+      return session;
+    },
+
+    getSession(sessionId) {
+      return db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
+    },
+
+    findOpenSessionByStory(storyId) {
+      return db
+        .select()
+        .from(sessions)
+        .where(and(eq(sessions.storyId, storyId), eq(sessions.status, "ativa")))
+        .orderBy(desc(sessions.createdAt))
+        .get();
+    },
+
+    finishSession(sessionId, outcome) {
+      db.update(sessions)
+        .set({
+          status: outcome.status,
+          failureMessage: outcome.status === "falhou" ? outcome.message : null,
+        })
+        .where(eq(sessions.id, sessionId))
+        .run();
+    },
+
+    askQuestions(sessionId, asked) {
+      requireSession(sessionId);
+      if (asked.length === 0) return;
+
+      const askedAt = Date.now();
+      db.transaction((tx) => {
+        for (const question of asked) {
+          tx.insert(questions)
+            .values({
+              sessionId,
+              questionId: question.id,
+              header: question.header,
+              question: question.question,
+              recommendation: question.recommendation,
+              evidence: JSON.stringify(question.evidence),
+              options: JSON.stringify(question.options),
+              allowFreeText: question.allowFreeText,
+              askedAt,
+              status: "aberta",
+            })
+            .run();
+          tx.insert(events)
+            .values({
+              sessionId,
+              at: askedAt,
+              kind: "pergunta",
+              payload: JSON.stringify({
+                kind: "pergunta",
+                questionId: question.id,
+                question: question.question,
+                recommendation: question.recommendation,
+              } satisfies TranscriptEvent),
+            })
+            .run();
+        }
+      });
+    },
+
+    currentQuestion(sessionId) {
+      const row = db
+        .select()
+        .from(questions)
+        .where(and(eq(questions.sessionId, sessionId), eq(questions.status, "aberta")))
+        .orderBy(asc(questions.seq))
+        .get();
+      return row && toQuestion(row);
+    },
+
+    abandonPendingQuestions(sessionId) {
+      db.update(questions)
+        .set({ status: "abandonada" })
+        .where(and(eq(questions.sessionId, sessionId), eq(questions.status, "aberta")))
+        .run();
+    },
+
+    recordDecision({ sessionId, questionId, answer, decidedBy }) {
+      const who = decidedBy.trim();
+      if (who === "") throw new CeremonyError("registre quem decidiu antes de gravar a decisão.");
+
+      const chosen = answer.trim();
+      if (chosen === "") throw new CeremonyError("a resposta da sala não pode ser vazia.");
+
+      const pending = db
+        .select()
+        .from(questions)
+        .where(
+          and(
+            eq(questions.sessionId, sessionId),
+            eq(questions.questionId, questionId),
+            eq(questions.status, "aberta"),
+          ),
+        )
+        .orderBy(asc(questions.seq))
+        .get();
+
+      if (!pending) {
+        throw new CeremonyError(`a pergunta ${questionId} não está aberta nesta cerimônia.`);
+      }
+
+      const decision: CeremonyDecision = {
+        questionId,
+        question: pending.question,
+        recommendation: pending.recommendation,
+        answer: chosen,
+        decidedBy: who,
+        decidedAt: Date.now(),
+      };
+
+      db.transaction((tx) => {
+        tx.update(questions).set({ status: "respondida" }).where(eq(questions.seq, pending.seq)).run();
+        tx.insert(decisions)
+          .values({ sessionId, questionSeq: pending.seq, ...decision })
+          .run();
+        tx.insert(events)
+          .values({
+            sessionId,
+            at: decision.decidedAt,
+            kind: "decisao",
+            payload: JSON.stringify({
+              kind: "decisao",
+              questionId,
+              answer: decision.answer,
+              decidedBy: decision.decidedBy,
+            } satisfies TranscriptEvent),
+          })
+          .run();
+      });
+
+      return decision;
+    },
+
+    countDecisions(sessionId) {
+      const row = db
+        .select({ total: sql<number>`count(*)` })
+        .from(decisions)
+        .where(eq(decisions.sessionId, sessionId))
+        .get();
+      return row?.total ?? 0;
+    },
+
+    lastDecision(sessionId) {
+      const row = db
+        .select()
+        .from(decisions)
+        .where(eq(decisions.sessionId, sessionId))
+        .orderBy(desc(decisions.seq))
+        .get();
+      return row && toDecision(row);
+    },
+
+    listDecisions(sessionId) {
+      return db
+        .select()
+        .from(decisions)
+        .where(eq(decisions.sessionId, sessionId))
+        .orderBy(asc(decisions.seq))
+        .all()
+        .map(toDecision);
+    },
+
+    appendEvent(sessionId, event) {
+      db.insert(events)
+        .values({ sessionId, at: Date.now(), kind: event.kind, payload: JSON.stringify(event) })
+        .run();
+    },
+
+    listTranscript(sessionId) {
+      return db
+        .select()
+        .from(events)
+        .where(eq(events.sessionId, sessionId))
+        .orderBy(asc(events.seq))
+        .all()
+        .map((row) => ({
+          at: row.at,
+          event: transcriptEventSchema.parse(JSON.parse(row.payload)),
+        }));
+    },
+
+    close() {
+      sqlite.close();
+    },
+  };
+
+  return store;
+}
+
+/**
+ * `CREATE TABLE IF NOT EXISTS` não corrige tabela de formato antigo: sem esta
+ * checagem, um banco de uma versão anterior abriria calado e só quebraria numa
+ * consulta, no meio da cerimônia. O arquivo é estado local descartável, então a
+ * saída honesta é mandar apagá-lo.
+ */
+function applySchema(sqlite: Database.Database, dbPath: string, logger?: Logger): void {
+  const version = Number(sqlite.pragma("user_version", { simple: true }));
+
+  // 0 é banco novo (ou de antes desta checagem, com o mesmo formato).
+  if (version !== 0 && version !== SCHEMA_VERSION) {
+    logger?.error(
+      { dbPath, version, expectedVersion: SCHEMA_VERSION },
+      "banco de cerimônia em versão incompatível",
+    );
+    throw new CeremonyError(
+      `O banco de cerimônia está na versão ${version}, e esta versão do ` +
+        `Sprint Griller fala a ${SCHEMA_VERSION}. Apague o arquivo (ele guarda só ` +
+        `estado de cerimônia) ou aponte SPRINT_GRILLER_DB para outro.`,
+    );
+  }
+
+  sqlite.exec(SCHEMA_DDL);
+  sqlite.pragma(`user_version = ${SCHEMA_VERSION}`);
+}
+
+type QuestionRow = typeof questions.$inferSelect;
+type DecisionRow = typeof decisions.$inferSelect;
+
+function toQuestion(row: QuestionRow): CeremonyQuestion {
+  return {
+    id: row.questionId,
+    header: row.header,
+    question: row.question,
+    recommendation: row.recommendation,
+    evidence: evidenceSchema.parse(JSON.parse(row.evidence)),
+    options: optionsSchema.parse(JSON.parse(row.options)),
+    allowFreeText: row.allowFreeText,
+  };
+}
+
+function toDecision(row: DecisionRow): CeremonyDecision {
+  return {
+    questionId: row.questionId,
+    question: row.question,
+    recommendation: row.recommendation,
+    answer: row.answer,
+    decidedBy: row.decidedBy,
+    decidedAt: row.decidedAt,
+  };
+}

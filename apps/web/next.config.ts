@@ -5,9 +5,12 @@ const nextConfig: NextConfig = {
   transpilePackages: [
     "@sprint-griller/ado-client",
     "@sprint-griller/agent-runtime",
+    "@sprint-griller/ceremony",
     "@sprint-griller/core",
     "@sprint-griller/investigation",
   ],
+  // Binding nativo do SQLite: bundlar quebra o `.node`.
+  serverExternalPackages: ["better-sqlite3"],
   // As instruções para agentes deste repo vivem na raiz, não em arquivos
   // gerados a cada `next dev`.
   agentRules: false,

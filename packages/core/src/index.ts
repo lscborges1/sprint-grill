@@ -1,6 +1,7 @@
 export { ConfigError } from "./config-error";
 export { loadAdoCredentials } from "./config/ado-credentials";
 export type { AdoCredentials } from "./config/ado-credentials";
+export { DB_PATH_ENV_VAR, defaultCeremonyDbPath } from "./config/ceremony-db";
 export {
   CONFIG_PATH_ENV_VAR,
   defaultSquadConfigPath,

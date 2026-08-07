@@ -3,6 +3,8 @@ import { inferRefinementStatus } from "../refinement/refinement-status";
 import type { RefinementStatus } from "../refinement/refinement-status";
 import { COMMENTS_API_VERSION, createAdoRest } from "../rest/ado-rest";
 import type { AdoClientOptions, AdoRest } from "../rest/ado-rest";
+import { escapeWiql } from "../rest/wiql";
+import { fetchBacklogItemTypes } from "../work-items/work-item-types";
 
 /** Uma US da iteration como o picker precisa dela: identidade + onde ela está. */
 export interface IterationStory {
@@ -31,10 +33,6 @@ const teamIterationsSchema = z.object({
   ),
 });
 
-const backlogItemTypesSchema = z.object({
-  workItemTypes: z.array(z.object({ name: z.string() })),
-});
-
 const wiqlSchema = z.object({
   workItems: z.array(z.object({ id: z.number() })).default([]),
 });
@@ -58,13 +56,6 @@ const workItemsBatchSchema = z.object({
 const commentsSchema = z.object({
   comments: z.array(z.object({ text: z.string() })).default([]),
 });
-
-/**
- * Categoria de processo que o ADO usa para "o que é item de backlog": resolve
- * para User Story (Agile), Product Backlog Item (Scrum) ou Requirement (CMMI)
- * conforme o projeto. Perguntar sai mais barato que chutar o nome do tipo.
- */
-const BACKLOG_ITEM_CATEGORY = "Microsoft.RequirementCategory";
 
 /**
  * As US da iteration atual do time padrão do projeto, cada uma com o status de
@@ -104,14 +95,8 @@ async function fetchStories(
   rest: AdoRest,
   iterationPath: string,
 ): Promise<readonly IterationStory[]> {
-  const types = await backlogItemTypes(rest);
-  if (types.length === 0) {
-    rest.logger.warn(
-      { category: BACKLOG_ITEM_CATEGORY },
-      "o processo do projeto não declara nenhum tipo de item de backlog",
-    );
-    return [];
-  }
+  const types = await fetchBacklogItemTypes(rest);
+  if (types.length === 0) return [];
 
   const { workItems } = await rest.request({
     operation: "as US da iteration",
@@ -169,17 +154,6 @@ async function fetchStories(
   );
 }
 
-/** Como o processo do projeto chama "item de backlog" — não dá para hardcodar. */
-async function backlogItemTypes(rest: AdoRest): Promise<readonly string[]> {
-  const { workItemTypes } = await rest.request({
-    operation: "os tipos de item de backlog",
-    path: `_apis/wit/workitemtypecategories/${BACKLOG_ITEM_CATEGORY}`,
-    schema: backlogItemTypesSchema,
-  });
-
-  return workItemTypes.map(({ name }) => name);
-}
-
 /**
  * Uma requisição por US com comment — o custo de não manter banco próprio.
  * ponytail: teto de 200 comments (os mais novos primeiro, que é onde os
@@ -218,8 +192,4 @@ function backlogItemsQuery(
     `AND [System.WorkItemType] IN (${typeList}) ` +
     "ORDER BY [System.Id]"
   );
-}
-
-function escapeWiql(value: string): string {
-  return value.replaceAll("'", "''");
 }

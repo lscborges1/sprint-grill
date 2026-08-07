@@ -10,6 +10,13 @@ export type {
   CurrentIteration,
   IterationStory,
 } from "./iteration/current-iteration";
+export { fetchRolloverBaseline } from "./metrics/rollover";
+export type {
+  RolloverBaseline,
+  RolloverBaselineOptions,
+  RolloverCounts,
+  SprintRollover,
+} from "./metrics/rollover";
 // Quem gravar artefato novo no ADO precisa embutir o marcador — é o que o
 // picker lê para inferir o status. Ver README, "Status de refinamento".
 export {

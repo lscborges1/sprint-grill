@@ -16,28 +16,32 @@ export function readPalco(
   const session = store.getSession(sessionId);
   if (!session) return undefined;
 
+  const decisions = store.listDecisions(sessionId);
+  const pendingQuestions = store.listOpenQuestions(sessionId);
+
   return {
     sessionId,
     story: { id: session.storyId, title: session.storyTitle, url: session.storyUrl },
-    decisionCount: store.countDecisions(sessionId),
-    lastDecision: store.lastDecision(sessionId) ?? null,
+    decisionCount: decisions.length,
+    decisions,
+    pendingQuestions,
+    lastDecision: decisions.at(-1) ?? null,
     live,
-    current: phaseOf(store, session, live),
+    current: phaseOf(session, live, pendingQuestions[0]),
   };
 }
 
 function phaseOf(
-  store: CeremonyStore,
   session: CeremonySession,
   live: boolean,
+  currentQuestion: CeremonyQuestion | undefined,
 ): PalcoState["current"] {
   if (session.status === "falhou") {
     return { phase: "falhou", message: session.failureMessage ?? "A cerimônia parou." };
   }
   if (session.status === "encerrada") return { phase: "encerrada" };
 
-  const question = store.currentQuestion(session.id);
-  if (question) return { phase: "perguntando", question };
+  if (currentQuestion) return { phase: "perguntando", question: currentQuestion };
 
   return live ? { phase: "pensando" } : { phase: "retomavel" };
 }

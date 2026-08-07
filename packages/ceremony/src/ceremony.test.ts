@@ -436,7 +436,7 @@ describe("resume", () => {
 });
 
 describe("palco", () => {
-  it("should count the decisions and keep the last one for the stage", async () => {
+  it("should expose decided and pending questions for the stage progress", async () => {
     const { ceremony } = ceremonyWith([
       [
         { type: "ask", questions: [agentQuestion({ id: "q1" })] },
@@ -451,6 +451,8 @@ describe("palco", () => {
       expect(ceremony.palco(SESSION_ID)).toMatchObject({
         decisionCount: 1,
         lastDecision: { answer: "Sim", decidedBy: "PO" },
+        decisions: [{ questionId: "q1", answer: "Sim", decidedBy: "PO" }],
+        pendingQuestions: [{ id: "q2" }],
         live: true,
       }),
     );

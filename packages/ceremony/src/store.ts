@@ -51,6 +51,7 @@ export interface CeremonyStore {
   finishSession(sessionId: string, outcome: FinishSessionOutcome): void;
   askQuestions(sessionId: string, asked: readonly CeremonyQuestion[]): void;
   currentQuestion(sessionId: string): CeremonyQuestion | undefined;
+  listOpenQuestions(sessionId: string): readonly CeremonyQuestion[];
   abandonPendingQuestions(sessionId: string): void;
   recordDecision(input: RecordDecisionInput): CeremonyDecision;
   countDecisions(sessionId: string): number;
@@ -185,6 +186,16 @@ export function openCeremonyStore(
         .orderBy(asc(questions.seq))
         .get();
       return row && toQuestion(row);
+    },
+
+    listOpenQuestions(sessionId) {
+      return db
+        .select()
+        .from(questions)
+        .where(and(eq(questions.sessionId, sessionId), eq(questions.status, "aberta")))
+        .orderBy(asc(questions.seq))
+        .all()
+        .map(toQuestion);
     },
 
     abandonPendingQuestions(sessionId) {

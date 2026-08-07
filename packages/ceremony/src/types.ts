@@ -90,6 +90,10 @@ export interface PalcoState {
     readonly url: string;
   };
   readonly decisionCount: number;
+  /** Histórico completo para a árvore de decisões do Palco. */
+  readonly decisions: readonly CeremonyDecision[];
+  /** Perguntas já levantadas pelo agente, ainda sem decisão da sala. */
+  readonly pendingQuestions: readonly CeremonyQuestion[];
   readonly lastDecision: CeremonyDecision | null;
   /** Se existe um turno de agente vivo neste processo. `false` depois de um crash. */
   readonly live: boolean;

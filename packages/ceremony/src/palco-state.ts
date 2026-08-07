@@ -37,6 +37,8 @@ export const palcoStateSchema: z.ZodType<PalcoState> = z.object({
   sessionId: z.string(),
   story: z.object({ id: z.number(), title: z.string(), url: z.string() }),
   decisionCount: z.number(),
+  decisions: z.array(decisionSchema),
+  pendingQuestions: z.array(questionSchema),
   lastDecision: decisionSchema.nullable(),
   live: z.boolean(),
   current: z.discriminatedUnion("phase", [

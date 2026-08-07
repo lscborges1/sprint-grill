@@ -3,7 +3,7 @@
 // Subpath de propósito: o barril do pacote puxa o store, e o binding nativo do
 // SQLite não existe no bundle do cliente.
 import { palcoStateSchema } from "@sprint-griller/ceremony/palco-state";
-import type { CeremonyQuestion, PalcoState } from "@sprint-griller/ceremony";
+import type { CeremonyDecision, CeremonyQuestion, PalcoState } from "@sprint-griller/ceremony";
 import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
 import { resumeCeremonyAction, submitDecisionAction } from "../actions";
@@ -20,38 +20,153 @@ export function Palco({ initial }: { initial: PalcoState }) {
   const { state, connected } = useLivePalco(initial);
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-[1100px] flex-1 flex-col gap-10 px-[6vw] py-12">
-      <header className="flex flex-col gap-2 border-b border-line pb-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
-            Grilling coletivo · US #{state.story.id}
-          </p>
-          <Link
-            href={`/investigacao/${state.story.id}`}
-            className="text-sm text-muted underline underline-offset-4"
-          >
-            ver a Investigação
-          </Link>
-        </div>
-        <h1 className="font-serif text-2xl tracking-tight">{state.story.title}</h1>
-        {!connected && (
-          <p role="alert" className="text-sm text-muted">
-            Sem conexão com a cerimônia — o que está na tela pode estar
-            desatualizado. Reconectando…
-          </p>
+    <div className="mx-auto grid min-h-dvh w-full max-w-[1440px] lg:grid-cols-[minmax(16rem,19rem)_minmax(0,1fr)]">
+      <DecisionRail state={state} />
+
+      <main className="flex min-w-0 flex-col gap-10 px-[6vw] py-8 lg:px-[7vw] lg:py-12">
+        <header className="flex flex-col gap-5 border-b border-line pb-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
+              Grilling coletivo · US #{state.story.id}
+            </p>
+            <Link
+              href={`/investigacao/${state.story.id}`}
+              className="text-sm text-muted underline underline-offset-4"
+            >
+              ver a Investigação
+            </Link>
+          </div>
+          <h1 className="font-serif text-2xl tracking-tight">{state.story.title}</h1>
+          <Progress state={state} />
+          {!connected && (
+            <p role="alert" className="text-sm text-muted">
+              Sem conexão com a cerimônia — o que está na tela pode estar
+              desatualizado. Reconectando…
+            </p>
+          )}
+        </header>
+
+        <Stage state={state} />
+
+        {state.lastDecision && (
+          <footer className="mt-auto border-t border-line pt-5 text-sm text-muted">
+            Última decisão: <strong className="font-medium">{state.lastDecision.answer}</strong> —{" "}
+            {state.lastDecision.decidedBy}, {formatWhen(state.lastDecision.decidedAt)}
+          </footer>
         )}
-      </header>
-
-      <Stage state={state} />
-
-      {state.lastDecision && (
-        <footer className="mt-auto border-t border-line pt-5 text-sm text-muted">
-          Última decisão: <strong className="font-medium">{state.lastDecision.answer}</strong> —{" "}
-          {state.lastDecision.decidedBy}, {formatWhen(state.lastDecision.decidedAt)}
-        </footer>
-      )}
-    </main>
+      </main>
+    </div>
   );
+}
+
+function DecisionRail({ state }: { state: PalcoState }) {
+  const currentQuestionId = currentQuestionIdOf(state);
+  const pendingCount = state.pendingQuestions.length;
+
+  return (
+    <aside className="flex min-h-0 flex-col gap-5 border-b border-line bg-background px-6 py-7 lg:sticky lg:top-0 lg:min-h-dvh lg:border-r lg:border-b-0">
+      <div>
+        <p className="mb-2 font-mono text-xs text-muted">US #{state.story.id}</p>
+        <h2 className="font-serif text-xl leading-snug tracking-tight">{state.story.title}</h2>
+      </div>
+
+      <section className="flex min-h-0 flex-1 flex-col gap-3" aria-labelledby="arvore-de-decisoes">
+        <h3 id="arvore-de-decisoes" className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
+          Árvore de decisões
+        </h3>
+        {state.decisions.length + pendingCount === 0 ? (
+          <p className="text-sm text-muted">O agente ainda não levantou decisões.</p>
+        ) : (
+          <ol className="flex min-h-0 flex-col gap-2 overflow-y-auto" aria-label="Decisões da cerimônia">
+            {state.decisions.map((decision) => (
+              <DecisionNode key={decision.questionId} decision={decision} />
+            ))}
+            {state.pendingQuestions.map((question) => (
+              <PendingNode
+                key={question.id}
+                question={question}
+                current={question.id === currentQuestionId}
+              />
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <p className="border-t border-line pt-4 text-sm text-muted">
+        <strong className="font-medium text-foreground">{pendingCount}</strong>{" "}
+        {pendingCount === 1 ? "dúvida aberta" : "dúvidas abertas"}
+      </p>
+    </aside>
+  );
+}
+
+function DecisionNode({ decision }: { decision: CeremonyDecision }) {
+  return (
+    <li className="rounded-lg bg-foreground/[0.04] px-3 py-2.5 text-sm leading-snug">
+      <p className="flex gap-2 text-muted">
+        <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-emerald-600" />
+        {decision.question}
+      </p>
+      <p className="mt-1 pl-3.5 font-medium">{decision.answer}</p>
+    </li>
+  );
+}
+
+function PendingNode({ question, current }: { question: CeremonyQuestion; current: boolean }) {
+  return (
+    <li
+      className={`rounded-lg px-3 py-2.5 text-sm leading-snug ${
+        current ? "bg-accent/10 font-medium" : "border border-dashed border-line text-muted"
+      }`}
+      aria-current={current ? "step" : undefined}
+    >
+      <p className="flex gap-2">
+        <span
+          aria-hidden="true"
+          className={`mt-1.5 size-1.5 shrink-0 rounded-full ${
+            current ? "bg-accent" : "border border-muted"
+          }`}
+        />
+        {question.question}
+      </p>
+    </li>
+  );
+}
+
+function Progress({ state }: { state: PalcoState }) {
+  const currentQuestionId = currentQuestionIdOf(state);
+  const total = state.decisions.length + state.pendingQuestions.length;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2" aria-label="Progresso da cerimônia">
+      {total > 0 && (
+        <ol className="flex gap-1" aria-label={`${state.decisions.length} decisões registradas de ${total}`}>
+          {state.decisions.map((decision) => (
+            <li key={decision.questionId} className="h-1.5 w-6 rounded-full bg-emerald-600" aria-label="Decisão registrada" />
+          ))}
+          {state.pendingQuestions.map((question) => (
+            <li
+              key={question.id}
+              className={`h-1.5 w-6 rounded-full ${
+                question.id === currentQuestionId ? "bg-accent" : "bg-line"
+              }`}
+              aria-label={question.id === currentQuestionId ? "Decisão em discussão" : "Decisão pendente"}
+            />
+          ))}
+        </ol>
+      )}
+      <p className="text-sm text-muted">
+        <strong className="font-medium text-foreground">{state.decisionCount}</strong>{" "}
+        {state.decisionCount === 1 ? "decisão" : "decisões"} ·{" "}
+        <strong className="font-medium text-foreground">{state.pendingQuestions.length}</strong>{" "}
+        {state.pendingQuestions.length === 1 ? "pendência" : "pendências"}
+      </p>
+    </div>
+  );
+}
+
+function currentQuestionIdOf(state: PalcoState): string | undefined {
+  return state.current.phase === "perguntando" ? state.current.question.id : undefined;
 }
 
 function Stage({ state }: { state: PalcoState }) {

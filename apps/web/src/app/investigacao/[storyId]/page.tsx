@@ -12,6 +12,8 @@ import type {
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Section } from "@/components/section";
+import { startCeremonyAction } from "@/app/cerimonia/actions";
+import { findOpenCeremony } from "@/lib/ceremonies";
 import { getInvestigation, storyIdSchema } from "@/lib/investigations";
 import type { InvestigationRun, ReportRun } from "@/lib/investigations";
 import { AutoRefresh } from "./auto-refresh";
@@ -57,8 +59,36 @@ export default async function InvestigationPage({
         )}
       </header>
 
+      {run?.status === "aprovado" && <Grill storyId={storyId} />}
+
       <Outcome run={run} />
     </main>
+  );
+}
+
+/**
+ * A ponte entre os dois momentos do produto: a Investigação aprovada é o insumo
+ * do grilling, e é daqui que a cerimônia nasce. Se já existe uma aberta para
+ * esta US, o botão volta para ela em vez de abrir outra.
+ */
+function Grill({ storyId }: { storyId: number }) {
+  const open = findOpenCeremony(storyId);
+
+  return (
+    <form action={startCeremonyAction} className="flex flex-wrap items-center gap-4">
+      <input type="hidden" name="storyId" value={storyId} />
+      <button
+        type="submit"
+        className="rounded-full border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background"
+      >
+        {open ? "Voltar ao Palco" : "Grelhar com a sala"}
+      </button>
+      <span className="text-sm text-muted">
+        {open
+          ? "A cerimônia desta US já está aberta."
+          : "Abre o Palco com esta Investigação como insumo do grilling."}
+      </span>
+    </form>
   );
 }
 

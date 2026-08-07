@@ -6,5 +6,8 @@ dist/
 
 # Config da squad: preenchida pelo Operador na própria máquina.
 sprint-griller.config.json
+
+# Estado de cerimônia (SQLite): local e descartável — o ADO é a fonte da verdade.
+.sprint-griller/
 .env
 .env.local

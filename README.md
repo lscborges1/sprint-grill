@@ -43,6 +43,7 @@ packages/core             config da squad (zod) e logging estruturado
 packages/ado-client       fronteira do Azure DevOps (REST tipado com zod)
 packages/agent-runtime    cliente do `codex app-server` (streaming, HITL, resume)
 packages/investigation    turno da Investigação + checagem de grounding + Markdown
+packages/ceremony         sessão do grilling + persistência (SQLite) + estado do Palco
 docs/adr                  decisões de arquitetura difíceis de reverter
 ```
 
@@ -103,3 +104,31 @@ na tela, e a dúvida volta como furo da US.
 
 > As Investigações vivem na memória do processo: reiniciar o app perde os
 > previews que ainda não foram publicados no ADO.
+
+## Cerimônia: sessão persistente e Palco
+
+Com a Investigação **aprovada**, **Grelhar com a sala** abre a cerimônia: o
+agente recebe a Investigação como insumo e conduz o grilling coletivo. O modo
+**Palco** (`/cerimonia/<id da sessão>`) é o que a sala acompanha projetado —
+pergunta atual, recomendação do agente, evidências, e a captura da decisão.
+
+O que o Palco exibe é sempre **decisão**, nunca fato:
+
+| Pergunta do agente | O que acontece |
+|---|---|
+| com `recommendation` | vai para o Palco, com a recomendação e as evidências |
+| sem `recommendation` | recusada pelo runtime; volta para o agente buscar no código |
+
+A recusa é mecânica, no schema da `ask_operator` — não depende do prompt. E do
+outro lado, **só o formulário do Palco grava Registro de decisão**: `decidedBy` é
+obrigatório, então nenhum caminho do laço de eventos do agente chega lá.
+
+Sessão, decisões e transcript são gravados na hora em SQLite
+(`.sprint-griller/cerimonias.db`, ou `SPRINT_GRILLER_DB`) — F5 no meio da
+cerimônia volta no mesmo ponto, e o estado novo chega por SSE, sem polling. Se o
+processo cair, o Palco mostra a cerimônia como **parada**: retomar casa com o
+`thread/resume` do agente, levando as decisões já registradas. Decisão gravada
+nunca se perde por causa de uma retomada que falhou.
+
+O banco é estado local descartável ([ADR 0003](docs/adr/0003-azure-devops-como-fonte-da-verdade.md)):
+depois do despejo, nada precisa ser consultado nele.

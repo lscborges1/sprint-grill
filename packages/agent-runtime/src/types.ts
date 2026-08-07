@@ -13,6 +13,14 @@ export interface AgentQuestion {
   /** Rótulo curto do assunto (ex.: "Escopo do cache"). */
   readonly header: string;
   readonly question: string;
+  /**
+   * O que o agente recomenda. Obrigatória na `ask_operator` — pergunta sem
+   * recomendação é fato disfarçado e é recusada antes de virar evento. Só vem
+   * `null` pelo HITL nativo do codex, que não tem campo para ela.
+   */
+  readonly recommendation: string | null;
+  /** Evidências curtas que sustentam a recomendação. */
+  readonly evidence: readonly string[];
   readonly options: readonly AgentQuestionOption[];
   /** Se o humano pode responder fora das opções. */
   readonly allowFreeText: boolean;

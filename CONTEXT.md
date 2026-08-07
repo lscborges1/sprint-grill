@@ -24,6 +24,8 @@ Linguagem ubíqua do domínio de refinamento. Termos cristalizados nas sessões 
 
 **UI de sessão** — a única superfície própria do produto: uma tela web que a sala inteira acompanha durante o grilling coletivo (pergunta atual, recomendação do agente, decisão capturada, árvore de decisões). Ao final da cerimônia, despeja os artefatos no Azure DevOps.
 
+**Palco** — o modo da UI de sessão que a sala vê projetado: pergunta atual, recomendação do agente, evidências e a captura da decisão, em tipografia legível a distância. Tipografia editorial aqui é requisito, não estética. O outro modo é o **Dossiê**, a aba do Operador com o documento se formando e o preview do despejo.
+
 **Despejo** — o momento final da cerimônia em que a sessão grava tudo no Azure DevOps: spec da US, tasks filhas, estimativa e Registros de decisão. Passa pelo gate de maturidade: pendências abertas são mostradas e despejar com elas é escolha consciente do Operador.
 
 **Spec da US** — artefato único de dupla audiência (humano + agente) que consolida o refinamento: decisões, contexto de impacto da Investigação, unknowns explícitos, fora-de-escopo. Vive na própria US (description/wiki linkada); não existe "ata" separada.

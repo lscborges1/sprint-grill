@@ -111,7 +111,17 @@ function question(id: string, answers: Record<string, readonly string[]>[]): Age
   return {
     type: "question",
     question: {
-      questions: [{ id, header: "Escopo", question: "Vale para o mobile?", options: [], allowFreeText: true }],
+      questions: [
+        {
+          id,
+          header: "Escopo",
+          question: "Vale para o mobile?",
+          recommendation: null,
+          evidence: [],
+          options: [],
+          allowFreeText: true,
+        },
+      ],
       answer: async (given) => {
         answers.push(given);
       },

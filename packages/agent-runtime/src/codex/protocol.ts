@@ -136,6 +136,16 @@ export const askOperatorArgumentsSchema = z.object({
         id: z.string().describe("Identificador curto e único da pergunta."),
         header: z.string().describe("Rótulo do assunto, poucas palavras."),
         question: z.string(),
+        // Obrigatória de propósito: sem recomendação a pergunta é um fato que
+        // você deveria ter buscado no código, e o schema recusa a chamada.
+        recommendation: z
+          .string()
+          .min(1)
+          .describe("O que você recomenda, e por quê. Sem isso a pergunta é recusada."),
+        evidence: z
+          .array(z.string())
+          .default([])
+          .describe("Evidências curtas que sustentam a recomendação, ex.: `repo · caminho/arquivo.ts`."),
         options: z
           .array(questionOptionSchema)
           .default([])
@@ -172,7 +182,9 @@ export const askOperatorToolSpec = {
   name: ASK_OPERATOR_TOOL_NAME,
   description:
     "Pergunta à sala (squad + PO) quando uma decisão depende de gente, não de código. " +
-    "Faça de 1 a 3 perguntas por chamada, cada uma com opções quando houver alternativas claras. " +
+    "Faça de 1 a 3 perguntas por chamada, cada uma com `recommendation` (obrigatória) e opções " +
+    "quando houver alternativas claras. Fato que o código responde você busca sozinho — se você " +
+    "não consegue recomendar nada, não é decisão da sala. " +
     "Prefira perguntar a assumir: decisão assumida em silêncio é o que o produto existe para evitar.",
   inputSchema: z.toJSONSchema(askOperatorArgumentsSchema, { io: "input", target: "draft-7" }),
 } as const;

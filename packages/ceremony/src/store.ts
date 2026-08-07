@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import type { Logger } from "@sprint-griller/core";
 import Database from "better-sqlite3";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -13,6 +14,10 @@ import type {
   TranscriptEntry,
   TranscriptEvent,
 } from "./types";
+
+export interface OpenCeremonyStoreOptions {
+  readonly logger?: Logger;
+}
 
 export interface CreateSessionInput {
   readonly id: string;
@@ -80,13 +85,16 @@ const transcriptEventSchema: z.ZodType<TranscriptEvent> = z.discriminatedUnion("
   z.object({ kind: z.literal("retomada") }),
 ]);
 
-export function openCeremonyStore(dbPath: string): CeremonyStore {
+export function openCeremonyStore(
+  dbPath: string,
+  options: OpenCeremonyStoreOptions = {},
+): CeremonyStore {
   mkdirSync(path.dirname(dbPath), { recursive: true });
 
   const sqlite = new Database(dbPath);
   // WAL: a cerimônia grava a cada evento enquanto o Palco lê na mesma máquina.
   sqlite.pragma("journal_mode = WAL");
-  applySchema(sqlite, dbPath);
+  applySchema(sqlite, dbPath, options.logger);
 
   const db = drizzle(sqlite);
 
@@ -304,13 +312,17 @@ export function openCeremonyStore(dbPath: string): CeremonyStore {
  * consulta, no meio da cerimônia. O arquivo é estado local descartável, então a
  * saída honesta é mandar apagá-lo.
  */
-function applySchema(sqlite: Database.Database, dbPath: string): void {
+function applySchema(sqlite: Database.Database, dbPath: string, logger?: Logger): void {
   const version = Number(sqlite.pragma("user_version", { simple: true }));
 
   // 0 é banco novo (ou de antes desta checagem, com o mesmo formato).
   if (version !== 0 && version !== SCHEMA_VERSION) {
+    logger?.error(
+      { dbPath, version, expectedVersion: SCHEMA_VERSION },
+      "banco de cerimônia em versão incompatível",
+    );
     throw new CeremonyError(
-      `O banco de cerimônia em ${dbPath} está na versão ${version}, e esta versão do ` +
+      `O banco de cerimônia está na versão ${version}, e esta versão do ` +
         `Sprint Griller fala a ${SCHEMA_VERSION}. Apague o arquivo (ele guarda só ` +
         `estado de cerimônia) ou aponte SPRINT_GRILLER_DB para outro.`,
     );

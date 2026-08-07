@@ -142,6 +142,38 @@ describe("startCeremony", () => {
 
     expect(second.id).toBe(first.id);
   });
+
+  it("should not open two ceremonies when Grelhar is submitted twice at once", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let starts = 0;
+    createAgentRuntime.mockResolvedValue({
+      startSession: async () => {
+        starts += 1;
+        await hold;
+        return fakeSession(`thread-${nextSessionId}-${starts}`);
+      },
+      resumeSession: async (id: string) => fakeSession(id),
+      close: async () => undefined,
+    });
+    // Força o getCeremony a criar de novo com o mock acima.
+    const reg = (globalThis as { __sprintGrillerCeremonies?: { ceremony?: unknown; starting?: unknown } })
+      .__sprintGrillerCeremonies;
+    if (reg) {
+      reg.ceremony = undefined;
+      reg.starting = undefined;
+    }
+
+    const storyId = nextStoryId;
+    const pending = Promise.all([startCeremony(storyId), startCeremony(storyId)]);
+    release();
+    const [first, second] = await pending;
+
+    expect(second.id).toBe(first.id);
+    expect(starts).toBe(1);
+  });
 });
 
 describe("submitDecision", () => {

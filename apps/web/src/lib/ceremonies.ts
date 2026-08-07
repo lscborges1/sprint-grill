@@ -23,6 +23,8 @@ interface CeremonyRegistry {
   store: CeremonyStore | undefined;
   ceremony: Ceremony | undefined;
   starting: Promise<Ceremony> | undefined;
+  /** Evita duas sessões ativas da mesma US quando o clique em "Grelhar" corre em paralelo. */
+  startingByStory: Map<number, Promise<CeremonySession>>;
   listeners: Map<string, Set<PalcoListener>>;
 }
 
@@ -36,12 +38,15 @@ const registry: CeremonyRegistry = ((
   store: undefined,
   ceremony: undefined,
   starting: undefined,
+  startingByStory: new Map(),
   listeners: new Map(),
 });
+// Campo novo: HMR pode reusar um registry antigo sem ele.
+registry.startingByStory ??= new Map();
 
 /** Abrir o banco é efeito colateral: só acontece quando alguém pergunta de cerimônia. */
 function getStore(): CeremonyStore {
-  registry.store ??= openCeremonyStore(defaultCeremonyDbPath());
+  registry.store ??= openCeremonyStore(defaultCeremonyDbPath(), { logger });
   return registry.store;
 }
 
@@ -71,6 +76,7 @@ async function getCeremony(): Promise<Ceremony> {
     return await registry.starting;
   } catch (error) {
     registry.starting = undefined;
+    logger.error({ err: error }, "falha ao subir a cerimônia");
     throw error;
   }
 }
@@ -80,26 +86,40 @@ async function getCeremony(): Promise<Ceremony> {
  * do grilling, e sem ela não há o que grelhar.
  */
 export async function startCeremony(storyId: number): Promise<CeremonySession> {
+  const inFlight = registry.startingByStory.get(storyId);
+  if (inFlight) return inFlight;
+
   const open = getStore().findOpenSessionByStory(storyId);
   if (open) return open;
 
-  const run = getInvestigation(storyId);
-  if (run?.status !== "aprovado" || !run.story) {
-    throw new CeremonyError(
-      `A US #${storyId} ainda não tem Investigação aprovada — investigue antes de grelhar.`,
-    );
-  }
+  const starting = (async () => {
+    const run = getInvestigation(storyId);
+    if (run?.status !== "aprovado" || !run.story) {
+      throw new CeremonyError(
+        `A US #${storyId} ainda não tem Investigação aprovada — investigue antes de grelhar.`,
+      );
+    }
 
-  const ceremony = await getCeremony();
-  return ceremony.start({
-    story: {
-      id: run.story.id,
-      title: run.story.title,
-      description: run.story.description,
-      url: run.story.url,
-    },
-    investigationMarkdown: run.markdown,
+    const ceremony = await getCeremony();
+    // Outro caminho pode ter aberto a sessão enquanto o runtime subia.
+    const raced = getStore().findOpenSessionByStory(storyId);
+    if (raced) return raced;
+
+    return ceremony.start({
+      story: {
+        id: run.story.id,
+        title: run.story.title,
+        description: run.story.description,
+        url: run.story.url,
+      },
+      investigationMarkdown: run.markdown,
+    });
+  })().finally(() => {
+    registry.startingByStory.delete(storyId);
   });
+
+  registry.startingByStory.set(storyId, starting);
+  return starting;
 }
 
 /**

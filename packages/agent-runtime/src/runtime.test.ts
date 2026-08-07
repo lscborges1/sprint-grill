@@ -226,7 +226,14 @@ describe("createAgentRuntime", () => {
           callId: "call-1",
           tool: "ask_operator",
           arguments: {
-            questions: [{ id: "q1", header: "Cache", question: "Onde o cache invalida?" }],
+            questions: [
+              {
+                id: "q1",
+                header: "Cache",
+                question: "Onde o cache invalida?",
+                evidence: ["core-api · src/cache.ts"],
+              },
+            ],
           },
         }),
         turnCompleted,
@@ -245,6 +252,46 @@ describe("createAgentRuntime", () => {
         {
           type: "inputText",
           text: expect.stringContaining("recommendation") as unknown as string,
+        },
+      ],
+    });
+    await runtime.close();
+  });
+
+  it("should refuse an ask_operator question that comes with no evidence", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "ask_operator",
+          arguments: {
+            questions: [
+              {
+                id: "q1",
+                header: "Cache",
+                question: "Onde o cache invalida?",
+                recommendation: "Na escrita.",
+                evidence: [],
+              },
+            ],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession();
+
+    const events = await drain(session.send("grelhe"));
+
+    expect(events.some((event) => event.type === "question")).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [
+        {
+          type: "inputText",
+          text: expect.stringContaining("evidence") as unknown as string,
         },
       ],
     });

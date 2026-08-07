@@ -295,7 +295,8 @@ export async function createAgentRuntime(
         request.id,
         toolFailure(
           `argumentos inválidos para ${ASK_OPERATOR_TOOL_NAME}: informe de 1 a 3 perguntas com ` +
-            `id, header, question e recommendation. Sem recommendation a pergunta é um fato que ` +
+            `id único, header, question, recommendation e ao menos uma evidence; e deixe a sala ` +
+            `responder (opções e/ou allowFreeText). Sem recommendation a pergunta é um fato que ` +
             `você mesmo tem que buscar no código — não é decisão da sala.`,
         ),
       );

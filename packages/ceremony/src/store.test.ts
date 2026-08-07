@@ -79,7 +79,16 @@ describe("openCeremonyStore", () => {
     bumped.pragma(`user_version = ${SCHEMA_VERSION + 1}`);
     bumped.close();
 
-    expect(() => openCeremonyStore(file)).toThrow(/Apague o arquivo/);
+    let thrown: unknown;
+    try {
+      openCeremonyStore(file);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/Apague o arquivo/);
+    expect((thrown as Error).message).not.toContain(file);
   });
 
   it("should create the database file inside a directory that does not exist yet", () => {

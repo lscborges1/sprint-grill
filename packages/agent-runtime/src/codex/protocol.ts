@@ -129,35 +129,63 @@ export interface DynamicToolCallResponse {
   readonly success: boolean;
 }
 
+const askOperatorQuestionSchema = z
+  .object({
+    id: z.string().min(1).describe("Identificador curto e único da pergunta."),
+    header: z.string().describe("Rótulo do assunto, poucas palavras."),
+    question: z.string(),
+    // Obrigatória de propósito: sem recomendação a pergunta é um fato que
+    // você deveria ter buscado no código, e o schema recusa a chamada.
+    recommendation: z
+      .string()
+      .min(1)
+      .describe("O que você recomenda, e por quê. Sem isso a pergunta é recusada."),
+    evidence: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe(
+        "Evidências curtas que sustentam a recomendação (obrigatório, ao menos uma), ex.: `repo · caminho/arquivo.ts`.",
+      ),
+    options: z
+      .array(questionOptionSchema)
+      .default([])
+      .describe("Alternativas, quando houver alternativas claras."),
+    allowFreeText: z
+      .boolean()
+      .default(true)
+      .describe("Se a sala pode responder fora das opções."),
+  })
+  .superRefine((question, ctx) => {
+    // Sem opções e sem texto livre o Palco não tem como responder.
+    if (question.options.length === 0 && !question.allowFreeText) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "pergunte com opções ou com allowFreeText: true — senão a sala não tem como responder.",
+        path: ["allowFreeText"],
+      });
+    }
+  });
+
 export const askOperatorArgumentsSchema = z.object({
   questions: z
-    .array(
-      z.object({
-        id: z.string().describe("Identificador curto e único da pergunta."),
-        header: z.string().describe("Rótulo do assunto, poucas palavras."),
-        question: z.string(),
-        // Obrigatória de propósito: sem recomendação a pergunta é um fato que
-        // você deveria ter buscado no código, e o schema recusa a chamada.
-        recommendation: z
-          .string()
-          .min(1)
-          .describe("O que você recomenda, e por quê. Sem isso a pergunta é recusada."),
-        evidence: z
-          .array(z.string())
-          .default([])
-          .describe("Evidências curtas que sustentam a recomendação, ex.: `repo · caminho/arquivo.ts`."),
-        options: z
-          .array(questionOptionSchema)
-          .default([])
-          .describe("Alternativas, quando houver alternativas claras."),
-        allowFreeText: z
-          .boolean()
-          .default(true)
-          .describe("Se a sala pode responder fora das opções."),
-      }),
-    )
+    .array(askOperatorQuestionSchema)
     .min(1)
-    .max(3),
+    .max(3)
+    .superRefine((questions, ctx) => {
+      const seen = new Set<string>();
+      for (const [index, question] of questions.entries()) {
+        if (seen.has(question.id)) {
+          ctx.addIssue({
+            code: "custom",
+            message: `id de pergunta duplicado: ${question.id}`,
+            path: [index, "id"],
+          });
+          continue;
+        }
+        seen.add(question.id);
+      }
+    }),
 });
 
 /** Serve tanto para `item/commandExecution/requestApproval` quanto para o de arquivo. */
@@ -182,9 +210,10 @@ export const askOperatorToolSpec = {
   name: ASK_OPERATOR_TOOL_NAME,
   description:
     "Pergunta à sala (squad + PO) quando uma decisão depende de gente, não de código. " +
-    "Faça de 1 a 3 perguntas por chamada, cada uma com `recommendation` (obrigatória) e opções " +
-    "quando houver alternativas claras. Fato que o código responde você busca sozinho — se você " +
-    "não consegue recomendar nada, não é decisão da sala. " +
-    "Prefira perguntar a assumir: decisão assumida em silêncio é o que o produto existe para evitar.",
+    "Faça de 1 a 3 perguntas por chamada, cada uma com `recommendation` e ao menos uma `evidence` " +
+    "(ambas obrigatórias), ids únicos, e um jeito de responder: opções e/ou `allowFreeText: true`. " +
+    "Fato que o código responde você busca sozinho — se você não consegue recomendar nada, " +
+    "não é decisão da sala. Prefira perguntar a assumir: decisão assumida em silêncio é o que " +
+    "o produto existe para evitar.",
   inputSchema: z.toJSONSchema(askOperatorArgumentsSchema, { io: "input", target: "draft-7" }),
 } as const;

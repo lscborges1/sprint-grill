@@ -31,6 +31,7 @@ O caminho do arquivo de config pode ser trocado com `SPRINT_GRILLER_CONFIG`.
 | Comando | O que faz |
 |---|---|
 | `pnpm dev` | Sobe o app em <http://localhost:3000> |
+| `pnpm rolagem` | Baseline de rolagem das últimas 6 sprints (ver abaixo) |
 | `pnpm check` | Typecheck + lint + testes — o comando único do CI |
 | `pnpm test` | Só os testes (vitest) |
 | `pnpm build` / `pnpm start` | Build e execução em modo produção |
@@ -40,7 +41,7 @@ O caminho do arquivo de config pode ser trocado com `SPRINT_GRILLER_CONFIG`.
 ```
 apps/web                  app Next.js (App Router): picker, UI de sessão e rotas
 packages/core             config da squad (zod) e logging estruturado
-packages/ado-client       fronteira do Azure DevOps (REST tipado com zod)
+packages/ado-client       fronteira do Azure DevOps (REST tipado com zod) + script de rolagem
 packages/agent-runtime    cliente do `codex app-server` (streaming, HITL, resume)
 packages/investigation    turno da Investigação + checagem de grounding + Markdown
 packages/ceremony         sessão do grilling + persistência (SQLite) + estado do Palco
@@ -124,6 +125,47 @@ ou resposta fora do contrato podem ter deixado o comment lá — republicar às 
 
 > O PAT precisa de escopo de **leitura e escrita** de work items. Só de leitura,
 > o disparo funciona e a publicação volta com 403.
+
+## Baseline de rolagem
+
+A métrica que julga a ferramenta não pode sair da ferramenta. A **taxa de
+rolagem** — % de US que entram numa sprint e não concluem nela — é lida do
+Azure DevOps cru, por um script fora da UI, auditável no repo:
+
+```bash
+pnpm rolagem              # últimas 6 sprints encerradas
+pnpm rolagem --sprints 10
+pnpm rolagem --before 2026-02-01  # baseline anterior ao rollout
+```
+
+A tabela sai no stdout (colável na retro) e o log estruturado no stderr.
+
+Como a conta é feita, para quem for conferir o número na retro:
+
+| Pergunta | Resposta do script |
+|---|---|
+| quais sprints entram | as últimas ~6 **encerradas** do time; use `--before AAAA-MM-DD` para fixar a baseline anterior a um rollout |
+| quem entrou na sprint | união de dois snapshots WIQL `ASOF`: quem estava sob o path da sprint na **abertura** e no **fechamento** |
+| quando a sprint fecha | no **fim** do último dia — o `finishDate` do ADO é a meia-noite que o abre, e parar ali jogaria fora o dia em que a squad mais fecha US |
+| quem concluiu | estado no fechamento na categoria `Completed` do processo (`Closed` no Agile, `Done` no Scrum) |
+| quem rolou | escopo menos concluídas — inclusive quem ficou em `Resolved` ou saiu da sprint antes do fim |
+| e as removidas | US em categoria `Removed` saem do denominador: cancelamento não é rolagem |
+
+Os dois snapshots existem porque nenhum sozinho basta: só a abertura perderia as
+US puxadas no meio da sprint, e só o fechamento perderia as que saíram antes do
+fim — que são exatamente as que rolaram. O que eles ainda não veem, e é bom
+saber antes de defender o número na retro:
+
+- US **puxada e retirada dentro da mesma sprint** não aparece em nenhum dos dois
+  snapshots (subestima a rolagem);
+- o fechamento é meia-noite **UTC**, então US concluída depois das 21h do último
+  dia (horário de Brasília) conta como rolada (superestima);
+- estado que o processo do ADO não declara mais cai em "rolou" — quando
+  acontece, sai um `warn` no stderr com o nome do estado.
+
+> Os números são sempre **agregados por sprint**: o script nunca pede ao Azure
+> DevOps de quem é a US. A baseline existe para a squad julgar o processo, não
+> para o processo julgar a squad. Nada aqui escreve no tracker.
 
 ## Cerimônia: o Palco
 

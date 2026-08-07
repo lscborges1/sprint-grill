@@ -10,6 +10,7 @@
     "dev": "SPRINT_GRILLER_CONFIG=\"${SPRINT_GRILLER_CONFIG:-$PWD/sprint-griller.config.json}\" pnpm --filter @sprint-griller/web dev",
     "build": "pnpm --filter @sprint-griller/web build",
     "start": "SPRINT_GRILLER_CONFIG=\"${SPRINT_GRILLER_CONFIG:-$PWD/sprint-griller.config.json}\" pnpm --filter @sprint-griller/web start",
+    "rolagem": "SPRINT_GRILLER_CONFIG=\"${SPRINT_GRILLER_CONFIG:-$PWD/sprint-griller.config.json}\" pnpm --filter @sprint-griller/ado-client rolagem",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "vitest run",

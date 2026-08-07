@@ -1,6 +1,11 @@
 export { CeremonyError } from "./ceremony-error";
 export { NAO_E_DECISAO, createCeremony } from "./ceremony";
-export type { Ceremony, CreateCeremonyOptions, StartCeremonyInput } from "./ceremony";
+export type {
+  Ceremony,
+  ConsultInput,
+  CreateCeremonyOptions,
+  StartCeremonyInput,
+} from "./ceremony";
 export { readPalco } from "./palco";
 // O schema do estado mora no subpath `/palco-state`: é o que o browser importa,
 // e ele não pode arrastar o store (SQLite nativo) junto.
@@ -15,10 +20,13 @@ export type {
   RecordDecisionInput,
 } from "./store";
 export type {
+  CeremonyCitation,
+  CeremonyConsultation,
   CeremonyDecision,
   CeremonyQuestion,
   CeremonyQuestionOption,
   CeremonySession,
+  ConsultationOutcome,
   PalcoPhase,
   PalcoState,
   SessionStatus,

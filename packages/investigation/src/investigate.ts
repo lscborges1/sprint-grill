@@ -121,7 +121,7 @@ function grade(
     return { status: "falhou", message: parsed.message };
   }
 
-  const grounding = verifyGrounding(parsed.report, [repos.primary, ...repos.related]);
+  const grounding = verifyGrounding(parsed.report.impacts, [repos.primary, ...repos.related]);
   const markdown = renderReportMarkdown(story, parsed.report, grounding);
 
   if (grounding.status === "reprovado") {

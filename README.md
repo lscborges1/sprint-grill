@@ -125,12 +125,18 @@ ou resposta fora do contrato podem ter deixado o comment lá — republicar às 
 > O PAT precisa de escopo de **leitura e escrita** de work items. Só de leitura,
 > o disparo funciona e a publicação volta com 403.
 
-## Cerimônia: sessão persistente e Palco
+## Cerimônia: o Palco
 
 Com a Investigação **aprovada**, **Grelhar com a sala** abre a cerimônia: o
 agente recebe a Investigação como insumo e conduz o grilling coletivo. O modo
 **Palco** (`/cerimonia/<id da sessão>`) é o que a sala acompanha projetado —
 pergunta atual, recomendação do agente, evidências, e a captura da decisão.
+
+A sala se orienta sozinha: a **árvore de decisões** fica num trilho lateral (o
+que já foi decidido, com a resposta; o que está em aberto, com a pergunta da vez
+destacada) e a **barra de progresso** no topo tem um segmento por decisão e a
+contagem de pendências. As duas saem do mesmo estado que o Palco já recebe por
+SSE — não há contador guardado em lugar nenhum.
 
 O que o Palco exibe é sempre **decisão**, nunca fato:
 
@@ -151,4 +157,30 @@ processo cair, o Palco mostra a cerimônia como **parada**: retomar casa com o
 nunca se perde por causa de uma retomada que falhou.
 
 O banco é estado local descartável ([ADR 0003](docs/adr/0003-azure-devops-como-fonte-da-verdade.md)):
-depois do despejo, nada precisa ser consultado nele.
+depois do despejo, nada precisa ser consultado nele. Banco de uma versão de
+schema anterior é recusado na abertura, com a mensagem mandando apagar o arquivo.
+
+### Fato ao vivo
+
+Dúvida **factual** que surge na sala não sai da cerimônia como "alguém verifica
+depois": o Operador dispara a pergunta no Palco, o agente lê o código na hora e
+responde com a citação que sustenta a resposta.
+
+A Consulta roda numa **sessão de agente própria** — o turno do grilling está
+parado na decisão que está projetada, e o codex só aceita um turno por sessão.
+Na prática: a pergunta da sala continua na tela enquanto o fato é buscado, e a
+Consulta funciona mesmo com a cerimônia parada esperando retomada.
+
+A resposta passa pela mesma **checagem mecânica de citações** da Investigação
+(`verifyGrounding`, sem LLM no caminho):
+
+| Resposta do agente | O que a sala vê |
+|---|---|
+| citações conferem com o disco | o fato, com os arquivos citados |
+| citação furada, ou nenhuma citação | a resposta marcada como **Não verificado**, com o motivo |
+| turno quebrado | o erro, para o Operador perguntar de novo |
+
+O que entra no transcript é `resposta-factual`, **nunca** `decisao`: a distinção
+é de tipo, não de convenção — Consulta não tem `decidedBy` porque ninguém
+decidiu nada, quem respondeu foi o repositório. E o despejo, quando existir, sabe
+separar o que a sala decidiu do que ela só descobriu.

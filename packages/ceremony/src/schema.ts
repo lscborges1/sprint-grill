@@ -53,6 +53,33 @@ export const decisions = sqliteTable(
   (table) => [index("decisions_por_sessao").on(table.sessionId)],
 );
 
+/**
+ * Consultas factuais respondidas ao vivo. Tabela à parte de `decisions` de
+ * propósito: fato que o agente leu no código e decisão que a sala tomou são
+ * artefatos diferentes, e misturá-los é exatamente o que o produto evita.
+ */
+export const consultations = sqliteTable(
+  "consultations",
+  {
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    sessionId: text("session_id").notNull(),
+    question: text("question").notNull(),
+    askedAt: integer("asked_at").notNull(),
+    status: text("status", {
+      enum: ["buscando", "respondida", "sem-lastro", "falhou"],
+    }).notNull(),
+    answer: text("answer"),
+    /** JSON das citações; nulo enquanto a resposta não chega. */
+    citations: text("citations"),
+    /** Por que a citação não fechou, em `sem-lastro`. */
+    motivo: text("motivo"),
+    /** Por que não houve resposta, em `falhou`. */
+    message: text("message"),
+    answeredAt: integer("answered_at"),
+  },
+  (table) => [index("consultations_por_sessao").on(table.sessionId)],
+);
+
 export const events = sqliteTable(
   "events",
   {
@@ -70,7 +97,7 @@ export const events = sqliteTable(
  * é recusado na abertura, com a mensagem mandando apagar o arquivo — descobrir
  * a divergência no meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -119,6 +146,20 @@ CREATE TABLE IF NOT EXISTS decisions (
   decided_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS decisions_por_sessao ON decisions (session_id);
+
+CREATE TABLE IF NOT EXISTS consultations (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  session_id TEXT NOT NULL,
+  question TEXT NOT NULL,
+  asked_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  answer TEXT,
+  citations TEXT,
+  motivo TEXT,
+  message TEXT,
+  answered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS consultations_por_sessao ON consultations (session_id);
 
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,

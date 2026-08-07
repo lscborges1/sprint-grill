@@ -1,5 +1,5 @@
 import type { CeremonyStore } from "./store";
-import type { CeremonySession, PalcoState } from "./types";
+import type { CeremonyQuestion, CeremonySession, PalcoState } from "./types";
 
 /**
  * O que a sala vê, projetado do que está gravado. Nada aqui vem de memória do
@@ -26,6 +26,7 @@ export function readPalco(
     decisions,
     pendingQuestions,
     lastDecision: decisions.at(-1) ?? null,
+    consultation: store.lastConsultation(sessionId) ?? null,
     live,
     current: phaseOf(session, live, pendingQuestions[0]),
   };

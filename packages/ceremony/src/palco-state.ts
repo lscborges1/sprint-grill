@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PalcoState } from "./types";
+import type { CeremonyConsultation, PalcoState } from "./types";
 
 /**
  * O contrato do SSE, e o único módulo deste pacote que o browser importa —
@@ -29,6 +29,33 @@ const questionSchema = z.object({
   allowFreeText: z.boolean(),
 });
 
+const citationSchema = z.object({
+  repo: z.string(),
+  path: z.string(),
+  symbol: z.string().optional(),
+});
+
+const askedSchema = { id: z.string(), question: z.string(), askedAt: z.number() };
+const answeredSchema = { ...askedSchema, answeredAt: z.number() };
+
+const consultationSchema: z.ZodType<CeremonyConsultation> = z.discriminatedUnion("status", [
+  z.object({ ...askedSchema, status: z.literal("buscando") }),
+  z.object({
+    ...answeredSchema,
+    status: z.literal("respondida"),
+    answer: z.string(),
+    citations: z.array(citationSchema),
+  }),
+  z.object({
+    ...answeredSchema,
+    status: z.literal("sem-lastro"),
+    answer: z.string(),
+    citations: z.array(citationSchema),
+    motivo: z.string(),
+  }),
+  z.object({ ...answeredSchema, status: z.literal("falhou"), message: z.string() }),
+]);
+
 /**
  * O Palco recebe o estado inteiro pela rede a cada mudança: é dado externo do
  * ponto de vista do browser, e entra por schema — não por `as PalcoState`.
@@ -40,6 +67,7 @@ export const palcoStateSchema: z.ZodType<PalcoState> = z.object({
   decisions: z.array(decisionSchema),
   pendingQuestions: z.array(questionSchema),
   lastDecision: decisionSchema.nullable(),
+  consultation: consultationSchema.nullable(),
   live: z.boolean(),
   current: z.discriminatedUnion("phase", [
     z.object({ phase: z.literal("perguntando"), question: questionSchema }),

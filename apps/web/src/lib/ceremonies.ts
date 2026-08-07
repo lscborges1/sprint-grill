@@ -10,6 +10,11 @@ import { getSquadConfig } from "./squad-config";
 /** Um id de sessão vem da URL: passa por aqui antes de virar consulta. */
 export const sessionIdSchema = z.string().min(1);
 
+export const consultationSchema = z.object({
+  sessionId: sessionIdSchema,
+  question: z.string().trim().min(1, "escreva a dúvida de fato"),
+});
+
 export const decisionSchema = z.object({
   sessionId: sessionIdSchema,
   questionId: z.string().min(1),
@@ -138,6 +143,15 @@ export function findOpenCeremony(storyId: number): CeremonySession | undefined {
 export async function submitDecision(input: z.infer<typeof decisionSchema>): Promise<void> {
   const ceremony = await getCeremony();
   await ceremony.decide(input);
+}
+
+/**
+ * Dispara a Consulta factual da sala. Volta assim que ela é registrada — a
+ * resposta do agente chega ao Palco pelo SSE, como todo o resto.
+ */
+export async function askFact(input: z.infer<typeof consultationSchema>): Promise<void> {
+  const ceremony = await getCeremony();
+  ceremony.consult(input);
 }
 
 export async function resumeCeremony(sessionId: string): Promise<void> {

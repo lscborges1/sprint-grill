@@ -3,18 +3,25 @@
 // Subpath de propósito: o barril do pacote puxa o store, e o binding nativo do
 // SQLite não existe no bundle do cliente.
 import { palcoStateSchema } from "@sprint-griller/ceremony/palco-state";
-import type { CeremonyDecision, CeremonyQuestion, PalcoState } from "@sprint-griller/ceremony";
+import type {
+  CeremonyCitation,
+  CeremonyConsultation,
+  CeremonyDecision,
+  CeremonyQuestion,
+  PalcoState,
+} from "@sprint-griller/ceremony";
 import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
-import { resumeCeremonyAction, submitDecisionAction } from "../actions";
+import { askFactAction, resumeCeremonyAction, submitDecisionAction } from "../actions";
 
 /**
  * Modo Palco: o que a sala inteira acompanha, projetado. Tipografia legível a
  * distância é requisito, não estética — a pergunta é o maior elemento da tela,
  * e a recomendação vem junto para ninguém decidir do zero.
  *
- * Referência visual: variante A do protótipo do ticket 12. A árvore de decisões
- * e a barra de progresso são LSC-59; aqui é só a decisão da vez.
+ * Referência visual: variante A do protótipo do ticket 12, com a barra de
+ * progresso da variante C. A sala se orienta sozinha pelo trilho lateral (o que
+ * já foi decidido, o que falta) e resolve dúvida de fato sem sair da tela.
  */
 export function Palco({ initial }: { initial: PalcoState }) {
   const { state, connected } = useLivePalco(initial);
@@ -48,6 +55,8 @@ export function Palco({ initial }: { initial: PalcoState }) {
 
         <Stage state={state} />
 
+        <LiveFacts state={state} />
+
         {state.lastDecision && (
           <footer className="mt-auto border-t border-line pt-5 text-sm text-muted">
             Última decisão: <strong className="font-medium">{state.lastDecision.answer}</strong> —{" "}
@@ -59,8 +68,41 @@ export function Palco({ initial }: { initial: PalcoState }) {
   );
 }
 
-function DecisionRail({ state }: { state: PalcoState }) {
+/**
+ * A árvore de decisões: o que a sala já decidiu, depois o que ela ainda tem
+ * pela frente, com a pergunta da vez marcada.
+ *
+ * O trilho e a barra de progresso leem daqui, não cada um por si — são a mesma
+ * árvore em duas densidades, e divergirem seria a sala vendo dois placares.
+ */
+function decisionTree(state: PalcoState): readonly DecisionNode[] {
   const currentQuestionId = currentQuestionIdOf(state);
+
+  return [
+    ...state.decisions.map(
+      (decision) => ({ key: decision.questionId, status: "decidida", decision }) as const,
+    ),
+    ...state.pendingQuestions.map(
+      (question) =>
+        ({
+          key: question.id,
+          status: question.id === currentQuestionId ? "atual" : "aberta",
+          question,
+        }) as const,
+    ),
+  ];
+}
+
+type DecisionNode =
+  | { readonly key: string; readonly status: "decidida"; readonly decision: CeremonyDecision }
+  | {
+      readonly key: string;
+      readonly status: "atual" | "aberta";
+      readonly question: CeremonyQuestion;
+    };
+
+function DecisionRail({ state }: { state: PalcoState }) {
+  const tree = decisionTree(state);
   const pendingCount = state.pendingQuestions.length;
 
   return (
@@ -74,20 +116,21 @@ function DecisionRail({ state }: { state: PalcoState }) {
         <h3 id="arvore-de-decisoes" className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
           Árvore de decisões
         </h3>
-        {state.decisions.length + pendingCount === 0 ? (
+        {tree.length === 0 ? (
           <p className="text-sm text-muted">O agente ainda não levantou decisões.</p>
         ) : (
           <ol className="flex min-h-0 flex-col gap-2 overflow-y-auto" aria-label="Decisões da cerimônia">
-            {state.decisions.map((decision) => (
-              <DecisionNode key={decision.questionId} decision={decision} />
-            ))}
-            {state.pendingQuestions.map((question) => (
-              <PendingNode
-                key={question.id}
-                question={question}
-                current={question.id === currentQuestionId}
-              />
-            ))}
+            {tree.map((node) =>
+              node.status === "decidida" ? (
+                <DecidedNode key={node.key} decision={node.decision} />
+              ) : (
+                <PendingNode
+                  key={node.key}
+                  question={node.question}
+                  current={node.status === "atual"}
+                />
+              ),
+            )}
           </ol>
         )}
       </section>
@@ -100,7 +143,7 @@ function DecisionRail({ state }: { state: PalcoState }) {
   );
 }
 
-function DecisionNode({ decision }: { decision: CeremonyDecision }) {
+function DecidedNode({ decision }: { decision: CeremonyDecision }) {
   return (
     <li className="rounded-lg bg-foreground/[0.04] px-3 py-2.5 text-sm leading-snug">
       <p className="flex gap-2 text-muted">
@@ -133,24 +176,27 @@ function PendingNode({ question, current }: { question: CeremonyQuestion; curren
   );
 }
 
+const SEGMENT = {
+  decidida: { className: "bg-emerald-600", label: "Decisão registrada" },
+  atual: { className: "bg-accent", label: "Decisão em discussão" },
+  aberta: { className: "bg-line", label: "Decisão pendente" },
+} as const;
+
 function Progress({ state }: { state: PalcoState }) {
-  const currentQuestionId = currentQuestionIdOf(state);
-  const total = state.decisions.length + state.pendingQuestions.length;
+  const tree = decisionTree(state);
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2" aria-label="Progresso da cerimônia">
-      {total > 0 && (
-        <ol className="flex gap-1" aria-label={`${state.decisions.length} decisões registradas de ${total}`}>
-          {state.decisions.map((decision) => (
-            <li key={decision.questionId} className="h-1.5 w-6 rounded-full bg-emerald-600" aria-label="Decisão registrada" />
-          ))}
-          {state.pendingQuestions.map((question) => (
+      {tree.length > 0 && (
+        <ol
+          className="flex gap-1"
+          aria-label={`${state.decisions.length} decisões registradas de ${tree.length}`}
+        >
+          {tree.map((node) => (
             <li
-              key={question.id}
-              className={`h-1.5 w-6 rounded-full ${
-                question.id === currentQuestionId ? "bg-accent" : "bg-line"
-              }`}
-              aria-label={question.id === currentQuestionId ? "Decisão em discussão" : "Decisão pendente"}
+              key={node.key}
+              className={`h-1.5 w-6 rounded-full ${SEGMENT[node.status].className}`}
+              aria-label={SEGMENT[node.status].label}
             />
           ))}
         </ol>
@@ -167,6 +213,136 @@ function Progress({ state }: { state: PalcoState }) {
 
 function currentQuestionIdOf(state: PalcoState): string | undefined {
   return state.current.phase === "perguntando" ? state.current.question.id : undefined;
+}
+
+/**
+ * Fato ao vivo: o que mata o "alguém verifica depois". Dúvida factual que surge
+ * na sala é disparada aqui, o agente lê o código na hora e volta com a resposta
+ * e o arquivo que a sustenta.
+ *
+ * Fica fora do Palco da decisão de propósito: a pergunta que a sala está
+ * decidindo continua projetada enquanto o fato é buscado, e a resposta **não**
+ * é Registro de decisão — ninguém decidiu nada, o repositório respondeu.
+ */
+function LiveFacts({ state }: { state: PalcoState }) {
+  const over = state.current.phase === "encerrada" || state.current.phase === "falhou";
+  if (over && !state.consultation) return null;
+
+  return (
+    <section
+      aria-labelledby="fato-ao-vivo"
+      className="flex flex-col gap-5 rounded-xl border border-line px-6 py-5"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 id="fato-ao-vivo" className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
+          Fato ao vivo
+        </h2>
+        <p className="text-sm text-muted">
+          O agente lê o código agora — a resposta é fato, não decisão da sala.
+        </p>
+      </div>
+
+      {state.consultation && <Consultation consultation={state.consultation} />}
+      {!over && (
+        <FactForm
+          // Consulta nova é campo limpo: sem a `key`, a dúvida anterior fica no input.
+          key={state.consultation?.id ?? "primeira"}
+          sessionId={state.sessionId}
+        />
+      )}
+    </section>
+  );
+}
+
+function Consultation({ consultation }: { consultation: CeremonyConsultation }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-base text-muted">{consultation.question}</p>
+
+      {consultation.status === "buscando" && (
+        <p role="status" className="text-lg">
+          O agente está lendo o código…
+        </p>
+      )}
+
+      {consultation.status === "falhou" && (
+        <p role="alert" className="text-lg text-red-600">
+          A consulta não voltou: {consultation.message}
+        </p>
+      )}
+
+      {(consultation.status === "respondida" || consultation.status === "sem-lastro") && (
+        <>
+          <p className="max-w-[62ch] text-[clamp(19px,1.7vw,23px)] leading-snug">
+            {consultation.answer}
+          </p>
+          {consultation.citations.length > 0 && (
+            <ul className="flex flex-wrap gap-2">
+              {consultation.citations.map((citation) => (
+                <li
+                  key={formatCitation(citation)}
+                  className="rounded-md border border-line px-2.5 py-1 font-mono text-xs text-muted"
+                >
+                  {formatCitation(citation)}
+                </li>
+              ))}
+            </ul>
+          )}
+          {consultation.status === "sem-lastro" && (
+            // Resposta sem lastro continua na tela, marcada: o que ela não pode é
+            // sair da sala como fato conferido.
+            <p role="alert" className="max-w-[62ch] border-l-[3px] border-amber-600 pl-4 text-sm">
+              <strong className="font-medium">Não verificado</strong> — {consultation.motivo} Trate
+              como suspeita até alguém abrir o arquivo.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function FactForm({ sessionId }: { sessionId: string }) {
+  const [error, ask, pending] = useActionState(askFactAction, null);
+
+  return (
+    <form action={ask} className="flex flex-wrap items-end gap-3">
+      <input type="hidden" name="sessionId" value={sessionId} />
+      <label className="flex flex-1 flex-col gap-1.5 text-sm text-muted">
+        Dúvida de fato da sala
+        <input
+          type="text"
+          name="question"
+          required
+          placeholder="O contrato de CreateOrder já tem campo de parcelas?"
+          className="min-w-64 rounded-lg border border-line bg-transparent px-4 py-2.5 text-base text-foreground"
+        />
+      </label>
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-xl border border-line px-6 py-2.5 text-base font-medium disabled:opacity-50"
+      >
+        Perguntar ao agente
+      </button>
+      {error && (
+        <p role="alert" className="w-full text-sm text-red-600">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+/**
+ * `repo · caminho → símbolo`: o `·` é o mesmo separador das evidências que o
+ * agente manda com cada pergunta (elas dividem a tela com estas), e o `→` é o
+ * do `formatCitation` da Investigação. Não dá para importar aquele aqui — o
+ * barril do pacote arrasta o runtime do agente para o bundle do cliente.
+ */
+function formatCitation(citation: CeremonyCitation): string {
+  const file = `${citation.repo} · ${citation.path}`;
+  return citation.symbol === undefined ? file : `${file} → ${citation.symbol}`;
 }
 
 function Stage({ state }: { state: PalcoState }) {

@@ -4,6 +4,8 @@ import { AgentRuntimeError } from "@sprint-griller/agent-runtime";
 import { CeremonyError } from "@sprint-griller/ceremony";
 import { redirect } from "next/navigation";
 import {
+  askFact,
+  consultationSchema,
   decisionSchema,
   resumeCeremony,
   sessionIdSchema,
@@ -51,6 +53,34 @@ export async function submitDecisionAction(
   } catch (error) {
     if (!(error instanceof CeremonyError)) throw error;
     logger.error({ err: error, sessionId: parsed.data.sessionId }, "decisão recusada");
+    return error.message;
+  }
+}
+
+/**
+ * A dúvida de fato que surgiu na sala. Nada aqui vira Registro de decisão: o
+ * agente vai ler o código e a resposta entra no transcript como fato.
+ */
+export async function askFactAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string | null> {
+  const parsed = consultationSchema.safeParse({
+    sessionId: formData.get("sessionId"),
+    question: formData.get("question") ?? "",
+  });
+
+  if (!parsed.success) {
+    return parsed.error.issues[0]?.message ?? "Pergunta inválida.";
+  }
+
+  try {
+    await askFact(parsed.data);
+    return null;
+  } catch (error) {
+    // Agente fora do ar é erro de sala, não tela branca: o Operador tenta de novo.
+    if (!(error instanceof CeremonyError) && !(error instanceof AgentRuntimeError)) throw error;
+    logger.error({ err: error, sessionId: parsed.data.sessionId }, "consulta factual recusada");
     return error.message;
   }
 }

@@ -6,11 +6,18 @@ import type {
 } from "@sprint-griller/agent-runtime";
 import type { Logger, SquadConfig } from "@sprint-griller/core";
 import { CeremonyError } from "./ceremony-error";
+import { runConsultation } from "./consulta";
 import { readPalco } from "./palco";
 import { ceremonyInstructions, ceremonyOpeningPrompt, ceremonyResumePrompt } from "./prompt";
 import type { CeremonyStory } from "./prompt";
 import type { CeremonyStore, RecordDecisionInput } from "./store";
-import type { CeremonyDecision, CeremonyQuestion, CeremonySession, PalcoState } from "./types";
+import type {
+  CeremonyConsultation,
+  CeremonyDecision,
+  CeremonyQuestion,
+  CeremonySession,
+  PalcoState,
+} from "./types";
 
 export interface CreateCeremonyOptions {
   readonly runtime: AgentRuntime;
@@ -26,9 +33,20 @@ export interface StartCeremonyInput {
   readonly investigationMarkdown: string;
 }
 
+export interface ConsultInput {
+  readonly sessionId: string;
+  /** A dúvida de fato, como o Operador escreveu na sala. */
+  readonly question: string;
+}
+
 export interface Ceremony {
   start(input: StartCeremonyInput): Promise<CeremonySession>;
   decide(input: RecordDecisionInput): Promise<CeremonyDecision>;
+  /**
+   * Dispara uma Consulta factual e devolve na hora — a resposta chega ao Palco
+   * pelo `onChange`, como todo o resto. A sala não fica olhando request pendurada.
+   */
+  consult(input: ConsultInput): CeremonyConsultation;
   resume(sessionId: string): Promise<void>;
   palco(sessionId: string): PalcoState | undefined;
 }
@@ -236,6 +254,45 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       }
 
       return decision;
+    },
+
+    consult({ sessionId, question }) {
+      const session = store.getSession(sessionId);
+      if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+      // O formulário some do Palco quando a cerimônia acaba, mas a server action
+      // continua sendo porta aberta: sala fechada não faz pergunta.
+      if (session.status !== "ativa") {
+        throw new CeremonyError(`a cerimônia da US #${session.storyId} já está encerrada.`);
+      }
+
+      const consultation = store.openConsultation(sessionId, question);
+      changed(sessionId);
+
+      // Solta a busca: a sala vê "buscando" e a resposta chega pelo SSE. O turno
+      // do grilling continua parado na decisão da vez — é sessão à parte.
+      void runConsultation({
+        runtime,
+        repos,
+        story: { id: session.storyId, title: session.storyTitle },
+        question: consultation.question,
+        ...(options.logger ? { logger: options.logger } : {}),
+      })
+        .catch((error: unknown) => {
+          sessionLogger(sessionId)?.error({ err: error }, "consulta factual morreu fora do fluxo");
+          return {
+            status: "falhou",
+            message: "A consulta parou por um erro inesperado.",
+          } as const;
+        })
+        .then((outcome) => {
+          store.answerConsultation(consultation.id, outcome);
+          changed(sessionId);
+        })
+        .catch((error: unknown) => {
+          sessionLogger(sessionId)?.error({ err: error }, "não foi possível gravar a consulta");
+        });
+
+      return consultation;
     },
 
     async resume(sessionId) {

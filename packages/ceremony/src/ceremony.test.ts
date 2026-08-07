@@ -1,23 +1,32 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { AgentRuntimeError } from "@sprint-griller/agent-runtime";
 import type {
+  AgentEvent,
   AgentQuestion,
   AgentRuntime,
   AgentSession,
   StartSessionOptions,
 } from "@sprint-griller/agent-runtime";
 import type { SquadConfig } from "@sprint-griller/core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { createCeremony } from "./ceremony";
 import { openCeremonyStore } from "./store";
 import type { CeremonyStore } from "./store";
 
 const SESSION_ID = "thread-1";
 
+/** Repo de mentira no disco: a Consulta confere as citações contra ele de verdade. */
+const tmpRoot = mkdtempSync(path.join(tmpdir(), "sprint-griller-repo-"));
+afterAll(() => rmSync(tmpRoot, { recursive: true, force: true }));
+
+const repoRoot = path.join(tmpRoot, "core-api");
+mkdirSync(path.join(repoRoot, "src"), { recursive: true });
+writeFileSync(path.join(repoRoot, "src", "order.ts"), "export function createOrder() {}\n");
+
 const repos: SquadConfig["repos"] = {
-  primary: { name: "core-api", path: "/dev/core-api" },
+  primary: { name: "core-api", path: repoRoot },
   related: [],
 };
 
@@ -48,12 +57,31 @@ type Step =
 /**
  * Runtime de mentira que para de verdade na pergunta: o gerador só avança
  * quando `answer` é chamado, que é como o turno real se comporta.
+ *
+ * `consulta` é o roteiro da sessão que a Consulta factual abre à parte — o
+ * runtime real também devolve uma sessão nova a cada `startSession`.
  */
-function fakeRuntime(turns: readonly (readonly Step[])[]) {
+function fakeRuntime(
+  turns: readonly (readonly Step[])[],
+  consulta: readonly AgentEvent[] = [],
+) {
   const prompts: string[] = [];
+  const consultaPrompts: string[] = [];
   const answered: Record<string, readonly string[]>[] = [];
   const resumed: string[] = [];
   let turn = 0;
+  let sessions = 0;
+
+  const consultaSession: AgentSession = {
+    id: "consulta-1",
+    send(prompt) {
+      consultaPrompts.push(prompt);
+      return (async function* () {
+        for (const event of consulta) yield event;
+      })() as ReturnType<AgentSession["send"]>;
+    },
+    interrupt: async () => undefined,
+  };
 
   const session: AgentSession = {
     id: SESSION_ID,
@@ -103,7 +131,11 @@ function fakeRuntime(turns: readonly (readonly Step[])[]) {
   };
 
   const runtime: AgentRuntime = {
-    startSession: async (_options?: StartSessionOptions) => session,
+    // A primeira sessão é a da cerimônia; as seguintes são Consultas.
+    startSession: async (_options?: StartSessionOptions) => {
+      sessions += 1;
+      return sessions === 1 ? session : consultaSession;
+    },
     resumeSession: async (id: string) => {
       resumed.push(id);
       return session;
@@ -111,7 +143,7 @@ function fakeRuntime(turns: readonly (readonly Step[])[]) {
     close: async () => undefined,
   };
 
-  return { runtime, prompts, answered, resumed };
+  return { runtime, prompts, consultaPrompts, answered, resumed };
 }
 
 const stores: CeremonyStore[] = [];
@@ -127,9 +159,12 @@ function newStore(): CeremonyStore {
   return store;
 }
 
-function ceremonyWith(turns: readonly (readonly Step[])[]) {
+function ceremonyWith(
+  turns: readonly (readonly Step[])[],
+  consulta: readonly AgentEvent[] = [],
+) {
   const store = newStore();
-  const fake = fakeRuntime(turns);
+  const fake = fakeRuntime(turns, consulta);
   const onChange = vi.fn();
   const ceremony = createCeremony({ runtime: fake.runtime, store, repos, onChange });
   return { ...fake, store, ceremony, onChange };
@@ -432,6 +467,152 @@ describe("resume", () => {
     await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("encerrada"));
 
     await expect(ceremony.resume(SESSION_ID)).rejects.toThrow(/encerrada/i);
+  });
+});
+
+describe("consult", () => {
+  const factAnswer = (citations: unknown): AgentEvent => ({
+    type: "message",
+    text: `\`\`\`json\n${JSON.stringify({
+      answer: "O createOrder só é chamado pelo checkout.",
+      citations,
+    })}\n\`\`\``,
+  });
+
+  const TURN_DONE: AgentEvent = {
+    type: "turn-completed",
+    turn: { id: "turn-1", status: "completed", durationMs: 1 },
+  };
+
+  async function grilling(consulta: readonly AgentEvent[]) {
+    const fake = ceremonyWith([[{ type: "ask", questions: [agentQuestion()] }]], consulta);
+    await start(fake.ceremony);
+    await vi.waitFor(() => expect(fake.ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+    return fake;
+  }
+
+  it("should put the room question on the stage while the agent is still looking", async () => {
+    const { ceremony } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
+      TURN_DONE,
+    ]);
+
+    const consultation = ceremony.consult({
+      sessionId: SESSION_ID,
+      question: "Quem chama o createOrder?",
+    });
+
+    expect(consultation).toMatchObject({
+      question: "Quem chama o createOrder?",
+      status: "buscando",
+    });
+  });
+
+  it("should answer live with the citation that sustains it", async () => {
+    const { ceremony } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }]),
+      TURN_DONE,
+    ]);
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.consultation).toMatchObject({
+        status: "respondida",
+        answer: "O createOrder só é chamado pelo checkout.",
+        citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+      }),
+    );
+  });
+
+  it("should record the factual answer in the transcript without touching the decisions", async () => {
+    const { ceremony, store } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
+      TURN_DONE,
+    ]);
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(store.listTranscript(SESSION_ID).map((entry) => entry.event.kind)).toContain(
+        "resposta-factual",
+      ),
+    );
+    expect(store.countDecisions(SESSION_ID)).toBe(0);
+  });
+
+  it("should keep the decision on the stage while the fact is being looked up", async () => {
+    const { ceremony } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
+      TURN_DONE,
+    ]);
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.consultation?.status).toBe("respondida"));
+    expect(ceremony.palco(SESSION_ID)?.current).toMatchObject({
+      phase: "perguntando",
+      question: { id: "q1" },
+    });
+  });
+
+  it("should mark an answer whose citation does not exist as unsustained", async () => {
+    const { ceremony } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/inventado.ts" }]),
+      TURN_DONE,
+    ]);
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.consultation).toMatchObject({ status: "sem-lastro" }),
+    );
+  });
+
+  it("should surface a broken consultation instead of leaving the room waiting", async () => {
+    const { ceremony } = await grilling([
+      { type: "turn-failed", error: new AgentRuntimeError("o codex caiu") },
+    ]);
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.consultation).toMatchObject({
+        status: "falhou",
+        message: "o codex caiu",
+      }),
+    );
+  });
+
+  it("should notify the stage when the consultation opens and when it answers", async () => {
+    const { ceremony, onChange } = await grilling([
+      factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
+      TURN_DONE,
+    ]);
+    onChange.mockClear();
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    expect(onChange).toHaveBeenCalledWith(SESSION_ID);
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+  });
+
+  it("should refuse a consultation on a ceremony that does not exist", async () => {
+    const { ceremony } = await grilling([]);
+
+    expect(() => ceremony.consult({ sessionId: "thread-fantasma", question: "e aí?" })).toThrow(
+      /não existe/i,
+    );
+  });
+
+  it("should refuse a consultation on a ceremony that already ended", async () => {
+    const { ceremony } = ceremonyWith([[{ type: "complete" }]]);
+    await start(ceremony);
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("encerrada"));
+
+    expect(() => ceremony.consult({ sessionId: SESSION_ID, question: "e aí?" })).toThrow(
+      /encerrada/i,
+    );
   });
 });
 

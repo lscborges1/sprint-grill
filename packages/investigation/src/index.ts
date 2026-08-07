@@ -8,7 +8,7 @@ export { AFK_ANSWER, runInvestigation } from "./investigate";
 export type { InvestigationOutcome, RunInvestigationOptions } from "./investigate";
 export { renderReportMarkdown } from "./markdown";
 export { investigationInstructions, investigationPrompt } from "./prompt";
-export { investigationReportSchema, parseReport } from "./report";
+export { citationSchema, investigationReportSchema, parseReport, readJsonBlock } from "./report";
 export type {
   Citation,
   Impact,

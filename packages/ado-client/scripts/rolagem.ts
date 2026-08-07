@@ -6,7 +6,7 @@
  * julga a ferramenta não pode sair da própria ferramenta. É só leitura.
  *
  *   pnpm rolagem
- *   pnpm rolagem --sprints 10
+ *   pnpm rolagem --sprints 10 --before 2026-02-01
  */
 import { stderr, stdout } from "node:process";
 import {
@@ -20,9 +20,10 @@ import {
   fetchRolloverBaseline,
   renderRolloverReport,
 } from "../src/index";
+import { parseRolagemArgs } from "../src/metrics/rolagem-args";
 
 async function main(): Promise<void> {
-  const sprints = parseSprints(process.argv.slice(2));
+  const { before, sprints } = parseRolagemArgs(process.argv.slice(2));
   const config = loadSquadConfig();
 
   const baseline = await fetchRolloverBaseline({
@@ -31,25 +32,10 @@ async function main(): Promise<void> {
     // Log estruturado no stderr para a tabela do stdout seguir colável na retro.
     logger: createLogger({ name: "ado-client", destination: stderr }),
     ...(sprints === undefined ? {} : { sprints }),
+    ...(before === undefined ? {} : { before }),
   });
 
   stdout.write(`\n${renderRolloverReport(baseline, config.azureDevOps)}`);
-}
-
-/** `--sprints N`: a janela padrão são as ~6 sprints anteriores ao rollout. */
-function parseSprints(argv: readonly string[]): number | undefined {
-  const at = argv.indexOf("--sprints");
-  if (at === -1) return undefined;
-
-  const raw = argv[at + 1];
-  const parsed = Number(raw);
-  if (!raw || !Number.isInteger(parsed) || parsed < 1) {
-    throw new ConfigError(
-      `--sprints precisa de um número inteiro de sprints (recebeu "${raw ?? ""}").`,
-    );
-  }
-
-  return parsed;
 }
 
 try {

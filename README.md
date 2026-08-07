@@ -135,6 +135,7 @@ Azure DevOps cru, por um script fora da UI, auditável no repo:
 ```bash
 pnpm rolagem              # últimas 6 sprints encerradas
 pnpm rolagem --sprints 10
+pnpm rolagem --before 2026-02-01  # baseline anterior ao rollout
 ```
 
 A tabela sai no stdout (colável na retro) e o log estruturado no stderr.
@@ -143,7 +144,7 @@ Como a conta é feita, para quem for conferir o número na retro:
 
 | Pergunta | Resposta do script |
 |---|---|
-| quais sprints entram | as últimas ~6 **encerradas** do time; a sprint em curso fica de fora |
+| quais sprints entram | as últimas ~6 **encerradas** do time; use `--before AAAA-MM-DD` para fixar a baseline anterior a um rollout |
 | quem entrou na sprint | união de dois snapshots WIQL `ASOF`: quem estava sob o path da sprint na **abertura** e no **fechamento** |
 | quando a sprint fecha | no **fim** do último dia — o `finishDate` do ADO é a meia-noite que o abre, e parar ali jogaria fora o dia em que a squad mais fecha US |
 | quem concluiu | estado no fechamento na categoria `Completed` do processo (`Closed` no Agile, `Done` no Scrum) |

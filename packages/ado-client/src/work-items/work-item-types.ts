@@ -57,28 +57,40 @@ const statesSchema = z.object({
 });
 
 /**
- * Mapa `estado do board` → categoria, unindo todos os tipos de item de backlog
- * do processo. Estado que o ADO não declarar fica de fora do mapa — quem
- * consulta decide o que fazer com o desconhecido, em vez de virar `Completed`
- * por engano.
+ * Chave `tipo + estado`: o mesmo rótulo em tipos diferentes pode cair em
+ * categorias distintas, e um mapa só por nome sobrescreve o anterior.
+ */
+export function stateCategoryKey(type: string, state: string): string {
+  return `${type}\0${state}`;
+}
+
+/**
+ * Mapa `(tipo, estado do board)` → categoria, unindo todos os tipos de item de
+ * backlog do processo. Estado que o ADO não declarar fica de fora do mapa —
+ * quem consulta decide o que fazer com o desconhecido, em vez de virar
+ * `Completed` por engano.
  */
 export async function fetchStateCategories(
   rest: AdoRest,
   types: readonly string[],
 ): Promise<ReadonlyMap<string, StateCategory>> {
   const perType = await Promise.all(
-    types.map((type) =>
-      rest.request({
+    types.map(async (type) => {
+      const { value } = await rest.request({
         operation: `os estados de ${type}`,
         path: `_apis/wit/workitemtypes/${encodeURIComponent(type)}/states`,
         schema: statesSchema,
-      }),
-    ),
+      });
+      return { type, value };
+    }),
   );
 
   return new Map(
-    perType.flatMap(({ value }) =>
-      value.map(({ name, category }) => [name, category] as const),
+    perType.flatMap(({ type, value }) =>
+      value.map(
+        ({ name, category }) =>
+          [stateCategoryKey(type, name), category] as const,
+      ),
     ),
   );
 }

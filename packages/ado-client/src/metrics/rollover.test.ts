@@ -59,6 +59,16 @@ function closesAt(sprint: FakeSprint): string {
 interface FakeAdoState {
   readonly sprints?: readonly FakeSprint[];
   readonly backlogItemTypes?: readonly string[];
+  /**
+   * Categorias por tipo de item. Sem isto, todos os tipos usam o Agile padrão.
+   * Serve para exercitar o caso em que o mesmo rótulo de estado tem categorias
+   * distintas em tipos diferentes.
+   */
+  readonly statesByType?: Readonly<
+    Record<string, Readonly<Record<string, string>>>
+  >;
+  /** Tipo do work item por id; sem entrada, cai no primeiro tipo de backlog. */
+  readonly workItemTypesById?: Readonly<Record<number, string>>;
 }
 
 function sprintPath(name: string): string {
@@ -84,6 +94,7 @@ interface RecordedRequest {
 /** Azure DevOps de mentira: responde com snapshots ASOF por sprint. */
 function fakeAdo(state: FakeAdoState = {}) {
   const sprints = state.sprints ?? [oneSprint({})];
+  const backlogItemTypes = state.backlogItemTypes ?? ["User Story"];
   const requests: RecordedRequest[] = [];
 
   const fetchMock = vi.fn(
@@ -110,15 +121,16 @@ function fakeAdo(state: FakeAdoState = {}) {
 
       if (url.includes("/_apis/wit/workitemtypecategories/")) {
         return json({
-          workItemTypes: (state.backlogItemTypes ?? ["User Story"]).map(
-            (name) => ({ name }),
-          ),
+          workItemTypes: backlogItemTypes.map((name) => ({ name })),
         });
       }
 
-      if (url.includes("/_apis/wit/workitemtypes/")) {
+      const typeStates = /\/_apis\/wit\/workitemtypes\/([^/]+)\/states/.exec(url);
+      if (typeStates) {
+        const type = decodeURIComponent(typeStates[1] ?? "");
+        const categories = state.statesByType?.[type] ?? AGILE_STATES;
         return json({
-          value: Object.entries(AGILE_STATES).map(([name, category]) => ({
+          value: Object.entries(categories).map(([name, category]) => ({
             name,
             category,
           })),
@@ -136,13 +148,18 @@ function fakeAdo(state: FakeAdoState = {}) {
       }
 
       if (url.includes("/_apis/wit/workitemsbatch")) {
-        const batch = body as { ids: number[]; asOf: string };
+        const batch = body as { ids: number[]; asOf: string; fields: string[] };
         const states = statesAt(sprints, batch.asOf);
+        const defaultType = backlogItemTypes[0] ?? "User Story";
 
         return json({
           value: batch.ids.map((id) => ({
             id,
-            fields: { "System.State": states[id] ?? "Active" },
+            fields: {
+              "System.State": states[id] ?? "Active",
+              "System.WorkItemType":
+                state.workItemTypesById?.[id] ?? defaultType,
+            },
           })),
         });
       }
@@ -218,7 +235,7 @@ function capturingLogger() {
 /** Aponta a baseline para o ADO de mentira, com o resto da config preenchido. */
 function baselineAgainst(
   state: FakeAdoState = {},
-  options: { readonly sprints?: number } = {},
+  options: { readonly sprints?: number; readonly before?: Date } = {},
 ) {
   return fetchRolloverBaseline({
     azureDevOps: AZURE_DEVOPS,
@@ -255,12 +272,13 @@ describe("fetchRolloverBaseline", () => {
   });
 
   it("should count a US moved out of the sprint before it closed as rolled over", async () => {
+    // Mesmo fechada noutro path antes do fim desta sprint: saiu daqui, rolou.
     const baseline = await baselineAgainst({
       sprints: [
         oneSprint({
           atStart: [1, 2],
           atFinish: [1],
-          statesAtFinish: { 1: "Closed", 2: "Active" },
+          statesAtFinish: { 1: "Closed", 2: "Closed" },
         }),
       ],
     });
@@ -307,6 +325,55 @@ describe("fetchRolloverBaseline", () => {
     });
 
     expect(baseline.total).toMatchObject({ completed: 0, rolled: 1, rate: 1 });
+  });
+
+  it("should classify a shared state label by work-item type, not overwrite one category with another", async () => {
+    // Dois tipos de backlog com o mesmo rótulo e categorias diferentes: um mapa
+    // só por nome sobrescreve o primeiro e corrompe o total da baseline.
+    const baseline = await baselineAgainst({
+      backlogItemTypes: ["User Story", "Product Backlog Item"],
+      statesByType: {
+        "User Story": { ...AGILE_STATES, Ready: "Proposed" },
+        "Product Backlog Item": { ...AGILE_STATES, Ready: "Completed" },
+      },
+      workItemTypesById: {
+        1: "User Story",
+        2: "Product Backlog Item",
+      },
+      sprints: [
+        oneSprint({
+          atStart: [1, 2],
+          statesAtFinish: { 1: "Ready", 2: "Ready" },
+        }),
+      ],
+    });
+
+    expect(baseline.total).toMatchObject({
+      scope: 2,
+      completed: 1,
+      rolled: 1,
+      rate: 0.5,
+    });
+  });
+
+  it("should ask Azure DevOps for work-item type alongside state when classifying", async () => {
+    const ado = fakeAdo({ sprints: [oneSprint({ atStart: [1] })] });
+
+    await fetchRolloverBaseline({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger: SILENT_LOGGER,
+      fetch: ado,
+      now: NOW,
+    });
+
+    const batchFields = ado.requests
+      .filter(({ url }) => url.includes("workitemsbatch"))
+      .map(({ body }) => (body as { fields: string[] }).fields);
+
+    expect(batchFields).toEqual([
+      expect.arrayContaining(["System.State", "System.WorkItemType"]),
+    ]);
   });
 
   it("should count a US closed on the sprint's last day as completed, not rolled", async () => {
@@ -396,6 +463,57 @@ describe("fetchRolloverBaseline", () => {
     ]);
   });
 
+  it("should exclude post-rollout sprints when a cutoff is provided", async () => {
+    const baseline = await baselineAgainst(
+      { sprints: eightClosedSprints() },
+      { before: new Date("2026-01-10T00:00:00Z") },
+    );
+
+    expect(baseline.sprints.map(({ name }) => name)).toEqual([
+      "Sprint 1",
+      "Sprint 2",
+      "Sprint 3",
+      "Sprint 4",
+    ]);
+  });
+
+  it("should include the sprint whose close is exactly the cutoff midnight", async () => {
+    const baseline = await baselineAgainst(
+      {
+        sprints: [
+          {
+            name: "Sprint before rollout",
+            startDate: "2026-01-26T00:00:00Z",
+            finishDate: "2026-01-31T00:00:00Z",
+            atStart: [1],
+            statesAtFinish: { 1: "Closed" },
+          },
+          {
+            name: "Sprint after rollout",
+            startDate: "2026-02-01T00:00:00Z",
+            finishDate: "2026-02-06T00:00:00Z",
+            atStart: [2],
+            statesAtFinish: { 2: "Closed" },
+          },
+        ],
+      },
+      { before: new Date("2026-02-01T00:00:00Z") },
+    );
+
+    expect(baseline.sprints.map(({ name }) => name)).toEqual([
+      "Sprint before rollout",
+    ]);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    "should reject an invalid sprint window (%s)",
+    async (sprints) => {
+      await expect(
+        baselineAgainst({ sprints: eightClosedSprints() }, { sprints }),
+      ).rejects.toThrow(TypeError);
+    },
+  );
+
   it("should ignore the running sprint, whose rollover has not happened yet", async () => {
     const baseline = await baselineAgainst({
       sprints: [
@@ -457,21 +575,34 @@ describe("fetchRolloverBaseline", () => {
   });
 
   it("should come back empty when the team has no closed sprint to look at", async () => {
-    const baseline = await baselineAgainst({
-      sprints: [
-        {
-          name: "Sprint 42",
-          startDate: "2026-02-23T00:00:00Z",
-          finishDate: "2026-03-06T00:00:00Z",
-          atStart: [1],
-        },
-      ],
+    const logger = capturingLogger();
+    const baseline = await fetchRolloverBaseline({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger,
+      fetch: fakeAdo({
+        sprints: [
+          {
+            name: "Sprint 42",
+            startDate: "2026-02-23T00:00:00Z",
+            finishDate: "2026-03-06T00:00:00Z",
+            atStart: [1],
+          },
+        ],
+      }),
+      now: NOW,
     });
 
     expect(baseline).toEqual({
       sprints: [],
       total: { scope: 0, completed: 0, rolled: 0, removed: 0, rate: undefined },
     });
+    expect(logger.lines).toContainEqual(
+      expect.objectContaining({
+        msg: "nenhuma sprint encerrada no Azure DevOps",
+        closedSprints: 0,
+      }),
+    );
   });
 
   it("should refuse an off-contract payload instead of showing half a baseline", async () => {
@@ -480,6 +611,64 @@ describe("fetchRolloverBaseline", () => {
       credentials: CREDENTIALS,
       logger: SILENT_LOGGER,
       fetch: vi.fn(async () => json({ value: [{ name: "Sprint 41" }] })),
+      now: NOW,
+    }).catch((error: unknown) => error);
+
+    expect(failing).toBeInstanceOf(AdoError);
+    expect(failing).toMatchObject({ kind: "unexpected-response" });
+  });
+
+  it("should refuse a malformed iteration date instead of silently dropping the sprint", async () => {
+    const failing = await fetchRolloverBaseline({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger: SILENT_LOGGER,
+      fetch: vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes("/_apis/work/teamsettings/iterations?")) {
+          return json({
+            value: [
+              {
+                name: "Sprint 41",
+                path: "Plataforma\\Sprint 41",
+                attributes: {
+                  startDate: "2026-01-19T00:00:00Z",
+                  finishDate: "não-é-data",
+                },
+              },
+            ],
+          });
+        }
+        throw new Error(`rota não esperada: ${String(input)}`);
+      }),
+      now: NOW,
+    }).catch((error: unknown) => error);
+
+    expect(failing).toBeInstanceOf(AdoError);
+    expect(failing).toMatchObject({ kind: "unexpected-response" });
+  });
+
+  it("should refuse an iteration date without an offset instead of using the machine timezone", async () => {
+    const failing = await fetchRolloverBaseline({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger: SILENT_LOGGER,
+      fetch: vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes("/_apis/work/teamsettings/iterations?")) {
+          return json({
+            value: [
+              {
+                name: "Sprint 41",
+                path: "Plataforma\\Sprint 41",
+                attributes: {
+                  startDate: "2026-01-19T00:00:00Z",
+                  finishDate: "2026-01-30T00:00:00",
+                },
+              },
+            ],
+          });
+        }
+        throw new Error(`rota não esperada: ${String(input)}`);
+      }),
       now: NOW,
     }).catch((error: unknown) => error);
 

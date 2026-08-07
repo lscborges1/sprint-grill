@@ -5,8 +5,13 @@ import { asOfLiteral, escapeWiql, wiqlIdsSchema } from "../rest/wiql";
 import {
   fetchBacklogItemTypes,
   fetchStateCategories,
+  stateCategoryKey,
 } from "../work-items/work-item-types";
 import type { StateCategory } from "../work-items/work-item-types";
+import {
+  validatePositiveInteger,
+  validDateSchema,
+} from "./rollover-domain";
 
 /** Quantas sprints encerradas a baseline retroativa olha para trás. */
 const DEFAULT_SPRINTS = 6;
@@ -40,9 +45,14 @@ export interface RolloverBaseline {
 export interface RolloverBaselineOptions extends AdoClientOptions {
   /** Quantas sprints encerradas olhar para trás (padrão: seis). */
   readonly sprints?: number;
+  /** Inclui o fechamento neste instante; exclui sprints posteriores ao rollout. */
+  readonly before?: Date;
   /** Injetado pelos testes; em produção é o relógio. */
   readonly now?: Date;
 }
+
+/** Instantes de iteration: ausente ok; sem offset não é um instante determinístico. */
+const iterationInstant = z.iso.datetime({ offset: true });
 
 const iterationsSchema = z.object({
   value: z.array(
@@ -51,8 +61,8 @@ const iterationsSchema = z.object({
       path: z.string(),
       attributes: z
         .object({
-          startDate: z.string().nullish(),
-          finishDate: z.string().nullish(),
+          startDate: iterationInstant.nullish(),
+          finishDate: iterationInstant.nullish(),
         })
         .nullish(),
     }),
@@ -63,10 +73,18 @@ const statesBatchSchema = z.object({
   value: z.array(
     z.object({
       id: z.number(),
-      fields: z.object({ "System.State": z.string() }),
+      fields: z.object({
+        "System.State": z.string(),
+        "System.WorkItemType": z.string(),
+      }),
     }),
   ),
 });
+
+interface WorkItemStateAsOf {
+  readonly state: string;
+  readonly type: string;
+}
 
 interface ClosedSprint {
   readonly name: string;
@@ -95,15 +113,21 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 export async function fetchRolloverBaseline(
   options: RolloverBaselineOptions,
 ): Promise<RolloverBaseline> {
+  const sprintCount = validatePositiveInteger(options.sprints, DEFAULT_SPRINTS, "sprints");
+  const before = validateBefore(options.before);
   const rest = createAdoRest(options);
   const closed = await closedSprints(
     rest,
     options.now ?? new Date(),
-    options.sprints ?? DEFAULT_SPRINTS,
+    sprintCount,
+    before,
   );
 
   if (closed.length === 0) {
-    rest.logger.info("nenhuma sprint encerrada no Azure DevOps");
+    rest.logger.info(
+      { closedSprints: 0 },
+      "nenhuma sprint encerrada no Azure DevOps",
+    );
     return emptyBaseline();
   }
 
@@ -128,6 +152,15 @@ export async function fetchRolloverBaseline(
   return { sprints, total };
 }
 
+function validateBefore(value: Date | undefined): Date | undefined {
+  if (value === undefined) return undefined;
+  const result = validDateSchema.safeParse(value);
+  if (!result.success) {
+    throw new TypeError("before precisa ser uma data válida.");
+  }
+  return result.data;
+}
+
 function emptyBaseline(): RolloverBaseline {
   return { sprints: [], total: totalOf([]) };
 }
@@ -141,6 +174,7 @@ async function closedSprints(
   rest: AdoRest,
   now: Date,
   count: number,
+  before: Date | undefined,
 ): Promise<readonly ClosedSprint[]> {
   const { value } = await rest.request({
     operation: "as iterations do time",
@@ -162,7 +196,11 @@ async function closedSprints(
       } satisfies ClosedSprint;
     })
     .filter((sprint) => sprint !== undefined)
-    .filter(({ closesAt }) => closesAt.getTime() <= now.getTime())
+    .filter(
+      ({ closesAt }) =>
+        closesAt.getTime() <= now.getTime() &&
+        (before === undefined || closesAt.getTime() <= before.getTime()),
+    )
     .sort((a, b) => a.finishDate.getTime() - b.finishDate.getTime())
     .slice(-count);
 }
@@ -170,8 +208,8 @@ async function closedSprints(
 /**
  * O escopo da sprint é a **união** de dois snapshots: quem estava nela na
  * abertura e quem estava no fechamento. Só a abertura perderia as US puxadas no
- * meio; só o fechamento perderia as que saíram antes do fim — e essas são
- * exatamente as que rolaram.
+ * meio; só o fechamento perderia as que saíram antes do fim — e essas rolam
+ * sempre: concluir noutro path não conta como concluída nesta sprint.
  */
 async function sprintRollover(
   rest: AdoRest,
@@ -184,6 +222,7 @@ async function sprintRollover(
     backlogItemsAsOf(rest, sprint, types, sprint.closesAt),
   ]);
 
+  const stillInSprint = new Set(atFinish);
   const ids = [...new Set([...atStart, ...atFinish])];
   const states = await statesAsOf(rest, ids, sprint.closesAt);
 
@@ -191,11 +230,16 @@ async function sprintRollover(
   let removed = 0;
   const unknown: string[] = [];
   for (const id of ids) {
-    const state = states.get(id);
-    const category = state === undefined ? undefined : categories.get(state);
-    if (category === "Completed") completed += 1;
+    const item = states.get(id);
+    const category =
+      item === undefined
+        ? undefined
+        : categories.get(stateCategoryKey(item.type, item.state));
+    if (category === "Completed" && stillInSprint.has(id)) completed += 1;
     else if (category === "Removed") removed += 1;
-    else if (category === undefined) unknown.push(state ?? "(sem estado)");
+    else if (category === undefined) {
+      unknown.push(item?.state ?? "(sem estado)");
+    }
   }
 
   // Numa baseline retroativa isto acontece: estado aposentado do processo desde
@@ -246,15 +290,16 @@ async function backlogItemsAsOf(
 const BATCH_LIMIT = 200;
 
 /**
- * O estado de cada US como estava no fechamento da sprint. Só `System.State`
- * sai do ADO: título e responsável não entram numa métrica agregada.
+ * O estado e o tipo de cada US como estavam no fechamento da sprint. Só o
+ * necessário para classificar a categoria — título e responsável não entram
+ * numa métrica agregada.
  */
 async function statesAsOf(
   rest: AdoRest,
   ids: readonly number[],
   instant: Date,
-): Promise<ReadonlyMap<number, string>> {
-  const states = new Map<number, string>();
+): Promise<ReadonlyMap<number, WorkItemStateAsOf>> {
+  const states = new Map<number, WorkItemStateAsOf>();
 
   for (let from = 0; from < ids.length; from += BATCH_LIMIT) {
     const { value } = await rest.request({
@@ -263,13 +308,16 @@ async function statesAsOf(
       schema: statesBatchSchema,
       body: {
         ids: ids.slice(from, from + BATCH_LIMIT),
-        fields: ["System.State"],
+        fields: ["System.State", "System.WorkItemType"],
         asOf: instant.toISOString(),
       },
     });
 
     for (const item of value) {
-      states.set(item.id, item.fields["System.State"]);
+      states.set(item.id, {
+        state: item.fields["System.State"],
+        type: item.fields["System.WorkItemType"],
+      });
     }
   }
 
@@ -300,7 +348,5 @@ function totalOf(sprints: readonly RolloverCounts[]): RolloverCounts {
 
 /** Iteration sem data não entra na baseline: não dá para dizer quando fechou. */
 function parseDate(value: string | null | undefined): Date | undefined {
-  if (!value) return undefined;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  return value ? new Date(value) : undefined;
 }

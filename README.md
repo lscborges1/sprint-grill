@@ -150,9 +150,17 @@ Como a conta é feita, para quem for conferir o número na retro:
 | quem rolou | escopo menos concluídas — inclusive quem ficou em `Resolved` ou saiu da sprint antes do fim |
 | e as removidas | US em categoria `Removed` saem do denominador: cancelamento não é rolagem |
 
-Os dois snapshots existem porque nenhum sozinho fecha a conta: só a abertura
-perderia as US puxadas no meio da sprint, e só o fechamento perderia as que
-saíram antes do fim — que são exatamente as que rolaram.
+Os dois snapshots existem porque nenhum sozinho basta: só a abertura perderia as
+US puxadas no meio da sprint, e só o fechamento perderia as que saíram antes do
+fim — que são exatamente as que rolaram. O que eles ainda não veem, e é bom
+saber antes de defender o número na retro:
+
+- US **puxada e retirada dentro da mesma sprint** não aparece em nenhum dos dois
+  snapshots (subestima a rolagem);
+- o fechamento é meia-noite **UTC**, então US concluída depois das 21h do último
+  dia (horário de Brasília) conta como rolada (superestima);
+- estado que o processo do ADO não declara mais cai em "rolou" — quando
+  acontece, sai um `warn` no stderr com o nome do estado.
 
 > Os números são sempre **agregados por sprint**: o script nunca pede ao Azure
 > DevOps de quem é a US. A baseline existe para a squad julgar o processo, não

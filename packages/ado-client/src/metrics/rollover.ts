@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createAdoRest } from "../rest/ado-rest";
 import type { AdoClientOptions, AdoRest } from "../rest/ado-rest";
-import { asOfLiteral, escapeWiql } from "../rest/wiql";
+import { asOfLiteral, escapeWiql, wiqlIdsSchema } from "../rest/wiql";
 import {
   fetchBacklogItemTypes,
   fetchStateCategories,
@@ -57,10 +57,6 @@ const iterationsSchema = z.object({
         .nullish(),
     }),
   ),
-});
-
-const wiqlSchema = z.object({
-  workItems: z.array(z.object({ id: z.number() })).default([]),
 });
 
 const statesBatchSchema = z.object({
@@ -193,11 +189,23 @@ async function sprintRollover(
 
   let completed = 0;
   let removed = 0;
+  const unknown: string[] = [];
   for (const id of ids) {
     const state = states.get(id);
     const category = state === undefined ? undefined : categories.get(state);
     if (category === "Completed") completed += 1;
     else if (category === "Removed") removed += 1;
+    else if (category === undefined) unknown.push(state ?? "(sem estado)");
+  }
+
+  // Numa baseline retroativa isto acontece: estado aposentado do processo desde
+  // então não volta em `workitemtypes/{type}/states`, e a US cai em "rolou" sem
+  // ninguém saber. O número que a retro discute não pode ter buraco silencioso.
+  if (unknown.length > 0) {
+    rest.logger.warn(
+      { sprint: sprint.name, states: [...new Set(unknown)].sort() },
+      "estado fora do processo atual contado como rolagem",
+    );
   }
 
   return {
@@ -221,7 +229,7 @@ async function backlogItemsAsOf(
   const { workItems } = await rest.request({
     operation: `as US de ${sprint.name}`,
     path: "_apis/wit/wiql",
-    schema: wiqlSchema,
+    schema: wiqlIdsSchema,
     body: {
       query:
         "SELECT [System.Id] FROM WorkItems " +
@@ -234,33 +242,38 @@ async function backlogItemsAsOf(
   return workItems.map(({ id }) => id);
 }
 
+/** Teto de ids por `workitemsbatch` — passar disso o ADO recusa com 400. */
+const BATCH_LIMIT = 200;
+
 /**
  * O estado de cada US como estava no fechamento da sprint. Só `System.State`
  * sai do ADO: título e responsável não entram numa métrica agregada.
- *
- * ponytail: teto de 200 ids por batch (limite do ADO). Sprint com mais itens de
- * backlog que isso faz a requisição falhar em voz alta — se acontecer, fatiar
- * `ids` em blocos de 200.
  */
 async function statesAsOf(
   rest: AdoRest,
   ids: readonly number[],
   instant: Date,
 ): Promise<ReadonlyMap<number, string>> {
-  if (ids.length === 0) return new Map();
+  const states = new Map<number, string>();
 
-  const { value } = await rest.request({
-    operation: "os estados das US no fechamento da sprint",
-    path: "_apis/wit/workitemsbatch",
-    schema: statesBatchSchema,
-    body: {
-      ids,
-      fields: ["System.State"],
-      asOf: instant.toISOString(),
-    },
-  });
+  for (let from = 0; from < ids.length; from += BATCH_LIMIT) {
+    const { value } = await rest.request({
+      operation: "os estados das US no fechamento da sprint",
+      path: "_apis/wit/workitemsbatch",
+      schema: statesBatchSchema,
+      body: {
+        ids: ids.slice(from, from + BATCH_LIMIT),
+        fields: ["System.State"],
+        asOf: instant.toISOString(),
+      },
+    });
 
-  return new Map(value.map((item) => [item.id, item.fields["System.State"]]));
+    for (const item of value) {
+      states.set(item.id, item.fields["System.State"]);
+    }
+  }
+
+  return states;
 }
 
 function counts(raw: Omit<RolloverCounts, "rolled" | "rate">): RolloverCounts {

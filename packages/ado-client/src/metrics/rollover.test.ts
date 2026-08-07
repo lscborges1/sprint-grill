@@ -38,14 +38,12 @@ interface FakeSprint {
   /** Ids UNDER o path no fechamento; sem isto, os mesmos da abertura. */
   readonly atFinish?: readonly number[];
   /** Estado no fechamento da sprint, por id. Sem entrada, a US está `Active`. */
-  readonly statesAtFinish?: Readonly<Record<number, keyof typeof AGILE_STATES>>;
+  readonly statesAtFinish?: Readonly<Record<number, string>>;
   /**
    * Estado na meia-noite que *abre* o último dia da sprint. Só os testes de
    * limite preenchem; sem isto, o dia inteiro tem o estado do fechamento.
    */
-  readonly statesAtLastDayStart?: Readonly<
-    Record<number, keyof typeof AGILE_STATES>
-  >;
+  readonly statesAtLastDayStart?: Readonly<Record<number, string>>;
 }
 
 /**
@@ -164,7 +162,7 @@ function fakeAdo(state: FakeAdoState = {}) {
 function statesAt(
   sprints: readonly FakeSprint[],
   asOf: string,
-): Readonly<Record<number, keyof typeof AGILE_STATES>> {
+): Readonly<Record<number, string>> {
   const atClose = sprints.find((sprint) => sameInstant(asOf, closesAt(sprint)));
   if (atClose) return atClose.statesAtFinish ?? {};
 
@@ -198,6 +196,23 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+/** Logger que guarda as linhas, para os testes que checam o que foi avisado. */
+function capturingLogger() {
+  const lines: { level: string; msg: string; states?: string[] }[] = [];
+
+  const logger = createLogger({
+    level: "trace",
+    destination: new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)));
+        done();
+      },
+    }),
+  });
+
+  return Object.assign(logger, { lines });
 }
 
 /** Aponta a baseline para o ADO de mentira, com o resto da config preenchido. */
@@ -308,6 +323,55 @@ describe("fetchRolloverBaseline", () => {
     });
 
     expect(baseline.total).toMatchObject({ completed: 1, rolled: 0, rate: 0 });
+  });
+
+  it("should warn when a US sits in a state the process no longer declares, instead of silently counting it as rolled", async () => {
+    // Baseline retroativa esbarra nisto: estado aposentado do processo não volta
+    // em `workitemtypes/{type}/states` e sumiria dentro do número da retro.
+    const logger = capturingLogger();
+
+    const baseline = await fetchRolloverBaseline({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger,
+      fetch: fakeAdo({
+        sprints: [
+          oneSprint({
+            atStart: [1, 2],
+            statesAtFinish: { 1: "Closed", 2: "Em homologação" },
+          }),
+        ],
+      }),
+      now: NOW,
+    });
+
+    expect(baseline.total).toMatchObject({ scope: 2, completed: 1, rolled: 1 });
+    expect(
+      logger.lines.filter(
+        ({ level, states }) =>
+          level === "warn" && states?.includes("Em homologação"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("should ask Azure DevOps in batches of 200, the most ids it accepts at once", async () => {
+    const ids = Array.from({ length: 201 }, (_unused, index) => index + 1);
+    const ado = fakeAdo({ sprints: [oneSprint({ atStart: ids })] });
+
+    const baseline = await fetchRolloverBaseline({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger: SILENT_LOGGER,
+      fetch: ado,
+      now: NOW,
+    });
+
+    const batches = ado.requests
+      .filter(({ url }) => url.includes("workitemsbatch"))
+      .map(({ body }) => (body as { ids: number[] }).ids.length);
+
+    expect(batches).toEqual([200, 1]);
+    expect(baseline.total.scope).toBe(201);
   });
 
   it("should look only at the last six closed sprints by default", async () => {

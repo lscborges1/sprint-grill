@@ -1,3 +1,10 @@
+import { z } from "zod";
+
+/** Uma consulta WIQL devolve só ids; os campos vêm do batch depois. */
+export const wiqlIdsSchema = z.object({
+  workItems: z.array(z.object({ id: z.number() })).default([]),
+});
+
 /** Aspas simples são escapadas dobrando, como manda a WIQL. */
 export function escapeWiql(value: string): string {
   return value.replaceAll("'", "''");

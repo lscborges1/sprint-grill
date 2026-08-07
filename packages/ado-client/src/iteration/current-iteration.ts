@@ -3,7 +3,7 @@ import { inferRefinementStatus } from "../refinement/refinement-status";
 import type { RefinementStatus } from "../refinement/refinement-status";
 import { COMMENTS_API_VERSION, createAdoRest } from "../rest/ado-rest";
 import type { AdoClientOptions, AdoRest } from "../rest/ado-rest";
-import { escapeWiql } from "../rest/wiql";
+import { escapeWiql, wiqlIdsSchema } from "../rest/wiql";
 import { fetchBacklogItemTypes } from "../work-items/work-item-types";
 
 /** Uma US da iteration como o picker precisa dela: identidade + onde ela está. */
@@ -31,10 +31,6 @@ const teamIterationsSchema = z.object({
       path: z.string(),
     }),
   ),
-});
-
-const wiqlSchema = z.object({
-  workItems: z.array(z.object({ id: z.number() })).default([]),
 });
 
 const workItemsBatchSchema = z.object({
@@ -101,7 +97,7 @@ async function fetchStories(
   const { workItems } = await rest.request({
     operation: "as US da iteration",
     path: "_apis/wit/wiql",
-    schema: wiqlSchema,
+    schema: wiqlIdsSchema,
     body: { query: backlogItemsQuery(iterationPath, types) },
   });
 

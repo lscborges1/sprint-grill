@@ -10,6 +10,8 @@ export type {
   CurrentIteration,
   IterationStory,
 } from "./iteration/current-iteration";
+export { renderRolloverReport } from "./metrics/rollover-report";
+export type { RolloverReportOptions } from "./metrics/rollover-report";
 export { fetchRolloverBaseline } from "./metrics/rollover";
 export type {
   RolloverBaseline,

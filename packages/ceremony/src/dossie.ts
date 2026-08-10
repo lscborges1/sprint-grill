@@ -3,6 +3,8 @@ import { renderSpecMarkdown } from "./spec";
 import type { CeremonyStore } from "./store";
 import type { DossieDocument, DossieState } from "./types";
 
+const REPORT_HEADINGS = Object.values(REPORT_SECTIONS).map((section) => section.heading);
+
 /**
  * O Dossiê: a aba do Operador, montada do que está gravado — mesma disciplina do
  * Palco. Nada aqui vem de memória do processo, então a edição e o documento
@@ -18,7 +20,10 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
   const document: DossieDocument = {
     story: { id: session.storyId, title: session.storyTitle, url: session.storyUrl },
     decisions: store.listDecisions(sessionId),
-    pending: store.unansweredQuestions(sessionId).map((asked) => asked.question),
+    pending: store.unansweredQuestions(sessionId).map((asked) => ({
+      id: asked.id,
+      question: asked.question,
+    })),
     investigation: {
       impact: sectionOf(session.investigationMarkdown, REPORT_SECTIONS.impacts.heading),
       unverified: sectionOf(session.investigationMarkdown, REPORT_SECTIONS.unverified.heading),
@@ -29,7 +34,7 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
     ...document,
     sessionId,
     spec: {
-      generated: renderSpecMarkdown(document),
+      generated: renderSpecMarkdown(document, session.timeZone),
       draft: store.getSpecDraft(sessionId) ?? null,
     },
   };
@@ -50,6 +55,12 @@ function sectionOf(markdown: string, heading: string): string {
   if (start === -1) return "";
 
   const body = markdown.slice(start + opening.length);
-  const end = body.indexOf("\n## ");
-  return (end === -1 ? body : body.slice(0, end)).trim();
+  // Claims are agent-provided Markdown and may contain their own headings.
+  // Only headings emitted by our deterministic report renderer delimit a
+  // section; arbitrary `## ...` lines belong to the claim.
+  const end = REPORT_HEADINGS.filter((candidate) => candidate !== heading)
+    .map((candidate) => body.indexOf(`\n## ${candidate}\n`))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0];
+  return (end === undefined ? body : body.slice(0, end)).trim();
 }

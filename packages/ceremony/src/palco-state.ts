@@ -70,6 +70,7 @@ export const palcoStateSchema: z.ZodType<PalcoState> = z.object({
   pendingQuestions: z.array(questionSchema),
   lastDecision: decisionSchema.nullable(),
   consultation: consultationSchema.nullable(),
+  pending: z.array(z.object({ id: z.string(), question: z.string() })),
   live: z.boolean(),
   current: z.discriminatedUnion("phase", [
     z.object({ phase: z.literal("perguntando"), question: questionSchema }),

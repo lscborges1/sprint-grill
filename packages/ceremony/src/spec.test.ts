@@ -1,11 +1,17 @@
-// A Spec carimba quem decidiu e quando, e o "quando" é hora local do Operador.
-// Fixar o fuso aqui é o que deixa o carimbo verificável em qualquer máquina.
-process.env.TZ = "UTC";
-
-import { describe, expect, it } from "vitest";
-import { renderSpecMarkdown } from "./spec";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readSpecSection, renderSpecMarkdown } from "./spec";
 import { SPEC_SECTIONS } from "./spec-vocabulary";
 import type { DossieDocument } from "./types";
+
+// A Spec carimba quem decidiu e quando, e o "quando" é hora local do Operador.
+// Fixar o fuso em cada teste deixa o carimbo verificável sem contaminar o worker.
+beforeEach(() => {
+  vi.stubEnv("TZ", "UTC");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const EMPTY: DossieDocument = {
   story: {
@@ -22,6 +28,7 @@ const REFINED: DossieDocument = {
   ...EMPTY,
   decisions: [
     {
+      questionSeq: 1,
       questionId: "q1",
       question: "O TTL vira configurável por cliente ou global?",
       recommendation: "Global: nenhum cliente pediu valor próprio.",
@@ -30,7 +37,7 @@ const REFINED: DossieDocument = {
       decidedAt: Date.UTC(2026, 7, 6, 14, 30),
     },
   ],
-  pending: ["O mobile entra nesta US?"],
+  pending: [{ id: "q2", question: "O mobile entra nesta US?" }],
   investigation: {
     impact: "- O TTL do cache precisa virar configurável.\n  - `core-api:src/cache/session.ts`",
     unverified: "- O mobile talvez dependa do TTL.",
@@ -55,9 +62,41 @@ describe("renderSpecMarkdown", () => {
     expect(markdown).toContain("_Decidido por PO + squad em 06/08/2026 às 14:30._");
   });
 
+  it("should render the persisted timezone independently of the host timezone", () => {
+    const saoPaulo = renderSpecMarkdown(REFINED, "America/Sao_Paulo");
+
+    vi.stubEnv("TZ", "America/Los_Angeles");
+
+    expect(renderSpecMarkdown(REFINED, "America/Sao_Paulo")).toBe(saoPaulo);
+    expect(saoPaulo).toContain("_Decidido por PO + squad em 06/08/2026 às 11:30._");
+  });
+
   it("should keep the agent recommendation next to the decision it produced", () => {
     expect(renderSpecMarkdown(REFINED)).toContain(
       "Recomendação do agente: Global: nenhum cliente pediu valor próprio.",
+    );
+  });
+
+  it("should link each decision to its Azure DevOps record when one exists", () => {
+    const markdown = renderSpecMarkdown({
+      ...EMPTY,
+      decisions: [
+        {
+          questionSeq: 1,
+          questionId: "q1",
+          question: "O TTL vira configurável por cliente ou global?",
+          recommendation: "Global",
+          answer: "Global",
+          decidedBy: "PO",
+          decidedAt: Date.UTC(2026, 7, 6, 14, 30),
+          recordId: 99,
+          recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/99",
+        },
+      ],
+    });
+
+    expect(markdown).toContain(
+      "[#99](https://dev.azure.com/acme/Plataforma/_workitems/edit/99)",
     );
   });
 
@@ -99,5 +138,34 @@ describe("renderSpecMarkdown", () => {
 
     expect(markdown.endsWith("\n")).toBe(true);
     expect(markdown.endsWith("\n\n")).toBe(false);
+  });
+});
+
+describe("readSpecSection", () => {
+  it("should read a section when its heading starts the document", () => {
+    const markdown = `## ${SPEC_SECTIONS.outOfScope.heading}\nFora de escopo: relatório mensal.`;
+
+    expect(readSpecSection(markdown, SPEC_SECTIONS.outOfScope.heading)).toBe(
+      "Fora de escopo: relatório mensal.",
+    );
+  });
+
+  it("should read persisted content until the next canonical section", () => {
+    const markdown = renderSpecMarkdown(REFINED).replace(
+      `_${SPEC_SECTIONS.outOfScope.empty}_`,
+      "Fora de escopo: relatório mensal.",
+    );
+
+    expect(readSpecSection(markdown, SPEC_SECTIONS.outOfScope.heading)).toContain(
+      "Fora de escopo: relatório mensal.",
+    );
+  });
+
+  it("should not treat an unknown Markdown heading as a section boundary", () => {
+    const markdown = `${renderSpecMarkdown(REFINED)}\n## Nota do Operador\ntexto`;
+
+    expect(readSpecSection(markdown, SPEC_SECTIONS.outOfScope.heading)).toContain(
+      "## Nota do Operador",
+    );
   });
 });

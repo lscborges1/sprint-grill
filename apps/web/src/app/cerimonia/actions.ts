@@ -8,6 +8,7 @@ import {
   consultationSchema,
   decisionSchema,
   discardSpecDraft,
+  discardSpecDraftSchema,
   resumeCeremony,
   saveSpecDraft,
   sessionIdSchema,
@@ -101,6 +102,8 @@ export async function saveSpecDraftAction(
     sessionId: formData.get("sessionId"),
     markdown: formData.get("markdown"),
     base: formData.get("base") ?? "",
+    expectedSavedAt: formData.get("expectedSavedAt") ?? "",
+    overwrite: formData.get("overwrite") ?? false,
   });
 
   if (!parsed.success) {
@@ -122,8 +125,23 @@ export async function discardSpecDraftAction(
   _previous: string | null,
   formData: FormData,
 ): Promise<string | null> {
-  discardSpecDraft(sessionIdSchema.parse(formData.get("sessionId")));
-  return null;
+  const parsed = discardSpecDraftSchema.safeParse({
+    sessionId: formData.get("sessionId"),
+    expectedSavedAt: formData.get("expectedSavedAt") ?? "",
+  });
+
+  if (!parsed.success) {
+    return parsed.error.issues[0]?.message ?? "Edição inválida.";
+  }
+
+  try {
+    discardSpecDraft(parsed.data);
+    return null;
+  } catch (error) {
+    if (!(error instanceof CeremonyError)) throw error;
+    logger.error({ err: error, sessionId: parsed.data.sessionId }, "descarte do Dossiê recusado");
+    return error.message;
+  }
 }
 /** Retoma uma cerimônia cujo turno morreu com o processo. */
 export async function resumeCeremonyAction(

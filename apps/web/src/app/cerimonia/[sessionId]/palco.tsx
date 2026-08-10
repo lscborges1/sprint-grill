@@ -29,6 +29,7 @@ export function Palco({ initial }: { initial: PalcoState }) {
     `/api/cerimonia/${initial.sessionId}/stream`,
     palcoStateSchema,
     initial,
+    { schemaName: "palcoStateSchema", sessionId: initial.sessionId },
   );
 
   return (
@@ -368,7 +369,6 @@ function formatCitation(citation: CeremonyCitation): string {
   const file = `${citation.repo} · ${citation.path}`;
   return citation.symbol === undefined ? file : `${file} → ${citation.symbol}`;
 }
-
 function Stage({ state }: { state: PalcoState }) {
   switch (state.current.phase) {
     case "perguntando":

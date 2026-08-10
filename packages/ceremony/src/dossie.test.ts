@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { renderReportMarkdown } from "@sprint-griller/investigation";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readDossie } from "./dossie";
 import { SPEC_SECTIONS } from "./spec-vocabulary";
 import { openCeremonyStore } from "./store";
@@ -12,6 +12,7 @@ import type { CeremonyQuestion } from "./types";
 const opened: CeremonyStore[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (opened.length > 0) opened.pop()?.close();
 });
 
@@ -50,13 +51,18 @@ function open(): CeremonyStore {
   return store;
 }
 
-function newSession(store: CeremonyStore, investigationMarkdown = INVESTIGATION) {
+function newSession(
+  store: CeremonyStore,
+  investigationMarkdown = INVESTIGATION,
+  timeZone = "UTC",
+) {
   return store.createSession({
     id: "thread-1",
     storyId: 4242,
     storyTitle: "Exportar relatório de comissões",
     storyUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4242",
     investigationMarkdown,
+    timeZone,
   });
 }
 
@@ -130,7 +136,24 @@ describe("readDossie", () => {
     newSession(store);
     store.askQuestions("thread-1", [question()]);
 
-    expect(readDossie(store, "thread-1")?.pending).toEqual([question().question]);
+    expect(readDossie(store, "thread-1")?.pending).toEqual([
+      { id: question().id, question: question().question },
+    ]);
+  });
+
+  it("should preserve ids for pending questions with the same wording", () => {
+    const store = open();
+    newSession(store);
+    const wording = "Qual é o comportamento esperado?";
+    store.askQuestions("thread-1", [
+      question({ id: "q1", question: wording }),
+      question({ id: "q2", question: wording }),
+    ]);
+
+    expect(readDossie(store, "thread-1")?.pending).toEqual([
+      { id: "q1", question: wording },
+      { id: "q2", question: wording },
+    ]);
   });
 
   it("should generate the despejo Markdown from what is recorded", () => {
@@ -161,6 +184,7 @@ describe("readDossie", () => {
       sessionId: "thread-1",
       markdown: `${generated}\n\nFora de escopo: relatório mensal.`,
       base: generated,
+      expectedSavedAt: null,
     });
 
     const spec = readDossie(store, "thread-1")?.spec;
@@ -172,11 +196,65 @@ describe("readDossie", () => {
     const store = open();
     newSession(store);
     const before = readDossie(store, "thread-1")?.spec.generated ?? "";
-    store.saveSpecDraft({ sessionId: "thread-1", markdown: "assinado", base: before });
+    store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "assinado",
+      base: before,
+      expectedSavedAt: null,
+    });
 
     decide(store);
 
     const spec = readDossie(store, "thread-1")?.spec;
     expect(spec?.draft?.base).not.toBe(spec?.generated);
+  });
+
+  it("should keep a saved Spec base stable when the host timezone changes", () => {
+    const store = open();
+    newSession(store, INVESTIGATION, "America/Sao_Paulo");
+    decide(store);
+
+    const before = readDossie(store, "thread-1")?.spec.generated ?? "";
+    store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: before,
+      base: before,
+      expectedSavedAt: null,
+    });
+
+    vi.stubEnv("TZ", "America/Los_Angeles");
+
+    expect(readDossie(store, "thread-1")?.spec.generated).toBe(before);
+  });
+
+  it("should keep a multiline claim containing a Markdown heading in the impact section", () => {
+    const store = open();
+    const investigation = renderReportMarkdown(
+      {
+        id: 4242,
+        title: "Exportar relatório de comissões",
+        description: undefined,
+        url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4242",
+      },
+      {
+        summary: "A US mexe no cálculo de comissão.",
+        gaps: [],
+        impacts: [
+          {
+            claim: "O cálculo tem contexto:\n## Nota escrita pelo agente\nA regra está no serviço de folha.",
+            citations: [{ repo: "core-api", path: "src/payroll/rounding.ts" }],
+          },
+        ],
+        externalRepos: [],
+        unverified: ["O portal do vendedor talvez leia o mesmo total."],
+      },
+      { status: "aprovado" },
+    );
+    newSession(store, investigation);
+
+    const dossie = readDossie(store, "thread-1");
+
+    expect(dossie?.investigation.impact).toContain("A regra está no serviço de folha.");
+    expect(dossie?.investigation.unverified).toContain("O portal do vendedor");
   });
 });

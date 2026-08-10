@@ -3,12 +3,14 @@
 // Subpath de propósito: o barril do pacote puxa o store, e o binding nativo do
 // SQLite não existe no bundle do cliente.
 import { SPEC_SECTIONS, dossieStateSchema } from "@sprint-griller/ceremony/session-state";
+import { readSpecSection } from "@sprint-griller/ceremony/spec";
 import type { CeremonyDecision, DossieState } from "@sprint-griller/ceremony";
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
 import { discardSpecDraftAction, saveSpecDraftAction } from "../../actions";
+import { reconcileSpecDraft } from "./spec-editor-state";
 
 /**
  * Modo Dossiê: a aba do Operador. A Spec da US se forma aqui ao vivo enquanto a
@@ -25,6 +27,7 @@ export function Dossie({ initial }: { initial: DossieState }) {
     `/api/cerimonia/${initial.sessionId}/dossie/stream`,
     dossieStateSchema,
     initial,
+    { schemaName: "dossieStateSchema", sessionId: initial.sessionId },
   );
 
   return (
@@ -53,6 +56,10 @@ export function Dossie({ initial }: { initial: DossieState }) {
         <p className="text-sm text-muted">
           Esta aba é do Operador: a sala acompanha o Palco, não o documento.
         </p>
+        <CeremonyProgress
+          decisions={state.decisions}
+          pendingCount={state.pending.length}
+        />
         {!connected && (
           <p role="alert" className="text-sm text-muted">
             Sem conexão com a cerimônia — o documento pode estar desatualizado.
@@ -81,8 +88,8 @@ export function Dossie({ initial }: { initial: DossieState }) {
         ) : (
           <ul className="flex flex-col gap-3">
             {state.pending.map((question) => (
-              <li key={question} className="rounded-lg border border-line px-5 py-4 text-base">
-                {question}
+              <li key={question.id} className="rounded-lg border border-line px-5 py-4 text-base">
+                {question.question}
               </li>
             ))}
           </ul>
@@ -99,8 +106,67 @@ export function Dossie({ initial }: { initial: DossieState }) {
         <Inherited text={state.investigation.unverified} empty={SPEC_SECTIONS.unverified.empty} />
       </Section>
 
+      <Section id="fora-de-escopo" heading={SPEC_SECTIONS.outOfScope.heading}>
+        <p className="text-sm text-muted">{SPEC_SECTIONS.outOfScope.blurb}</p>
+        <Inherited
+          text={operatorOutOfScope(state.spec.draft?.markdown ?? "")}
+          empty={SPEC_SECTIONS.outOfScope.empty}
+        />
+      </Section>
+
       <SpecEditor sessionId={state.sessionId} spec={state.spec} />
     </main>
+  );
+}
+
+/** Resumo sempre visível: decisões registradas e trabalho que ainda está aberto. */
+function CeremonyProgress({
+  decisions,
+  pendingCount,
+}: {
+  decisions: readonly CeremonyDecision[];
+  pendingCount: number;
+}) {
+  const decisionCount = decisions.length;
+  const pendingLabel =
+    pendingCount === 0
+      ? "Sem pendências"
+      : `${pendingCount} ${pendingCount === 1 ? "pendência" : "pendências"}`;
+
+  return (
+    <section
+      aria-label="Progresso da cerimônia"
+      className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-line px-5 py-4"
+    >
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium">Progresso da cerimônia</p>
+        {decisionCount === 0 ? (
+          <p className="text-sm text-muted">Nenhuma decisão registrada ainda.</p>
+        ) : (
+          <>
+            <p className="text-sm text-muted">
+              {decisionCount}{" "}
+              {decisionCount === 1 ? "decisão registrada" : "decisões registradas"}
+            </p>
+            {/* As barras repetem, em forma, a contagem que a linha acima já diz. */}
+            <div aria-hidden="true" className="flex gap-1.5">
+              {decisions.map((decision) => (
+                <span
+                  key={`${decision.questionId}:${decision.decidedAt}`}
+                  className="h-2 w-8 rounded-full bg-accent"
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+      <a
+        href="#pendencias"
+        className="text-sm font-medium underline underline-offset-4"
+      >
+        {pendingLabel}
+      </a>
+    </section>
   );
 }
 
@@ -119,7 +185,7 @@ function Decided({ decision }: { decision: CeremonyDecision }) {
   );
 }
 
-/** Trecho herdado da Investigação: Markdown que o documento carrega como veio. */
+/** Texto de uma seção do documento, preservado em Markdown para leitura. */
 function Inherited({ text, empty }: { text: string; empty: string }) {
   if (text.trim() === "") return <p className="text-base text-muted">{empty}</p>;
 
@@ -128,6 +194,22 @@ function Inherited({ text, empty }: { text: string; empty: string }) {
       {text}
     </pre>
   );
+}
+
+/** Mostra no documento vivo o conteúdo de Fora de escopo que foi persistido. */
+function operatorOutOfScope(markdown: string): string {
+  let content = readSpecSection(markdown, SPEC_SECTIONS.outOfScope.heading);
+  const generatedBlurb = SPEC_SECTIONS.outOfScope.blurb;
+  const generatedEmpty = `_${SPEC_SECTIONS.outOfScope.empty}_`;
+
+  if (content.startsWith(generatedBlurb)) {
+    content = content.slice(generatedBlurb.length).trim();
+  }
+  if (content.startsWith(generatedEmpty)) {
+    content = content.slice(generatedEmpty.length).trim();
+  }
+
+  return content;
 }
 
 /**
@@ -139,6 +221,11 @@ function Inherited({ text, empty }: { text: string; empty: string }) {
  * documento andar por baixo da edição, e é exatamente o que o aviso de
  * desatualizado existe para mostrar: despejar uma Spec sem a última decisão é o
  * erro que esta tela não pode deixar passar calado.
+ *
+ * O mesmo vale entre abas: o SSE atualiza `spec.draft`, mas o textarea fica no
+ * que esta aba carregou. Sem o aviso de conflito, salvar aqui apagaria a edição
+ * de outra aba sem o Operador perceber. Quem decide o que é eco do próprio save
+ * e o que é divergência remota é `reconcileSpecDraft`.
  */
 function SpecEditor({
   sessionId,
@@ -149,15 +236,46 @@ function SpecEditor({
 }) {
   const [markdown, setMarkdown] = useState(spec.draft?.markdown ?? spec.generated);
   const [base, setBase] = useState(spec.draft?.base ?? spec.generated);
+  /** `savedAt` do rascunho que esta aba já incorporou no editor (null = gerado). */
+  const [adoptedAt, setAdoptedAt] = useState<number | null>(spec.draft?.savedAt ?? null);
   const [saveError, save, saving] = useActionState(saveSpecDraftAction, null);
   const [discardError, discard, discarding] = useActionState(discardSpecDraftAction, null);
+  const busy = saving || discarding;
+  const reconciled = reconcileSpecDraft({
+    draft: spec.draft,
+    generated: spec.generated,
+    markdown,
+    base,
+    adoptedAt,
+  });
+  // Ajustar o estado no render é o caminho do React para estado derivado de
+  // prop: a revisão precisa ser incorporada quando o eco chega, não quando o
+  // Operador voltar a digitar.
+  if (reconciled.adoptedAt !== adoptedAt) setAdoptedAt(reconciled.adoptedAt);
 
+  const { expectedSavedAt, conflict } = reconciled;
   const stale = spec.generated !== base;
+  const remoteDraftConflict = conflict === "edicao";
 
   function regenerate(formData: FormData): void {
+    if (remoteDraftConflict) return;
+
     setMarkdown(spec.generated);
     setBase(spec.generated);
+    setAdoptedAt(null);
     discard(formData);
+  }
+
+  function adoptRemote(): void {
+    if (spec.draft) {
+      setMarkdown(spec.draft.markdown);
+      setBase(spec.draft.base);
+      setAdoptedAt(spec.draft.savedAt);
+      return;
+    }
+    setMarkdown(spec.generated);
+    setBase(spec.generated);
+    setAdoptedAt(null);
   }
 
   return (
@@ -166,6 +284,42 @@ function SpecEditor({
         A Spec da US como ela vai para o Azure DevOps. Edite à vontade: nada foi
         gravado ainda, e o despejo leva o que estiver aqui.
       </p>
+
+      {conflict !== null && (
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-lg border border-amber-500/60 bg-amber-500/5 px-5 py-4"
+        >
+          <p className="text-base font-medium">
+            {remoteDraftConflict
+              ? "Outra aba salvou uma edição diferente"
+              : "Outra aba regenerou o documento"}
+          </p>
+          <p className="text-sm text-muted">
+            {remoteDraftConflict
+              ? "Salvar daqui apagaria o que está gravado. Traga a edição remota ou confirme que quer sobrescrever."
+              : "O rascunho gravado foi descartado. Traga o documento vivo ou salve o texto desta aba de novo."}
+          </p>
+          <button
+            type="button"
+            onClick={adoptRemote}
+            className="self-start rounded-xl border border-line px-5 py-2.5 text-base font-medium"
+          >
+            {remoteDraftConflict ? "Usar a edição salva" : "Usar o documento vivo"}
+          </button>
+          {remoteDraftConflict && (
+            <button
+              type="submit"
+              name="overwrite"
+              value="true"
+              form="spec-editor"
+              className="self-start rounded-xl border border-red-700 bg-red-700 px-5 py-2.5 text-base font-medium text-white"
+            >
+              Confirmar e sobrescrever a edição salva
+            </button>
+          )}
+        </div>
+      )}
 
       {stale && (
         <div
@@ -177,13 +331,19 @@ function SpecEditor({
             O documento vivo acima tem decisão que este texto não tem. Traga as
             novas — regenerar descarta a edição.
           </p>
-          <Regenerate sessionId={sessionId} action={regenerate} pending={discarding} />
+          <Regenerate
+            sessionId={sessionId}
+            expectedSavedAt={expectedSavedAt}
+            action={regenerate}
+            pending={busy || remoteDraftConflict}
+          />
         </div>
       )}
 
-      <form action={save} className="flex flex-col gap-4">
+      <form id="spec-editor" action={save} className="flex flex-col gap-4">
         <input type="hidden" name="sessionId" value={sessionId} />
         <input type="hidden" name="base" value={base} />
+        <input type="hidden" name="expectedSavedAt" value={expectedSavedAt ?? ""} />
         <label className="sr-only" htmlFor="markdown">
           Markdown da Spec da US
         </label>
@@ -199,7 +359,7 @@ function SpecEditor({
         <div className="flex flex-wrap items-center gap-4">
           <button
             type="submit"
-            disabled={saving}
+            disabled={busy}
             className="rounded-xl border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background disabled:opacity-50"
           >
             Salvar edição
@@ -220,7 +380,12 @@ function SpecEditor({
       {/* Sem isto, uma edição salva não teria volta enquanto a cerimônia não
           andasse — o Operador ficaria preso ao próprio rascunho. */}
       {spec.draft && !stale && (
-        <Regenerate sessionId={sessionId} action={regenerate} pending={discarding} />
+        <Regenerate
+          sessionId={sessionId}
+          expectedSavedAt={expectedSavedAt}
+          action={regenerate}
+          pending={busy || remoteDraftConflict}
+        />
       )}
     </Section>
   );
@@ -229,16 +394,19 @@ function SpecEditor({
 /** Joga a edição fora e volta ao documento que a cerimônia gerou. */
 function Regenerate({
   sessionId,
+  expectedSavedAt,
   action,
   pending,
 }: {
   sessionId: string;
+  expectedSavedAt: number | null;
   action: (formData: FormData) => void;
   pending: boolean;
 }) {
   return (
     <form action={action} className="flex">
       <input type="hidden" name="sessionId" value={sessionId} />
+      <input type="hidden" name="expectedSavedAt" value={expectedSavedAt ?? ""} />
       <button
         type="submit"
         disabled={pending}

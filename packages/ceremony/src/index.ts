@@ -13,12 +13,13 @@ export type { CeremonyStory } from "./prompt";
 // Os schemas de estado vivem em subpaths: o browser não pode puxar SQLite pelo barril.
 export { palcoStateSchema } from "./palco-state";
 export { dossieStateSchema } from "./session-state";
-export { renderSpecMarkdown } from "./spec";
+export { readSpecSection, renderSpecMarkdown } from "./spec";
 export { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
 export { openCeremonyStore } from "./store";
 export type {
   CeremonyStore,
   CreateSessionInput,
+  DiscardSpecDraftInput,
   FinishSessionOutcome,
   RecordDecisionInput,
   SaveSpecDraftInput,
@@ -33,6 +34,7 @@ export type {
   ConsultationOutcome,
   PersistedCeremonyQuestion,
   DossieDocument,
+  DossiePendingQuestion,
   DossieState,
   PalcoPhase,
   PalcoState,

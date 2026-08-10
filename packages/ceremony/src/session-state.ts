@@ -24,6 +24,8 @@ const decisionSchema = z.object({
   answer: z.string(),
   decidedBy: z.string(),
   decidedAt: z.number(),
+  recordId: z.number().int().positive().optional(),
+  recordUrl: z.string().url().optional(),
 });
 
 /**
@@ -35,7 +37,7 @@ export const dossieStateSchema: z.ZodType<DossieState> = z.object({
   sessionId: z.string(),
   story: storySchema,
   decisions: z.array(decisionSchema),
-  pending: z.array(z.string()),
+  pending: z.array(z.object({ id: z.string(), question: z.string() })),
   investigation: z.object({ impact: z.string(), unverified: z.string() }),
   spec: z.object({
     generated: z.string(),

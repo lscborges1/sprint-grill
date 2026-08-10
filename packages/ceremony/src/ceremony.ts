@@ -281,6 +281,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         storyTitle: story.title,
         storyUrl: story.url,
         investigationMarkdown,
+        timeZone: currentTimeZone(),
       });
 
       sessionLogger(session.id)?.info({ storyId: story.id }, "cerimônia iniciada");
@@ -382,6 +383,14 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       return sessionPalco(sessionId);
     },
   };
+}
+
+function currentTimeZone(): string {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!timeZone) {
+    throw new CeremonyError("não foi possível determinar o fuso horário da sessão.");
+  }
+  return timeZone;
 }
 
 /** Pergunta que já provou ter recomendação — a única que o Palco aceita exibir. */

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { z } from "zod";
+import { reportClientError } from "../lib/client-error";
+import type { ClientErrorContext } from "../lib/client-error";
 
 /**
  * O estado da cerimônia chega empurrado por SSE — entre uma pergunta e a próxima
@@ -14,10 +16,26 @@ import type { z } from "zod";
  * O que chega pela rede é dado externo do ponto de vista do browser, e entra
  * por schema — nunca por `as`.
  */
+export type LiveStateParseResult<T> =
+  | { readonly ok: true; readonly state: T }
+  | { readonly ok: false; readonly error: unknown };
+
+export function parseLiveState<T>(
+  data: string,
+  schema: z.ZodType<T>,
+): LiveStateParseResult<T> {
+  try {
+    return { ok: true, state: schema.parse(JSON.parse(data) as unknown) };
+  } catch (error: unknown) {
+    return { ok: false, error };
+  }
+}
+
 export function useLiveState<T>(
   path: string,
   schema: z.ZodType<T>,
   initial: T,
+  context: Pick<ClientErrorContext, "schemaName" | "sessionId">,
 ): { state: T; connected: boolean } {
   const [state, setState] = useState(initial);
   const [connected, setConnected] = useState(true);
@@ -28,12 +46,24 @@ export function useLiveState<T>(
     source.onopen = () => setConnected(true);
     source.onerror = () => setConnected(false);
     source.onmessage = (event: MessageEvent<string>) => {
-      setState(schema.parse(JSON.parse(event.data)));
+      const parsed = parseLiveState(event.data, schema);
+      if (!parsed.ok) {
+        reportClientError({
+          kind: "invalid-sse-payload",
+          path,
+          schemaName: context.schemaName,
+          sessionId: context.sessionId,
+        });
+        setConnected(false);
+        return;
+      }
+
+      setState(parsed.state);
       setConnected(true);
     };
 
     return () => source.close();
-  }, [path, schema]);
+  }, [context.schemaName, context.sessionId, path, schema]);
 
   return { state, connected };
 }

@@ -11,6 +11,7 @@ import type {
   CeremonySession,
   CeremonyStore,
   DossieState,
+  DiscardSpecDraftInput,
   PalcoState,
   SaveSpecDraftInput,
 } from "@sprint-griller/ceremony";
@@ -35,10 +36,30 @@ export const decisionSchema = z.object({
   decidedBy: z.string().trim().min(1, "registre quem decidiu"),
 });
 
+const expectedSavedAtSchema = z.preprocess(
+  (value) => (value === "" || value === null ? null : value),
+  z.coerce.number().int().positive().nullable(),
+);
+
+const overwriteSchema = z.preprocess(
+  (value) => value === true || value === "true",
+  z.boolean(),
+);
+
 export const specDraftSchema = z.object({
   sessionId: sessionIdSchema,
-  markdown: z.string().trim().min(1, "o documento não pode ficar vazio"),
+  // Valida vazio sem `.trim()` no valor: whitespace à esquerda pode ser Markdown.
+  markdown: z.string().refine((value) => value.trim() !== "", {
+    message: "o documento não pode ficar vazio",
+  }),
   base: z.string(),
+  expectedSavedAt: expectedSavedAtSchema,
+  overwrite: overwriteSchema,
+});
+
+export const discardSpecDraftSchema = z.object({
+  sessionId: sessionIdSchema,
+  expectedSavedAt: expectedSavedAtSchema,
 });
 
 /** Assinante de uma sessão: o que ele projeta é decisão dele, não do registro. */
@@ -171,9 +192,9 @@ export function saveSpecDraft(input: SaveSpecDraftInput): void {
   publish(input.sessionId);
 }
 
-export function discardSpecDraft(sessionId: string): void {
-  getStore().discardSpecDraft(sessionId);
-  publish(sessionId);
+export function discardSpecDraft(input: DiscardSpecDraftInput): void {
+  getStore().discardSpecDraft(input);
+  publish(input.sessionId);
 }
 
 export function findOpenCeremony(storyId: number): CeremonySession | undefined {

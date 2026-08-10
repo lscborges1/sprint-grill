@@ -11,6 +11,7 @@ export interface CeremonySession {
   readonly storyTitle: string;
   readonly storyUrl: string;
   readonly investigationMarkdown: string;
+  readonly timeZone: string;
   readonly createdAt: number;
   readonly status: SessionStatus;
   readonly failureMessage: string | null;
@@ -51,6 +52,15 @@ export interface CeremonyDecision {
   readonly answer: string;
   readonly decidedBy: string;
   readonly decidedAt: number;
+  /** Referência opcional ao Registro de decisão que o despejo gravou no ADO. */
+  readonly recordId?: number | undefined;
+  readonly recordUrl?: string | undefined;
+}
+
+/** Pendência do Dossiê: o texto é para leitura, o id é a identidade da linha. */
+export interface DossiePendingQuestion {
+  readonly id: string;
+  readonly question: string;
 }
 
 /**
@@ -177,6 +187,8 @@ export interface PalcoState {
    * uma consulta nova no meio da busca faria a anterior sumir da tela.
    */
   readonly consultation: CeremonyConsultation | null;
+  /** Trabalho que ainda precisa de uma decisão da sala. */
+  readonly pending: readonly DossiePendingQuestion[];
   /** Se existe um turno de agente vivo neste processo. `false` depois de um crash. */
   readonly live: boolean;
   readonly current: PalcoPhase;
@@ -191,7 +203,7 @@ export interface DossieDocument {
   readonly story: StoryRef;
   readonly decisions: readonly CeremonyDecision[];
   /** Perguntas que a sala ainda não respondeu — as pendências do documento. */
-  readonly pending: readonly string[];
+  readonly pending: readonly DossiePendingQuestion[];
   /** Trechos da Investigação que a Spec carrega: impacto no código e hipóteses. */
   readonly investigation: {
     readonly impact: string;

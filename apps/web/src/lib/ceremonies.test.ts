@@ -227,6 +227,7 @@ describe("getDossie", () => {
       sessionId: session.id,
       markdown: `${generated}\n\nFora de escopo: relatório mensal.`,
       base: generated,
+      expectedSavedAt: null,
     });
 
     expect(getDossie(session.id)?.spec.draft?.markdown).toContain(
@@ -236,9 +237,18 @@ describe("getDossie", () => {
 
   it("should go back to the generated document when the edit is discarded", async () => {
     const session = await startCeremony(nextStoryId);
-    saveSpecDraft({ sessionId: session.id, markdown: "assinado", base: "gerado" });
+    const draft = getDossie(session.id)?.spec.draft;
+    saveSpecDraft({
+      sessionId: session.id,
+      markdown: "assinado",
+      base: "gerado",
+      expectedSavedAt: draft?.savedAt ?? null,
+    });
 
-    discardSpecDraft(session.id);
+    discardSpecDraft({
+      sessionId: session.id,
+      expectedSavedAt: getDossie(session.id)?.spec.draft?.savedAt ?? null,
+    });
 
     expect(getDossie(session.id)?.spec.draft).toBeNull();
   });

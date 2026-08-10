@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Logger } from "@sprint-griller/core";
 import Database from "better-sqlite3";
-import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { CeremonyError } from "./ceremony-error";
@@ -39,6 +39,8 @@ export interface CreateSessionInput {
   readonly storyTitle: string;
   readonly storyUrl: string;
   readonly investigationMarkdown: string;
+  /** IANA timezone captured when the ceremony starts. */
+  readonly timeZone: string;
 }
 
 export interface RecordDecisionInput {
@@ -46,6 +48,9 @@ export interface RecordDecisionInput {
   readonly questionId: string;
   readonly answer: string;
   readonly decidedBy: string;
+  /** Referência preenchida quando o Registro de decisão é despejado no ADO. */
+  readonly recordId?: number | null;
+  readonly recordUrl?: string | null;
 }
 
 export interface SaveSpecDraftInput {
@@ -53,13 +58,16 @@ export interface SaveSpecDraftInput {
   readonly markdown: string;
   /** O Markdown gerado que estava na tela quando o Operador editou. */
   readonly base: string;
+  /** `null` para a primeira gravação; depois, a revisão exibida pela tela. */
+  readonly expectedSavedAt: number | null;
+  /** Só é true no envio explícito de confirmação após um conflito. */
+  readonly overwrite?: boolean;
 }
 
-export interface SaveSpecDraftInput {
+export interface DiscardSpecDraftInput {
   readonly sessionId: string;
-  readonly markdown: string;
-  /** O Markdown gerado que estava na tela quando o Operador editou. */
-  readonly base: string;
+  /** `null` só é válido quando ainda não existe rascunho para descartar. */
+  readonly expectedSavedAt: number | null;
 }
 
 export type FinishSessionOutcome =
@@ -98,10 +106,7 @@ export interface CeremonyStore {
   listTranscript(sessionId: string): readonly TranscriptEntry[];
   saveSpecDraft(input: SaveSpecDraftInput): SpecDraft;
   getSpecDraft(sessionId: string): SpecDraft | undefined;
-  discardSpecDraft(sessionId: string): void;
-  saveSpecDraft(input: SaveSpecDraftInput): SpecDraft;
-  getSpecDraft(sessionId: string): SpecDraft | undefined;
-  discardSpecDraft(sessionId: string): void;
+  discardSpecDraft(input: DiscardSpecDraftInput): void;
   close(): void;
 }
 
@@ -278,17 +283,17 @@ export function openCeremonyStore(
       const rows = db
         .select()
         .from(questions)
-        .where(and(eq(questions.sessionId, sessionId), ne(questions.status, "respondida")))
+        .where(eq(questions.sessionId, sessionId))
         .orderBy(asc(questions.seq))
         .all();
 
       /**
-       * Uma pergunta abandonada por crash costuma voltar igual depois da
-       * retomada. Sem esta chave, ela apareceria duas vezes nas pendências da
-       * Spec — e pendência repetida é ruído no documento que o PO vai ler.
+       * Uma pergunta abandonada por crash costuma voltar com o mesmo id depois
+       * da retomada. O id é a identidade explícita da pergunta dentro da rodada;
+       * o texto não é, porque duas decisões podem ser formuladas igual.
        */
-      const unica = new Map(rows.map((row) => [row.question, row]));
-      return [...unica.values()].map(toQuestion);
+      const unica = new Map(rows.map((row) => [row.questionId, row]));
+      return [...unica.values()].filter((row) => row.status !== "respondida").map(toQuestion);
     },
 
     abandonPendingQuestions(sessionId) {
@@ -298,7 +303,7 @@ export function openCeremonyStore(
         .run();
     },
 
-    recordDecision({ sessionId, questionId, answer, decidedBy }) {
+    recordDecision({ sessionId, questionId, answer, decidedBy, recordId, recordUrl }) {
       const who = decidedBy.trim();
       if (who === "") throw new CeremonyError("registre quem decidiu antes de gravar a decisão.");
 
@@ -330,12 +335,25 @@ export function openCeremonyStore(
         answer: chosen,
         decidedBy: who,
         decidedAt: Date.now(),
+        ...(recordId == null ? {} : { recordId }),
+        ...(recordUrl == null ? {} : { recordUrl }),
       };
 
       db.transaction((tx) => {
         tx.update(questions).set({ status: "respondida" }).where(eq(questions.seq, pending.seq)).run();
         tx.insert(decisions)
-          .values({ sessionId, ...decision })
+          .values({
+            sessionId,
+            questionSeq: pending.seq,
+            questionId: decision.questionId,
+            question: decision.question,
+            recommendation: decision.recommendation,
+            answer: decision.answer,
+            decidedBy: decision.decidedBy,
+            decidedAt: decision.decidedAt,
+            recordId: recordId ?? null,
+            recordUrl: recordUrl ?? null,
+          })
           .run();
         tx.insert(events)
           .values({
@@ -511,21 +529,80 @@ export function openCeremonyStore(
         }));
     },
 
-    saveSpecDraft({ sessionId, markdown, base }) {
+    saveSpecDraft({ sessionId, markdown, base, expectedSavedAt, overwrite = false }) {
       requireSession(sessionId);
 
-      const text = markdown.trim();
-      if (text === "") {
+      // Só valida vazio: `.trim()` no conteúdo apagaria Markdown legítimo
+      // (ex.: bloco de código indentado na primeira linha).
+      if (markdown.trim() === "") {
         throw new CeremonyError("a Spec da US não pode ficar vazia — regenere o documento.");
       }
 
-      const draft: SpecDraft = { markdown: text, base, savedAt: Date.now() };
-      db.insert(specDrafts)
-        .values({ sessionId, ...draft })
-        .onConflictDoUpdate({ target: specDrafts.sessionId, set: draft })
-        .run();
+      /**
+       * A revisão nasce da linha gravada, nunca da que a tela esperava: num
+       * overwrite a esperada é justamente a velha, e repeti-la faria a aba que
+       * exibe a revisão sobrescrita não ver conflito nenhum no próximo save.
+       *
+       * O `SELECT` no `INSERT` impede criar uma linha quando a tela já espera
+       * uma revisão, e o `WHERE` do UPSERT impede atualizar outra revisão.
+       * Assim a decisão inteira é uma operação CAS do SQLite; o `BEGIN
+       * IMMEDIATE` em volta fecha a janela entre ler a revisão e escrever.
+       */
+      const save = sqlite.transaction((): SpecDraft => {
+        const current = db
+          .select({ savedAt: specDrafts.savedAt })
+          .from(specDrafts)
+          .where(eq(specDrafts.sessionId, sessionId))
+          .get();
+        const savedAt = Math.max(Date.now(), (current?.savedAt ?? 0) + 1);
 
-      return draft;
+        const result = overwrite
+          ? sqlite
+              .prepare(
+                `INSERT INTO spec_drafts (session_id, markdown, base, saved_at)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(session_id) DO UPDATE SET
+                   markdown = excluded.markdown,
+                   base = excluded.base,
+                   saved_at = excluded.saved_at`,
+              )
+              .run(sessionId, markdown, base, savedAt)
+          : sqlite
+              .prepare(
+                `INSERT INTO spec_drafts (session_id, markdown, base, saved_at)
+                 SELECT ?, ?, ?, ?
+                 WHERE ? IS NULL
+                    OR EXISTS (
+                      SELECT 1 FROM spec_drafts
+                      WHERE session_id = ? AND saved_at = ?
+                    )
+                 ON CONFLICT(session_id) DO UPDATE SET
+                   markdown = excluded.markdown,
+                   base = excluded.base,
+                   saved_at = excluded.saved_at
+                   WHERE spec_drafts.saved_at = ?`,
+              )
+              .run(
+                sessionId,
+                markdown,
+                base,
+                savedAt,
+                expectedSavedAt,
+                sessionId,
+                expectedSavedAt,
+                expectedSavedAt,
+              );
+
+        if (result.changes !== 1) {
+          throw new CeremonyError(
+            "o rascunho está desatualizado — recarregue a edição antes de salvar.",
+          );
+        }
+
+        return { markdown, base, savedAt };
+      });
+
+      return save.immediate();
     },
 
     getSpecDraft(sessionId) {
@@ -537,8 +614,39 @@ export function openCeremonyStore(
       return row && { markdown: row.markdown, base: row.base, savedAt: row.savedAt };
     },
 
-    discardSpecDraft(sessionId) {
-      db.delete(specDrafts).where(eq(specDrafts.sessionId, sessionId)).run();
+    discardSpecDraft({ sessionId, expectedSavedAt }) {
+      const discard = sqlite.transaction(() => {
+        const current = db
+          .select({ savedAt: specDrafts.savedAt })
+          .from(specDrafts)
+          .where(eq(specDrafts.sessionId, sessionId))
+          .get();
+
+        if (!current) {
+          if (expectedSavedAt !== null) {
+            throw new CeremonyError(
+              "o rascunho está desatualizado — recarregue a edição antes de descartar.",
+            );
+          }
+          return;
+        }
+        if (expectedSavedAt === null || current.savedAt !== expectedSavedAt) {
+          throw new CeremonyError(
+            "o rascunho está desatualizado — recarregue a edição antes de descartar.",
+          );
+        }
+
+        const result = db
+          .delete(specDrafts)
+          .where(and(eq(specDrafts.sessionId, sessionId), eq(specDrafts.savedAt, expectedSavedAt)))
+          .run();
+        if (result.changes !== 1) {
+          throw new CeremonyError(
+            "o rascunho está desatualizado — recarregue a edição antes de descartar.",
+          );
+        }
+      });
+      discard.immediate();
     },
 
     close() {
@@ -550,24 +658,28 @@ export function openCeremonyStore(
 }
 
 /**
- * `CREATE TABLE IF NOT EXISTS` não corrige tabela de formato antigo: sem esta
- * checagem, um banco de uma versão anterior abriria calado e só quebraria numa
- * consulta, no meio da cerimônia. O arquivo é estado local descartável, então a
- * saída honesta é mandar apagá-lo.
+ * `CREATE TABLE IF NOT EXISTS` não corrige tabela de formato antigo: um banco
+ * de qualquer versão anterior abriria calado e só quebraria numa consulta, no
+ * meio da cerimônia. Como o banco é estado local descartável (ADR 0003), a
+ * recusa na abertura, mandando apagar o arquivo, sai mais barata que migrar.
  */
 function applySchema(sqlite: Database.Database, dbPath: string, logger?: Logger): void {
   const version = Number(sqlite.pragma("user_version", { simple: true }));
 
-  // 0 é banco novo (ou de antes desta checagem, com o mesmo formato).
-  if (version !== 0 && version !== SCHEMA_VERSION) {
+  // Banco novo abre em 0 e sem tabela nenhuma — só nesse caso o 0 não é o
+  // `user_version` que uma versão anterior do Sprint Griller deixou para trás.
+  const isNew =
+    version === 0 && sqlite.prepare("SELECT 1 FROM sqlite_master LIMIT 1").get() === undefined;
+
+  if (!isNew && version !== SCHEMA_VERSION) {
     logger?.error(
       { dbPath, version, expectedVersion: SCHEMA_VERSION },
       "banco de cerimônia em versão incompatível",
     );
     throw new CeremonyError(
-      `O banco de cerimônia está na versão ${version}, e esta versão do ` +
-        `Sprint Griller fala a ${SCHEMA_VERSION}. Apague o arquivo (ele guarda só ` +
-        `estado de cerimônia) ou aponte SPRINT_GRILLER_DB para outro.`,
+      `O banco de cerimônia está ${version === 0 ? "numa versão anterior" : `na versão ${version}`}` +
+        `, e esta versão do Sprint Griller fala a ${SCHEMA_VERSION}. Apague o arquivo ` +
+        `(ele guarda só estado de cerimônia) ou aponte SPRINT_GRILLER_DB para outro.`,
     );
   }
 
@@ -665,5 +777,7 @@ function toDecision(row: DecisionRow): CeremonyDecision {
     answer: row.answer,
     decidedBy: row.decidedBy,
     decidedAt: row.decidedAt,
+    ...(row.recordId == null ? {} : { recordId: row.recordId }),
+    ...(row.recordUrl == null ? {} : { recordUrl: row.recordUrl }),
   };
 }

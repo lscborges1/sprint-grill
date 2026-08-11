@@ -186,6 +186,7 @@ describe("start", () => {
     expect(store.getSession(SESSION_ID)).toMatchObject({
       storyId: 4242,
       storyTitle: "Exportar relatório de comissões",
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       status: "ativa",
     });
     await vi.waitFor(() => expect(prompts[0]).toContain("Sem regra."));
@@ -338,6 +339,7 @@ describe("resume", () => {
       storyTitle: story.title,
       storyUrl: story.url,
       investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
     });
     const fake = fakeRuntime([[{ type: "complete" }]]);
     const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
@@ -369,6 +371,7 @@ describe("resume", () => {
       storyTitle: story.title,
       storyUrl: story.url,
       investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
     });
     store.askQuestions(SESSION_ID, [
       {
@@ -404,6 +407,7 @@ describe("resume", () => {
       storyTitle: story.title,
       storyUrl: story.url,
       investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
     });
     store.askQuestions(SESSION_ID, [
       {
@@ -433,6 +437,7 @@ describe("resume", () => {
       storyTitle: story.title,
       storyUrl: story.url,
       investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
     });
     store.askQuestions(SESSION_ID, [
       {
@@ -503,6 +508,7 @@ describe("consult", () => {
       storyTitle: story.title,
       storyUrl: story.url,
       investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
     });
     previousStore.openConsultation(SESSION_ID, "Quem chama o createOrder?");
     previousStore.close();
@@ -759,7 +765,18 @@ describe("palco", () => {
     );
   });
 
-  it("should expose decided and pending questions for the stage progress", async () => {
+  it("should expose unanswered questions as pending work for the room", async () => {
+    const { ceremony } = ceremonyWith([[{ type: "ask", questions: [agentQuestion()] }]]);
+    await start(ceremony);
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.pending).toEqual([
+        { id: "q1", question: "A comissão arredonda para cima?" },
+      ]),
+    );
+  });
+
+  it("should count the decisions and keep the last one for the stage", async () => {
     const { ceremony } = ceremonyWith([
       [
         { type: "ask", questions: [agentQuestion({ id: "q1" })] },

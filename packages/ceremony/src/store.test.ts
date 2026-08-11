@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SCHEMA_VERSION } from "./schema";
 import { openCeremonyStore } from "./store";
 import type { CeremonyStore } from "./store";
@@ -11,6 +11,7 @@ import type { CeremonyQuestion } from "./types";
 const opened: CeremonyStore[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   while (opened.length > 0) opened.pop()?.close();
 });
 
@@ -31,6 +32,7 @@ function newSession(store: CeremonyStore, id = "thread-1") {
     storyTitle: "Exportar relatório de comissões",
     storyUrl: "https://dev.azure.com/org/proj/_workitems/edit/4242",
     investigationMarkdown: "## Furos da US\n\n- Sem regra de arredondamento.",
+    timeZone: "UTC",
   });
 }
 
@@ -70,6 +72,31 @@ describe("openCeremonyStore", () => {
     expect(reopened.getSession("thread-1")?.storyTitle).toBe("Exportar relatório de comissões");
     expect(reopened.countDecisions("thread-1")).toBe(1);
     expect(reopened.currentQuestion("thread-1")?.id).toBe("q2");
+  });
+
+  it.each([0, 3])("should refuse a database written by the previous schema %s", (version) => {
+    const file = dbPath();
+    const legacy = new Database(file);
+    legacy.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        story_id INTEGER NOT NULL,
+        story_title TEXT NOT NULL,
+        story_url TEXT NOT NULL,
+        investigation_markdown TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        failure_message TEXT
+      );
+      INSERT INTO sessions
+        (id, story_id, story_title, story_url, investigation_markdown, created_at, status)
+      VALUES
+        ('legacy', 4242, 'Histórico', 'https://example.test/4242', '## Furos', 1, 'ativa');
+      PRAGMA user_version = ${version};
+    `);
+    legacy.close();
+
+    expect(() => openCeremonyStore(file)).toThrow(/Apague o arquivo/);
   });
 
   it("should refuse a database written by another schema version instead of failing mid-ceremony", () => {
@@ -161,6 +188,30 @@ describe("recordDecision", () => {
     expect(store.lastDecision("thread-1")).toEqual(decision);
   });
 
+  it("should persist the Azure DevOps record reference with the decision", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+
+    const decision = store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+      recordId: 99,
+      recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/99",
+    });
+
+    expect(decision).toMatchObject({
+      recordId: 99,
+      recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/99",
+    });
+    expect(store.listDecisions("thread-1")[0]).toMatchObject({
+      recordId: 99,
+      recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/99",
+    });
+  });
+
   it("should refuse a decision with no one behind it", () => {
     const store = open(dbPath());
     newSession(store);
@@ -235,6 +286,324 @@ describe("abandonPendingQuestions", () => {
 
     expect(store.currentQuestion("thread-1")).toBeUndefined();
     expect(store.countDecisions("thread-1")).toBe(0);
+  });
+});
+
+describe("unansweredQuestions", () => {
+  it("should list what the room still owes a decision on", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [
+      question({ id: "q1" }),
+      question({ id: "q2", question: "Entra nesta sprint?" }),
+    ]);
+
+    store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+
+    expect(store.unansweredQuestions("thread-1").map((asked) => asked.question)).toEqual([
+      "Entra nesta sprint?",
+    ]);
+  });
+
+  it("should keep a question abandoned by a crash pending, not answered", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+
+    store.abandonPendingQuestions("thread-1");
+
+    expect(store.unansweredQuestions("thread-1")).toHaveLength(1);
+  });
+
+  it("should count a question asked again after a resume only once", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question({ id: "q1" })]);
+    store.abandonPendingQuestions("thread-1");
+
+    store.askQuestions("thread-1", [question({ id: "q1" })]);
+
+    expect(store.unansweredQuestions("thread-1")).toHaveLength(1);
+  });
+
+  it("should keep distinct questions with the same wording pending", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const wording = "Qual é o comportamento esperado?";
+
+    store.askQuestions("thread-1", [
+      question({ id: "q1", question: wording }),
+      question({ id: "q2", question: wording }),
+    ]);
+
+    expect(store.unansweredQuestions("thread-1").map((asked) => asked.id)).toEqual(["q1", "q2"]);
+  });
+
+  it("should keep a new question pending when an earlier question with that wording was answered", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const wording = "Qual é o comportamento esperado?";
+    store.askQuestions("thread-1", [question({ id: "q1", question: wording })]);
+    store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "O novo comportamento",
+      decidedBy: "PO",
+    });
+
+    store.askQuestions("thread-1", [question({ id: "q1", question: wording })]);
+
+    expect(store.unansweredQuestions("thread-1").map((asked) => asked.id)).toEqual(["q1"]);
+  });
+
+  it("should drop an abandoned original once the resumed retry is answered", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question({ id: "q1" })]);
+    store.abandonPendingQuestions("thread-1");
+
+    store.askQuestions("thread-1", [question({ id: "q1" })]);
+    store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+
+    expect(store.unansweredQuestions("thread-1")).toHaveLength(0);
+  });
+});
+
+describe("saveSpecDraft", () => {
+  it("should hand back the edit the Operator saved after a restart", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+
+    first.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "# Spec da US #4242\n\nFora de escopo: relatório mensal.",
+      base: "# Spec da US #4242",
+      expectedSavedAt: null,
+    });
+    first.close();
+    opened.pop();
+
+    expect(open(file).getSpecDraft("thread-1")).toMatchObject({
+      markdown: "# Spec da US #4242\n\nFora de escopo: relatório mensal.",
+      base: "# Spec da US #4242",
+    });
+  });
+
+  it("should keep a single edit per ceremony, the last one", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    const first = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "rascunho",
+      base: "gerado",
+      expectedSavedAt: null,
+    });
+    store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "revisado",
+      base: "gerado",
+      expectedSavedAt: first.savedAt,
+    });
+
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe("revisado");
+  });
+
+  it("should assign distinct revisions when saves share the same clock tick", () => {
+    const store = open(dbPath());
+    newSession(store);
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+
+    const first = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "primeiro",
+      base: "gerado",
+      expectedSavedAt: null,
+    });
+    const second = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "segundo",
+      base: "gerado",
+      expectedSavedAt: first.savedAt,
+    });
+
+    expect(second.savedAt).toBeGreaterThan(first.savedAt);
+    expect(store.getSpecDraft("thread-1")?.savedAt).toBe(second.savedAt);
+  });
+
+  it("should reject a save from a stale revision without overwriting the newer edit", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const first = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "primeiro",
+      base: "gerado",
+      expectedSavedAt: null,
+    });
+    store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "segunda aba",
+      base: "gerado",
+      expectedSavedAt: first.savedAt,
+    });
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: "primeira aba atrasada",
+        base: "gerado",
+        expectedSavedAt: first.savedAt,
+      }),
+    ).toThrow(/desatualizado/i);
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe("segunda aba");
+  });
+
+  it("should overwrite a stale revision only when explicitly confirmed", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const first = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "primeiro",
+      base: "gerado",
+      expectedSavedAt: null,
+    });
+    store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "segunda aba",
+      base: "gerado",
+      expectedSavedAt: first.savedAt,
+    });
+
+    store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "primeira aba confirmada",
+      base: "gerado",
+      expectedSavedAt: first.savedAt,
+      overwrite: true,
+    });
+
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe("primeira aba confirmada");
+  });
+
+  it("should assign a revision above the one it overwrote when both land on the same tick", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const first = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "primeiro",
+      base: "gerado",
+      expectedSavedAt: null,
+    });
+    const other = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "segunda aba",
+      base: "gerado",
+      expectedSavedAt: first.savedAt,
+    });
+    vi.spyOn(Date, "now").mockReturnValue(other.savedAt);
+
+    const confirmed = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "primeira aba confirmada",
+      base: "gerado",
+      expectedSavedAt: first.savedAt,
+      overwrite: true,
+    });
+
+    // Repetir a revisão sobrescrita esconderia o conflito da aba que a exibe.
+    expect(confirmed.savedAt).toBeGreaterThan(other.savedAt);
+    expect(store.getSpecDraft("thread-1")?.savedAt).toBe(confirmed.savedAt);
+  });
+
+  it("should refuse an empty Spec instead of letting the despejo write nothing", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: "   \n ",
+        base: "gerado",
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/vazia/i);
+    expect(store.getSpecDraft("thread-1")).toBeUndefined();
+  });
+
+  it("should keep leading Markdown whitespace the Operator typed", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const markdown = "    code\n\n# Spec";
+
+    store.saveSpecDraft({ sessionId: "thread-1", markdown, base: "gerado", expectedSavedAt: null });
+
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe(markdown);
+  });
+
+  it("should refuse an edit for a ceremony that does not exist", () => {
+    const store = open(dbPath());
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "fantasma",
+        markdown: "rascunho",
+        base: "gerado",
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/não existe/i);
+  });
+});
+
+describe("discardSpecDraft", () => {
+  it("should drop the edit so the document goes back to what was generated", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const draft = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "rascunho",
+      base: "gerado",
+      expectedSavedAt: null,
+    });
+
+    store.discardSpecDraft({ sessionId: "thread-1", expectedSavedAt: draft.savedAt });
+
+    expect(store.getSpecDraft("thread-1")).toBeUndefined();
+    expect(() =>
+      store.discardSpecDraft({ sessionId: "thread-1", expectedSavedAt: draft.savedAt }),
+    ).toThrow(/desatualizado/i);
+  });
+
+  it("should reject a discard from a stale revision", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const first = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "primeiro",
+      base: "gerado",
+      expectedSavedAt: null,
+    });
+    const second = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: "segunda aba",
+      base: "gerado",
+      expectedSavedAt: first.savedAt,
+    });
+
+    expect(() =>
+      store.discardSpecDraft({ sessionId: "thread-1", expectedSavedAt: first.savedAt }),
+    ).toThrow(/desatualizado/i);
+    expect(store.getSpecDraft("thread-1")?.savedAt).toBe(second.savedAt);
   });
 });
 

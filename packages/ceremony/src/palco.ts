@@ -27,6 +27,10 @@ export function readPalco(
     pendingQuestions,
     lastDecision: decisions.at(-1) ?? null,
     consultation: store.lastConsultation(sessionId) ?? null,
+    pending: store.unansweredQuestions(sessionId).map((asked) => ({
+      id: asked.id,
+      question: asked.question,
+    })),
     live,
     current: phaseOf(session, live, pendingQuestions[0]),
   };

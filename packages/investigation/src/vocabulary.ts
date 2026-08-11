@@ -28,6 +28,15 @@ export const REPORT_SECTIONS = {
   },
 } as const;
 
+export const REPORT_SECTION_NAMES = ["gaps", "impacts", "externalRepos", "unverified"] as const;
+
+export type ReportSectionName = (typeof REPORT_SECTION_NAMES)[number];
+
+/** Delimitador invisível que separa estrutura renderizada de Markdown do agente. */
+export function reportSectionMarker(section: ReportSectionName): string {
+  return `<!-- sprint-griller:report-section:${section} -->`;
+}
+
 export const REJECTED_HEADING = "Relatório reprovado na checagem de citações";
 
 export const REJECTED_BLURB =

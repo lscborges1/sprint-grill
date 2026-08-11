@@ -11,7 +11,8 @@ import type {
   PalcoState,
 } from "@sprint-griller/ceremony";
 import Link from "next/link";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState } from "react";
+import { useLiveState } from "@/components/live-state";
 import { askFactAction, resumeCeremonyAction, submitDecisionAction } from "../actions";
 
 /**
@@ -24,7 +25,12 @@ import { askFactAction, resumeCeremonyAction, submitDecisionAction } from "../ac
  * já foi decidido, o que falta) e resolve dúvida de fato sem sair da tela.
  */
 export function Palco({ initial }: { initial: PalcoState }) {
-  const { state, connected } = useLivePalco(initial);
+  const { state, connected } = useLiveState(
+    `/api/cerimonia/${initial.sessionId}/stream`,
+    palcoStateSchema,
+    initial,
+    { schemaName: "palcoStateSchema", sessionId: initial.sessionId },
+  );
 
   return (
     <div className="mx-auto grid min-h-dvh w-full max-w-[1440px] lg:grid-cols-[minmax(16rem,19rem)_minmax(0,1fr)]">
@@ -41,6 +47,13 @@ export function Palco({ initial }: { initial: PalcoState }) {
               className="text-sm text-muted underline underline-offset-4"
             >
               ver a Investigação
+            </Link>
+            <Link
+              href={`/cerimonia/${state.sessionId}/dossie`}
+              target="_blank"
+              className="text-sm text-muted underline underline-offset-4"
+            >
+              abrir o Dossiê
             </Link>
           </div>
           <h1 className="font-serif text-2xl tracking-tight">{state.story.title}</h1>
@@ -356,7 +369,6 @@ function formatCitation(citation: CeremonyCitation): string {
   const file = `${citation.repo} · ${citation.path}`;
   return citation.symbol === undefined ? file : `${file} → ${citation.symbol}`;
 }
-
 function Stage({ state }: { state: PalcoState }) {
   switch (state.current.phase) {
     case "perguntando":
@@ -568,37 +580,6 @@ function Waiting({
       {action}
     </section>
   );
-}
-
-/**
- * O estado chega empurrado por SSE — entre uma pergunta e a próxima a sala não
- * fica olhando tela parada nem esperando polling. O estado inicial veio do
- * servidor, então a tela já nasce certa mesmo antes da conexão abrir.
- *
- * `connected` existe porque tela projetada mentindo é pior que tela em branco:
- * sem conexão, o que está ali pode já ter mudado, e a sala precisa saber.
- */
-function useLivePalco(initial: PalcoState): {
-  state: PalcoState;
-  connected: boolean;
-} {
-  const [state, setState] = useState(initial);
-  const [connected, setConnected] = useState(true);
-
-  useEffect(() => {
-    const source = new EventSource(`/api/cerimonia/${initial.sessionId}/stream`);
-
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
-    source.onmessage = (event: MessageEvent<string>) => {
-      setState(palcoStateSchema.parse(JSON.parse(event.data)));
-      setConnected(true);
-    };
-
-    return () => source.close();
-  }, [initial.sessionId]);
-
-  return { state, connected };
 }
 
 function formatWhen(at: number): string {

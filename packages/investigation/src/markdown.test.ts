@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GroundingResult } from "./grounding";
 import { renderReportMarkdown } from "./markdown";
 import type { InvestigationReport } from "./report";
+import { REPORT_SECTION_NAMES, reportSectionMarker } from "./vocabulary";
 
 const APPROVED: GroundingResult = { status: "aprovado" };
 
@@ -110,6 +111,14 @@ describe("renderReportMarkdown", () => {
       "## Não verificado",
     ]) {
       expect(markdown).toContain(heading);
+    }
+  });
+
+  it("should mark every rendered section independently of its Markdown heading", () => {
+    const markdown = renderReportMarkdown(STORY, EMPTY, APPROVED);
+
+    for (const section of REPORT_SECTION_NAMES) {
+      expect(markdown).toContain(reportSectionMarker(section));
     }
   });
 

@@ -1,6 +1,21 @@
 import { createAgentRuntime } from "@sprint-griller/agent-runtime";
-import { CeremonyError, createCeremony, openCeremonyStore, readPalco } from "@sprint-griller/ceremony";
-import type { Ceremony, CeremonySession, CeremonyStore, PalcoState } from "@sprint-griller/ceremony";
+import {
+  CeremonyError,
+  createCeremony,
+  openCeremonyStore,
+  readDossie,
+  readPalco,
+} from "@sprint-griller/ceremony";
+import type {
+  Ceremony,
+  CeremonySession,
+  CeremonyStore,
+  DossieState,
+  DiscardSpecDraftInput,
+  PalcoState,
+  SaveSpecDraftInput,
+  SpecDraft,
+} from "@sprint-griller/ceremony";
 import { defaultCeremonyDbPath } from "@sprint-griller/core";
 import { z } from "zod";
 import { getInvestigation } from "./investigations";
@@ -22,7 +37,34 @@ export const decisionSchema = z.object({
   decidedBy: z.string().trim().min(1, "registre quem decidiu"),
 });
 
-type PalcoListener = (state: PalcoState) => void;
+const expectedSavedAtSchema = z.preprocess(
+  (value) => (value === "" || value === null ? null : value),
+  z.coerce.number().int().positive().nullable(),
+);
+
+const overwriteSchema = z.preprocess(
+  (value) => value === true || value === "true",
+  z.boolean(),
+);
+
+export const specDraftSchema = z.object({
+  sessionId: sessionIdSchema,
+  // Valida vazio sem `.trim()` no valor: whitespace à esquerda pode ser Markdown.
+  markdown: z.string().refine((value) => value.trim() !== "", {
+    message: "o documento não pode ficar vazio",
+  }),
+  base: z.string(),
+  expectedSavedAt: expectedSavedAtSchema,
+  overwrite: overwriteSchema,
+});
+
+export const discardSpecDraftSchema = z.object({
+  sessionId: sessionIdSchema,
+  expectedSavedAt: expectedSavedAtSchema,
+});
+
+/** Assinante de uma sessão: o que ele projeta é decisão dele, não do registro. */
+type SessionListener = () => void;
 
 interface CeremonyRegistry {
   store: CeremonyStore | undefined;
@@ -30,7 +72,7 @@ interface CeremonyRegistry {
   starting: Promise<Ceremony> | undefined;
   /** Evita duas sessões ativas da mesma US quando o clique em "Grelhar" corre em paralelo. */
   startingByStory: Map<number, Promise<CeremonySession>>;
-  listeners: Map<string, Set<PalcoListener>>;
+  listeners: Map<string, Set<SessionListener>>;
 }
 
 /**
@@ -136,6 +178,27 @@ export function getPalco(sessionId: string): PalcoState | undefined {
   return registry.ceremony?.palco(sessionId) ?? readPalco(getStore(), sessionId, false);
 }
 
+/**
+ * O Dossiê nunca precisa do agente: ele é leitura do que está gravado, e salvar
+ * uma edição também. Subir o `codex app-server` só para o Operador revisar o
+ * documento seria custo sem contrapartida.
+ */
+export function getDossie(sessionId: string): DossieState | undefined {
+  return readDossie(getStore(), sessionId);
+}
+
+/** Grava a edição do Operador e avisa as telas — o despejo é outro passo. */
+export function saveSpecDraft(input: SaveSpecDraftInput): SpecDraft {
+  const draft = getStore().saveSpecDraft(input);
+  publish(input.sessionId);
+  return draft;
+}
+
+export function discardSpecDraft(input: DiscardSpecDraftInput): void {
+  getStore().discardSpecDraft(input);
+  publish(input.sessionId);
+}
+
 export function findOpenCeremony(storyId: number): CeremonySession | undefined {
   return getStore().findOpenSessionByStory(storyId);
 }
@@ -160,8 +223,29 @@ export async function resumeCeremony(sessionId: string): Promise<void> {
 }
 
 /** Assina o Palco de uma sessão. Devolve o cancelamento — o SSE chama no `cancel`. */
-export function subscribeToPalco(sessionId: string, listener: PalcoListener): () => void {
-  const listeners = registry.listeners.get(sessionId) ?? new Set<PalcoListener>();
+export function subscribeToPalco(
+  sessionId: string,
+  listener: (state: PalcoState) => void,
+): () => void {
+  return subscribe(sessionId, () => {
+    const state = getPalco(sessionId);
+    if (state) listener(state);
+  });
+}
+
+/** Assina o Dossiê da mesma sessão: a aba do Operador anda junto com o Palco. */
+export function subscribeToDossie(
+  sessionId: string,
+  listener: (state: DossieState) => void,
+): () => void {
+  return subscribe(sessionId, () => {
+    const state = getDossie(sessionId);
+    if (state) listener(state);
+  });
+}
+
+function subscribe(sessionId: string, listener: SessionListener): () => void {
+  const listeners = registry.listeners.get(sessionId) ?? new Set<SessionListener>();
   listeners.add(listener);
   registry.listeners.set(sessionId, listeners);
 
@@ -172,17 +256,11 @@ export function subscribeToPalco(sessionId: string, listener: PalcoListener): ()
 }
 
 function publish(sessionId: string): void {
-  const listeners = registry.listeners.get(sessionId);
-  if (!listeners || listeners.size === 0) return;
-
-  const state = getPalco(sessionId);
-  if (!state) return;
-
-  for (const listener of listeners) {
+  for (const listener of registry.listeners.get(sessionId) ?? []) {
     try {
-      listener(state);
+      listener();
     } catch (error) {
-      logger.warn({ err: error, sessionId }, "assinante do Palco quebrou ao receber estado");
+      logger.warn({ err: error, sessionId }, "assinante da cerimônia quebrou ao receber estado");
     }
   }
 }

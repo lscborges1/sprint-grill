@@ -4,9 +4,12 @@ import type { InvestigationStory } from "./story";
 import {
   REJECTED_BLURB,
   REJECTED_HEADING,
+  REPORT_SECTION_NAMES,
   REPORT_SECTIONS,
   formatCitation,
+  reportSectionMarker,
 } from "./vocabulary";
+import type { ReportSectionName } from "./vocabulary";
 
 /**
  * O relatório em Markdown — o artefato que o Operador lê no preview local e que
@@ -33,11 +36,11 @@ export function renderReportMarkdown(
     report.summary,
     `[Abrir a US no Azure DevOps](${story.url})`,
 
-    `## ${REPORT_SECTIONS.gaps.heading}`,
+    reportSection("gaps"),
     list(report.gaps, (gap) => `- **${gap.question}** — ${gap.why}`) ??
       italic(REPORT_SECTIONS.gaps.empty),
 
-    `## ${REPORT_SECTIONS.impacts.heading}`,
+    reportSection("impacts"),
     approved ? REPORT_SECTIONS.impacts.verified : REPORT_SECTIONS.impacts.rejected,
     list(report.impacts, (impact) =>
       [
@@ -46,18 +49,47 @@ export function renderReportMarkdown(
       ].join("\n"),
     ) ?? italic(REPORT_SECTIONS.impacts.empty),
 
-    `## ${REPORT_SECTIONS.externalRepos.heading}`,
+    reportSection("externalRepos"),
     REPORT_SECTIONS.externalRepos.blurb,
     list(report.externalRepos, (repo) => `- **${repo.repo}** — ${repo.suspicion}`) ??
       italic(REPORT_SECTIONS.externalRepos.empty),
 
-    `## ${REPORT_SECTIONS.unverified.heading}`,
+    reportSection("unverified"),
     REPORT_SECTIONS.unverified.blurb,
     list(report.unverified, (claim) => `- ${claim}`) ??
       italic(REPORT_SECTIONS.unverified.empty),
   ];
 
-  return `${blocks.join("\n\n")}\n`;
+  return `${restoreSectionMarkers(escapeSectionMarkers(blocks.join("\n\n")))}\n`;
+}
+
+function reportSection(section: ReportSectionName): string {
+  return `${sectionPlaceholder(section)}\n\n## ${REPORT_SECTIONS[section].heading}`;
+}
+
+/**
+ * Claims, citations and story text arrive from outside this renderer. A literal
+ * section marker in one of them must stay text: otherwise the Dossiê parser
+ * would mistake it for report structure and move content between sections.
+ */
+function escapeSectionMarkers(markdown: string): string {
+  return markdown.replaceAll(
+    "<!-- sprint-griller:report-section:",
+    "&lt;!-- sprint-griller:report-section:",
+  );
+}
+
+/** Structural placeholders are restored only after external Markdown is escaped. */
+function restoreSectionMarkers(markdown: string): string {
+  return REPORT_SECTION_NAMES.reduce(
+    (rendered, section) =>
+      rendered.replaceAll(sectionPlaceholder(section), reportSectionMarker(section)),
+    markdown,
+  );
+}
+
+function sectionPlaceholder(section: ReportSectionName): string {
+  return `\u0000sprint-griller:report-section:${section}\u0000`;
 }
 
 /** Bloco de citação no topo: é a primeira coisa que quem abrir o arquivo lê. */

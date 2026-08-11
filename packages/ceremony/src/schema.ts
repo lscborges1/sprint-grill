@@ -12,6 +12,7 @@ export const sessions = sqliteTable("sessions", {
   storyTitle: text("story_title").notNull(),
   storyUrl: text("story_url").notNull(),
   investigationMarkdown: text("investigation_markdown").notNull(),
+  timeZone: text("time_zone").notNull(),
   createdAt: integer("created_at").notNull(),
   status: text("status", { enum: ["ativa", "encerrada", "falhou"] }).notNull(),
   failureMessage: text("failure_message"),
@@ -49,6 +50,8 @@ export const decisions = sqliteTable(
     answer: text("answer").notNull(),
     decidedBy: text("decided_by").notNull(),
     decidedAt: integer("decided_at").notNull(),
+    recordId: integer("record_id"),
+    recordUrl: text("record_url"),
   },
   (table) => [index("decisions_por_sessao").on(table.sessionId)],
 );
@@ -80,6 +83,19 @@ export const consultations = sqliteTable(
   (table) => [index("consultations_por_sessao").on(table.sessionId)],
 );
 
+/**
+ * A edição do Operador sobre o Markdown do despejo — uma por sessão. Fica aqui,
+ * e não em memória, porque a promessa da aba Dossiê é sobreviver ao F5.
+ */
+export const specDrafts = sqliteTable("spec_drafts", {
+  sessionId: text("session_id").primaryKey(),
+  markdown: text("markdown").notNull(),
+  // O texto gerado de que a edição partiu: é como o Dossiê percebe que a
+  // cerimônia andou desde então, em vez de despejar um documento desatualizado.
+  base: text("base").notNull(),
+  savedAt: integer("saved_at").notNull(),
+});
+
 export const events = sqliteTable(
   "events",
   {
@@ -93,11 +109,11 @@ export const events = sqliteTable(
 );
 
 /**
- * Sobe junto com qualquer mudança nas tabelas acima. Banco de versão diferente
- * é recusado na abertura, com a mensagem mandando apagar o arquivo — descobrir
- * a divergência no meio de uma cerimônia seria o pior momento possível.
+ * Sobe junto com qualquer mudança nas tabelas acima. Qualquer versão anterior é
+ * recusada na abertura, mandando apagar o arquivo — descobrir a divergência no
+ * meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 4;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -114,6 +130,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   story_title TEXT NOT NULL,
   story_url TEXT NOT NULL,
   investigation_markdown TEXT NOT NULL,
+  time_zone TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   status TEXT NOT NULL,
   failure_message TEXT
@@ -143,7 +160,9 @@ CREATE TABLE IF NOT EXISTS decisions (
   recommendation TEXT NOT NULL,
   answer TEXT NOT NULL,
   decided_by TEXT NOT NULL,
-  decided_at INTEGER NOT NULL
+  decided_at INTEGER NOT NULL,
+  record_id INTEGER,
+  record_url TEXT
 );
 CREATE INDEX IF NOT EXISTS decisions_por_sessao ON decisions (session_id);
 
@@ -160,6 +179,13 @@ CREATE TABLE IF NOT EXISTS consultations (
   answered_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS consultations_por_sessao ON consultations (session_id);
+
+CREATE TABLE IF NOT EXISTS spec_drafts (
+  session_id TEXT PRIMARY KEY NOT NULL,
+  markdown TEXT NOT NULL,
+  base TEXT NOT NULL,
+  saved_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,

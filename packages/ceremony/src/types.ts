@@ -11,6 +11,7 @@ export interface CeremonySession {
   readonly storyTitle: string;
   readonly storyUrl: string;
   readonly investigationMarkdown: string;
+  readonly timeZone: string;
   readonly createdAt: number;
   readonly status: SessionStatus;
   readonly failureMessage: string | null;
@@ -51,6 +52,15 @@ export interface CeremonyDecision {
   readonly answer: string;
   readonly decidedBy: string;
   readonly decidedAt: number;
+  /** Referência opcional ao Registro de decisão que o despejo gravou no ADO. */
+  readonly recordId?: number | undefined;
+  readonly recordUrl?: string | undefined;
+}
+
+/** Pendência do Dossiê: o texto é para leitura, o id é a identidade da linha. */
+export interface DossiePendingQuestion {
+  readonly id: string;
+  readonly question: string;
 }
 
 /**
@@ -97,6 +107,18 @@ interface ConsultationAsked {
 export type CeremonyConsultation =
   | (ConsultationAsked & { readonly status: "buscando" })
   | (ConsultationAsked & ConsultationOutcome & { readonly answeredAt: number });
+
+/** Consulta que respondeu, mas cuja alegação não passou pela checagem no disco. */
+export type UnverifiedConsultation = Extract<
+  CeremonyConsultation,
+  { readonly status: "sem-lastro" }
+>;
+
+/** Consulta factual cuja resposta e evidências passaram pela checagem no disco. */
+export type VerifiedConsultation = Extract<
+  CeremonyConsultation,
+  { readonly status: "respondida" }
+>;
 
 /** O transcript. Deltas de mensagem não entram: ruído não é registro. */
 export type TranscriptEvent =
@@ -155,13 +177,16 @@ export type PalcoPhase =
   | { readonly phase: "encerrada" }
   | { readonly phase: "falhou"; readonly message: string };
 
+/** A US como as telas a referenciam: o suficiente para nomear e abrir no ADO. */
+export interface StoryRef {
+  readonly id: number;
+  readonly title: string;
+  readonly url: string;
+}
+
 export interface PalcoState {
   readonly sessionId: string;
-  readonly story: {
-    readonly id: number;
-    readonly title: string;
-    readonly url: string;
-  };
+  readonly story: StoryRef;
   readonly decisionCount: number;
   /** Histórico completo para a árvore de decisões do Palco. */
   readonly decisions: readonly CeremonyDecision[];
@@ -174,7 +199,48 @@ export interface PalcoState {
    * uma consulta nova no meio da busca faria a anterior sumir da tela.
    */
   readonly consultation: CeremonyConsultation | null;
+  /** Trabalho que ainda precisa de uma decisão da sala. */
+  readonly pending: readonly DossiePendingQuestion[];
   /** Se existe um turno de agente vivo neste processo. `false` depois de um crash. */
   readonly live: boolean;
   readonly current: PalcoPhase;
+}
+
+/**
+ * O documento vivo do Dossiê: a Spec da US como ela está agora, montada só do
+ * que a cerimônia gravou. É a fonte do Markdown do despejo — o Operador edita o
+ * texto, nunca o documento.
+ */
+export interface DossieDocument {
+  readonly story: StoryRef;
+  readonly decisions: readonly CeremonyDecision[];
+  /** Perguntas que a sala ainda não respondeu — as pendências do documento. */
+  readonly pending: readonly DossiePendingQuestion[];
+  /** Trechos da Investigação que a Spec carrega: impacto no código e hipóteses. */
+  readonly investigation: {
+    readonly impact: string;
+    readonly unverified: string;
+  };
+}
+
+/**
+ * A edição do Operador sobre o Markdown do despejo. `base` é o texto gerado de
+ * que ela partiu: sem ele, uma decisão registrada depois da edição sumiria do
+ * artefato sem ninguém perceber.
+ */
+export interface SpecDraft {
+  readonly markdown: string;
+  readonly base: string;
+  readonly savedAt: number;
+}
+
+/** A aba do Operador: o documento vivo mais o preview editável do despejo. */
+export interface DossieState extends DossieDocument {
+  readonly sessionId: string;
+  /** Fuso capturado na abertura da cerimônia, usado para exibir decisões. */
+  readonly timeZone: string;
+  readonly spec: {
+    readonly generated: string;
+    readonly draft: SpecDraft | null;
+  };
 }

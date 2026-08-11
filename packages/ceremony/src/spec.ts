@@ -1,4 +1,5 @@
 import { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
+import { CeremonyError } from "./ceremony-error";
 import type { CeremonyDecision, DossieDocument } from "./types";
 
 /**
@@ -93,6 +94,29 @@ export function formatDecisionWhen(at: number, timeZone: string): string {
   const date = when.toLocaleDateString("pt-BR", { dateStyle: "short", timeZone });
   const time = when.toLocaleTimeString("pt-BR", { timeStyle: "short", timeZone });
   return `${date} às ${time}`;
+}
+
+/**
+ * O texto do Operador fica intocado. Este bloco determinístico é o vínculo
+ * obrigatório entre a Spec e os comments que são os Registros no ADO.
+ */
+export function appendDecisionTraceability(
+  markdown: string,
+  decisions: readonly CeremonyDecision[],
+): string {
+  const records = decisions.map((decision) => {
+    if (!decision.recordId || !decision.recordUrl) {
+      throw new CeremonyError(`a decisão ${decision.questionSeq} ainda não tem Registro no Azure DevOps.`);
+    }
+    return `- **${decision.question}** — [Registro #${decision.recordId}](${decision.recordUrl})`;
+  });
+
+  return `${markdown}\n\n## Rastreabilidade de decisões\n\n${records.join("\n")}\n`;
+}
+
+/** Links despejados não tornam a revisão do Operador semanticamente velha. */
+export function stripDecisionRecordLinks(markdown: string): string {
+  return markdown.replace(/^ {2}- Registro no Azure DevOps: .*(?:\n|$)/gm, "");
 }
 
 function italic(text: string): string {

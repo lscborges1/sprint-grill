@@ -5,6 +5,17 @@ export type {
   InvestigationToPublish,
   PublishedInvestigation,
 } from "./investigation/publish-investigation";
+export {
+  publishDecisionRecord,
+  publishStorySpec,
+  renderDecisionRecordMarkdown,
+  replaceManagedSpec,
+} from "./refinement/publish-refinement";
+export type {
+  DecisionRecordToPublish,
+  PublishedDecisionRecord,
+  StorySpecToPublish,
+} from "./refinement/publish-refinement";
 export { fetchCurrentIteration } from "./iteration/current-iteration";
 export type {
   CurrentIteration,

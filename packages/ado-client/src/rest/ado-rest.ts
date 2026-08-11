@@ -23,6 +23,12 @@ interface RequestSpec<TSchema extends z.ZodType> {
   readonly apiVersion?: string;
   readonly query?: Readonly<Record<string, string>>;
   readonly body?: unknown;
+  /** A rota de work items usa PATCH com JSON Patch; POST continua sendo o padrão de escrita. */
+  readonly method?: "GET" | "POST" | "PATCH";
+  /** Conteúdo especial exigido pela rota, por exemplo application/json-patch+json. */
+  readonly contentType?: string;
+  /** Uma falha de concorrência conhecida, segura para o Operador tentar de novo. */
+  readonly conflict?: string;
   /**
    * Mensagem de 404 quando o que sumiu é o recurso pedido, não a config: sem
    * isto o Operador vai conferir org e projeto por causa de um id errado.
@@ -134,15 +140,17 @@ async function send(
 ): Promise<Response> {
   let response: Response;
 
+  const method = spec.method ?? (spec.body === undefined ? "GET" : "POST");
+
   try {
     response = await doFetch(url, {
-      method: spec.body === undefined ? "GET" : "POST",
+      method,
       headers: {
         accept: "application/json",
         authorization,
         ...(spec.body === undefined
           ? {}
-          : { "content-type": "application/json" }),
+          : { "content-type": spec.contentType ?? "application/json" }),
       },
       ...(spec.body === undefined ? {} : { body: JSON.stringify(spec.body) }),
     });
@@ -185,6 +193,10 @@ function failedResponse(
         "O Azure DevOps não encontrou a organização ou o projeto configurado. " +
           "Confira azureDevOps.organization e azureDevOps.project na config da squad.",
     );
+  }
+
+  if (spec.conflict && (response.status === 400 || response.status === 409 || response.status === 412)) {
+    return new AdoError("conflict", spec.conflict);
   }
 
   // 5xx numa escrita: o ADO pode ter gravado antes de devolver o erro. Dizer

@@ -212,6 +212,35 @@ describe("recordDecision", () => {
     });
   });
 
+  it("should attach a decision record once so a later dump can skip it", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    const decision = store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+
+    store.attachDecisionRecord({
+      sessionId: "thread-1",
+      questionSeq: decision.questionSeq,
+      recordId: 99,
+      recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/4211",
+    });
+
+    expect(store.listDecisions("thread-1")[0]).toMatchObject({ recordId: 99 });
+    expect(() =>
+      store.attachDecisionRecord({
+        sessionId: "thread-1",
+        questionSeq: decision.questionSeq,
+        recordId: 100,
+        recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/4211",
+      }),
+    ).toThrow(/já tem Registro/i);
+  });
+
   it("should refuse a decision with no one behind it", () => {
     const store = open(dbPath());
     newSession(store);

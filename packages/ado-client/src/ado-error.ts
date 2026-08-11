@@ -6,6 +6,7 @@
 export type AdoErrorKind =
   | "auth"
   | "not-found"
+  | "conflict"
   | "connection"
   | "unexpected-response"
   | "unexpected";

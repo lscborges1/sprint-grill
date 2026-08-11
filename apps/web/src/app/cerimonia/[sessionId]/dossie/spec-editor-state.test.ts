@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isSpecStale,
   reconcileSpecDraft,
   resolveRegeneration,
   synchronizePristineGeneratedDocument,
@@ -184,5 +185,18 @@ describe("resolveRegeneration", () => {
 
   it("should ignore a result from an earlier regeneration attempt", () => {
     expect(resolveRegeneration(pending, { status: "success", requestId: "discard-0" }, "novo")).toBeNull();
+  });
+});
+
+describe("isSpecStale", () => {
+  it("should keep a saved draft dumpable when only decision-record links arrived", () => {
+    const base = "# Spec\n\n- **Pergunta** — Sim\n";
+    const generatedWithRecord = `${base}  - Registro no Azure DevOps: [#91](https://dev.azure.com/acme/Plataforma/_workitems/edit/1)\n`;
+
+    expect(isSpecStale(generatedWithRecord, base)).toBe(false);
+  });
+
+  it("should flag a later decision as stale", () => {
+    expect(isSpecStale("# Spec\n\n- Decisão nova", "# Spec")).toBe(true);
   });
 });

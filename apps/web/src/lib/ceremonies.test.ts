@@ -3,15 +3,28 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import type { AgentQuestion, AgentSession } from "@sprint-griller/agent-runtime";
+import { AdoError } from "@sprint-griller/ado-client";
 import { createLogger } from "@sprint-griller/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const createAgentRuntime = vi.hoisted(() => vi.fn());
 const getInvestigation = vi.hoisted(() => vi.fn());
+const loadAdoCredentials = vi.hoisted(() => vi.fn());
+const publishDecisionRecord = vi.hoisted(() => vi.fn());
+const publishStorySpec = vi.hoisted(() => vi.fn());
 
 vi.mock("@sprint-griller/agent-runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@sprint-griller/agent-runtime")>()),
   createAgentRuntime,
+}));
+vi.mock("@sprint-griller/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sprint-griller/core")>()),
+  loadAdoCredentials,
+}));
+vi.mock("@sprint-griller/ado-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sprint-griller/ado-client")>()),
+  publishDecisionRecord,
+  publishStorySpec,
 }));
 vi.mock("./investigations", () => ({ getInvestigation }));
 vi.mock("./squad-config", () => ({
@@ -38,6 +51,7 @@ vi.stubEnv(
 
 const {
   discardSpecDraft,
+  dumpCeremony,
   getDossie,
   getPalco,
   saveSpecDraft,
@@ -111,6 +125,12 @@ beforeEach(() => {
     status: "aprovado",
     markdown: "## Furos da US\n\n- Sem regra de arredondamento.",
   });
+  loadAdoCredentials.mockReturnValue({ pat: "pat-de-teste" });
+  publishDecisionRecord.mockImplementation(async () => ({
+    commentId: 90 + publishDecisionRecord.mock.calls.length,
+    url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/1",
+  }));
+  publishStorySpec.mockResolvedValue(undefined);
 });
 
 describe("startCeremony", () => {
@@ -251,6 +271,104 @@ describe("getDossie", () => {
     });
 
     expect(getDossie(session.id)?.spec.draft).toBeNull();
+  });
+});
+
+describe("dumpCeremony", () => {
+  it("should require explicit confirmation before dumping with open questions", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getDossie(session.id)?.pending).toHaveLength(1));
+    const dossie = getDossie(session.id)!;
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
+        confirmPending: false,
+      }),
+    ).rejects.toThrow(/confirme/i);
+
+    expect(publishDecisionRecord).not.toHaveBeenCalled();
+    expect(publishStorySpec).not.toHaveBeenCalled();
+  });
+
+  it("should publish the saved draft, link its decision record, and skip it on a retry", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+    await submitDecision({
+      sessionId: session.id,
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO + squad",
+    });
+    const generated = getDossie(session.id)!.spec.generated;
+    saveSpecDraft({
+      sessionId: session.id,
+      markdown: "# Spec revisada pelo Operador",
+      base: generated,
+      expectedSavedAt: null,
+    });
+    const signed = getDossie(session.id)!;
+
+    publishStorySpec.mockRejectedValueOnce(new AdoError("unexpected", "nada foi gravado"));
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: signed.spec.draft!.markdown,
+        base: signed.spec.draft!.base,
+        confirmPending: true,
+      }),
+    ).rejects.toThrow(/nada foi gravado/i);
+
+    expect(publishDecisionRecord).toHaveBeenCalledTimes(1);
+    expect(getDossie(session.id)?.decisions[0]).toMatchObject({ recordId: 91 });
+
+    await dumpCeremony({
+      sessionId: session.id,
+      markdown: signed.spec.draft!.markdown,
+      base: signed.spec.draft!.base,
+      confirmPending: true,
+    });
+
+    expect(publishDecisionRecord).toHaveBeenCalledTimes(1);
+    expect(publishStorySpec).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        markdown: expect.stringContaining("# Spec revisada pelo Operador"),
+      }),
+    );
+    expect(publishStorySpec.mock.calls.at(-1)?.[1].markdown).toContain("Registro #91");
+  });
+
+  it("should share one in-flight dump when the Operator confirms twice", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+    await submitDecision({
+      sessionId: session.id,
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+    const dossie = getDossie(session.id)!;
+    let release!: () => void;
+    publishDecisionRecord.mockImplementationOnce(
+      () => new Promise((resolve) => { release = () => resolve({ commentId: 91, url: dossie.story.url }); }),
+    );
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+    };
+
+    const first = dumpCeremony(input);
+    const second = dumpCeremony(input);
+    expect(second).toBe(first);
+    release();
+    await first;
+
+    expect(publishDecisionRecord).toHaveBeenCalledTimes(1);
   });
 });
 

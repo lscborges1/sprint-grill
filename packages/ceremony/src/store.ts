@@ -72,6 +72,13 @@ export interface DiscardSpecDraftInput {
   readonly expectedSavedAt: number | null;
 }
 
+export interface AttachDecisionRecordInput {
+  readonly sessionId: string;
+  readonly questionSeq: number;
+  readonly recordId: number;
+  readonly recordUrl: string;
+}
+
 export type FinishSessionOutcome =
   | { readonly status: "encerrada" }
   | { readonly status: "falhou"; readonly message: string };
@@ -93,6 +100,8 @@ export interface CeremonyStore {
   unansweredQuestions(sessionId: string): readonly CeremonyQuestion[];
   abandonPendingQuestions(sessionId: string): void;
   recordDecision(input: RecordDecisionInput): CeremonyDecision;
+  /** Persiste o comment criado no ADO para que um retry não duplique o Registro. */
+  attachDecisionRecord(input: AttachDecisionRecordInput): void;
   countDecisions(sessionId: string): number;
   lastDecision(sessionId: string): CeremonyDecision | undefined;
   listDecisions(sessionId: string): readonly CeremonyDecision[];
@@ -377,6 +386,30 @@ export function openCeremonyStore(
       });
 
       return decision;
+    },
+
+    attachDecisionRecord({ sessionId, questionSeq, recordId, recordUrl }) {
+      const current = db
+        .select({ recordId: decisions.recordId, recordUrl: decisions.recordUrl })
+        .from(decisions)
+        .where(and(eq(decisions.sessionId, sessionId), eq(decisions.questionSeq, questionSeq)))
+        .get();
+
+      if (!current) {
+        throw new CeremonyError(`a decisão ${questionSeq} não existe nesta cerimônia.`);
+      }
+      if (current.recordId !== null || current.recordUrl !== null) {
+        throw new CeremonyError(`a decisão ${questionSeq} já tem Registro no Azure DevOps.`);
+      }
+
+      const result = db
+        .update(decisions)
+        .set({ recordId, recordUrl })
+        .where(and(eq(decisions.sessionId, sessionId), eq(decisions.questionSeq, questionSeq)))
+        .run();
+      if (result.changes !== 1) {
+        throw new CeremonyError(`não foi possível vincular o Registro à decisão ${questionSeq}.`);
+      }
     },
 
     countDecisions(sessionId) {

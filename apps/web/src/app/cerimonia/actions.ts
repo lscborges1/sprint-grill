@@ -2,10 +2,13 @@
 
 import { AgentRuntimeError } from "@sprint-griller/agent-runtime";
 import { CeremonyError } from "@sprint-griller/ceremony";
+import { AdoError } from "@sprint-griller/ado-client";
+import { ConfigError } from "@sprint-griller/core";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import type {
   DiscardSpecDraftActionState,
+  DumpActionState,
   SaveSpecDraftActionState,
 } from "./spec-draft-action-state";
 import {
@@ -14,6 +17,8 @@ import {
   decisionSchema,
   discardSpecDraft,
   discardSpecDraftSchema,
+  dumpCeremony,
+  dumpCeremonySchema,
   resumeCeremony,
   saveSpecDraft,
   sessionIdSchema,
@@ -152,6 +157,33 @@ export async function discardSpecDraftAction(
     if (!(error instanceof CeremonyError)) throw error;
     logger.error({ err: error, sessionId: parsed.data.sessionId }, "descarte do Dossiê recusado");
     return { status: "error", requestId: parsed.data.requestId, message: error.message };
+  }
+}
+
+/** A tela coleta a confirmação; o servidor confere o Dossiê antes de escrever. */
+export async function dumpCeremonyAction(
+  _previous: DumpActionState,
+  formData: FormData,
+): Promise<DumpActionState> {
+  const parsed = dumpCeremonySchema.safeParse({
+    sessionId: formData.get("sessionId"),
+    markdown: formData.get("markdown"),
+    base: formData.get("base"),
+    confirmPending: formData.get("confirmPending") === "true",
+  });
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0]?.message ?? "Despejo inválido." };
+  }
+
+  try {
+    await dumpCeremony(parsed.data);
+    return { status: "success" };
+  } catch (error) {
+    if (!(error instanceof CeremonyError) && !(error instanceof AdoError) && !(error instanceof ConfigError)) {
+      throw error;
+    }
+    logger.error({ err: error, sessionId: parsed.data.sessionId }, "despejo da cerimônia recusado");
+    return { status: "error", message: error.message };
   }
 }
 /** Retoma uma cerimônia cujo turno morreu com o processo. */

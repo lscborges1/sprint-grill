@@ -17,3 +17,10 @@ export type DiscardSpecDraftActionState =
 export const DISCARD_SPEC_DRAFT_INITIAL_STATE: DiscardSpecDraftActionState = {
   status: "idle",
 };
+
+export type DumpActionState =
+  | { readonly status: "idle" }
+  | { readonly status: "success" }
+  | { readonly status: "error"; readonly message: string };
+
+export const DUMP_INITIAL_STATE: DumpActionState = { status: "idle" };

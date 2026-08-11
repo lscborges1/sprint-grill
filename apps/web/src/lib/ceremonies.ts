@@ -1,10 +1,12 @@
 import { createAgentRuntime } from "@sprint-griller/agent-runtime";
 import {
+  appendDecisionTraceability,
   CeremonyError,
   createCeremony,
   openCeremonyStore,
   readDossie,
   readPalco,
+  stripDecisionRecordLinks,
 } from "@sprint-griller/ceremony";
 import type {
   Ceremony,
@@ -16,7 +18,8 @@ import type {
   SaveSpecDraftInput,
   SpecDraft,
 } from "@sprint-griller/ceremony";
-import { defaultCeremonyDbPath } from "@sprint-griller/core";
+import { defaultCeremonyDbPath, loadAdoCredentials } from "@sprint-griller/core";
+import { publishDecisionRecord, publishStorySpec } from "@sprint-griller/ado-client";
 import { z } from "zod";
 import { getInvestigation } from "./investigations";
 import { logger } from "./logger";
@@ -63,6 +66,13 @@ export const discardSpecDraftSchema = z.object({
   expectedSavedAt: expectedSavedAtSchema,
 });
 
+export const dumpCeremonySchema = z.object({
+  sessionId: sessionIdSchema,
+  markdown: z.string().min(1),
+  base: z.string(),
+  confirmPending: z.boolean(),
+});
+
 /** Assinante de uma sessão: o que ele projeta é decisão dele, não do registro. */
 type SessionListener = () => void;
 
@@ -73,6 +83,7 @@ interface CeremonyRegistry {
   /** Evita duas sessões ativas da mesma US quando o clique em "Grelhar" corre em paralelo. */
   startingByStory: Map<number, Promise<CeremonySession>>;
   listeners: Map<string, Set<SessionListener>>;
+  dumpsInFlight: Map<string, Promise<void>>;
 }
 
 /**
@@ -87,9 +98,11 @@ const registry: CeremonyRegistry = ((
   starting: undefined,
   startingByStory: new Map(),
   listeners: new Map(),
+  dumpsInFlight: new Map(),
 });
 // Campo novo: HMR pode reusar um registry antigo sem ele.
 registry.startingByStory ??= new Map();
+registry.dumpsInFlight ??= new Map();
 
 /** Abrir o banco é efeito colateral: só acontece quando alguém pergunta de cerimônia. */
 function getStore(): CeremonyStore {
@@ -197,6 +210,79 @@ export function saveSpecDraft(input: SaveSpecDraftInput): SpecDraft {
 export function discardSpecDraft(input: DiscardSpecDraftInput): void {
   getStore().discardSpecDraft(input);
   publish(input.sessionId);
+}
+
+/**
+ * O despejo é serial por sessão: cada comment confirmado fica no SQLite antes
+ * da próxima escrita, então um retry explícito não duplica Registros já vistos.
+ */
+export function dumpCeremony(input: z.infer<typeof dumpCeremonySchema>): Promise<void> {
+  const inFlight = registry.dumpsInFlight.get(input.sessionId);
+  if (inFlight) return inFlight;
+
+  const dump = dumpCeremonyNow(input).finally(() => {
+    registry.dumpsInFlight.delete(input.sessionId);
+  });
+  registry.dumpsInFlight.set(input.sessionId, dump);
+  return dump;
+}
+
+async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promise<void> {
+  const initial = getDossie(input.sessionId);
+  if (!initial) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
+
+  const signed = initial.spec.draft?.markdown ?? initial.spec.generated;
+  if (input.markdown !== signed) {
+    throw new CeremonyError("salve a edição do Dossiê antes de despejar.");
+  }
+  // O próprio despejo pode ter acabado de anexar links de Registro ao documento
+  // gerado. Isso não é uma nova decisão da sala e não invalida um retry.
+  if (stripDecisionRecordLinks(input.base) !== stripDecisionRecordLinks(initial.spec.generated)) {
+    throw new CeremonyError(
+      "a cerimônia andou depois desta edição — regenere ou salve uma Spec atualizada antes de despejar.",
+    );
+  }
+  if (initial.pending.length > 0 && !input.confirmPending) {
+    throw new CeremonyError("confirme que deseja despejar com as pendências abertas.");
+  }
+
+  const { azureDevOps } = getSquadConfig();
+  const ado = { azureDevOps, credentials: loadAdoCredentials(), logger };
+  const store = getStore();
+
+  for (const decision of initial.decisions) {
+    if (decision.recordId !== undefined && decision.recordUrl !== undefined) continue;
+    if (decision.recordId !== undefined || decision.recordUrl !== undefined) {
+      throw new CeremonyError(`a decisão ${decision.questionSeq} tem um Registro incompleto no banco local.`);
+    }
+
+    const published = await publishDecisionRecord(ado, {
+      storyId: initial.story.id,
+      question: decision.question,
+      answer: decision.answer,
+      recommendation: decision.recommendation,
+      decidedBy: decision.decidedBy,
+      decidedAt: decision.decidedAt,
+    });
+    store.attachDecisionRecord({
+      sessionId: input.sessionId,
+      questionSeq: decision.questionSeq,
+      recordId: published.commentId,
+      recordUrl: published.url,
+    });
+    publish(input.sessionId);
+  }
+
+  const completed = getDossie(input.sessionId);
+  if (!completed) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
+  await publishStorySpec(ado, {
+    storyId: completed.story.id,
+    markdown: appendDecisionTraceability(signed, completed.decisions),
+  });
+  logger.info(
+    { sessionId: input.sessionId, storyId: completed.story.id, decisions: completed.decisions.length },
+    "despejo da cerimônia concluído",
+  );
 }
 
 export function findOpenCeremony(storyId: number): CeremonySession | undefined {

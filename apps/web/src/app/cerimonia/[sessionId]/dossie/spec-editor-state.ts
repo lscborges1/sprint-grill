@@ -1,4 +1,5 @@
 import type { SpecDraft } from "@sprint-griller/ceremony";
+import { stripDecisionRecordLinks } from "@sprint-griller/ceremony/spec";
 import type { DiscardSpecDraftActionState } from "../../spec-draft-action-state";
 
 export interface SpecEditorInput {
@@ -94,6 +95,11 @@ export function synchronizePristineGeneratedDocument({
   }
 
   return { markdown: generated, base: generated };
+}
+
+/** Registro publicado é metadado de despejo, não decisão nova que invalida a revisão. */
+export function isSpecStale(generated: string, base: string): boolean {
+  return stripDecisionRecordLinks(generated) !== stripDecisionRecordLinks(base);
 }
 
 /**

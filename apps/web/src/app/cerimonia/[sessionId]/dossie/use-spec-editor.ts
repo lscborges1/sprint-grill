@@ -9,6 +9,7 @@ import {
 } from "../../spec-draft-action-state";
 import {
   reconcileSpecDraft,
+  isSpecStale,
   resolveRegeneration,
   synchronizePristineGeneratedDocument,
 } from "./spec-editor-state";
@@ -146,7 +147,7 @@ export function useSpecEditor(spec: DossieState["spec"]): SpecEditorController {
       (discardResult.status === "error" ? discardResult.message : null),
     expectedSavedAt,
     remoteDraftConflict,
-    stale: spec.generated !== base,
+    stale: isSpecStale(spec.generated, base),
     save,
     regenerate,
     adoptRemote,

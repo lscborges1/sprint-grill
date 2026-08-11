@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readSpecSection, renderSpecMarkdown } from "./spec";
+import {
+  appendDecisionTraceability,
+  readSpecSection,
+  renderSpecMarkdown,
+  stripDecisionRecordLinks,
+} from "./spec";
 import { SPEC_SECTIONS } from "./spec-vocabulary";
 import type { DossieDocument } from "./types";
 
@@ -138,6 +143,38 @@ describe("renderSpecMarkdown", () => {
 
     expect(markdown.endsWith("\n")).toBe(true);
     expect(markdown.endsWith("\n\n")).toBe(false);
+  });
+});
+
+describe("appendDecisionTraceability", () => {
+  it("should preserve the signed Markdown and append one ADO link per decision", () => {
+    const markdown = appendDecisionTraceability("# Texto editado", [
+      {
+        ...REFINED.decisions[0]!,
+        recordId: 99,
+        recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+      },
+    ]);
+
+    expect(markdown).toContain("# Texto editado");
+    expect(markdown).toContain("## Rastreabilidade de decisões");
+    expect(markdown).toContain("[Registro #99](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)");
+  });
+});
+
+describe("stripDecisionRecordLinks", () => {
+  it("should leave a draft current when only dump record links were added", () => {
+    const before = renderSpecMarkdown(REFINED);
+    const after = renderSpecMarkdown({
+      ...REFINED,
+      decisions: [{
+        ...REFINED.decisions[0]!,
+        recordId: 99,
+        recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+      }],
+    });
+
+    expect(stripDecisionRecordLinks(after)).toBe(before);
   });
 });
 

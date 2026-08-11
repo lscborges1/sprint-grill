@@ -6,9 +6,12 @@ import { SPEC_SECTIONS, dossieStateSchema } from "@sprint-griller/ceremony/sessi
 import { formatDecisionWhen, readSpecSection } from "@sprint-griller/ceremony/spec";
 import type { CeremonyDecision, DossieState } from "@sprint-griller/ceremony";
 import Link from "next/link";
+import { useActionState, useState } from "react";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
 import { useSpecEditor } from "./use-spec-editor";
+import { dumpCeremonyAction } from "../../actions";
+import { DUMP_INITIAL_STATE } from "../../spec-draft-action-state";
 
 /**
  * Modo Dossiê: a aba do Operador. A Spec da US se forma aqui ao vivo enquanto a
@@ -116,7 +119,7 @@ export function Dossie({ initial }: { initial: DossieState }) {
         />
       </Section>
 
-      <SpecEditor sessionId={state.sessionId} spec={state.spec} />
+      <SpecEditor sessionId={state.sessionId} spec={state.spec} pending={state.pending} />
     </main>
   );
 }
@@ -238,9 +241,11 @@ function operatorOutOfScope(markdown: string): string {
 function SpecEditor({
   sessionId,
   spec,
+  pending,
 }: {
   sessionId: string;
   spec: DossieState["spec"];
+  pending: DossieState["pending"];
 }) {
   const {
     adoptRemote,
@@ -367,7 +372,104 @@ function SpecEditor({
           pending={busy || remoteDraftConflict}
         />
       )}
+
+      <DumpGate
+        sessionId={sessionId}
+        markdown={markdown}
+        base={base}
+        pending={pending}
+        blocked={busy || conflict !== null || stale}
+      />
     </Section>
+  );
+}
+
+/** Última porta antes de qualquer escrita no tracker: a pendência não some nem bloqueia em silêncio. */
+function DumpGate({
+  sessionId,
+  markdown,
+  base,
+  pending,
+  blocked,
+}: {
+  sessionId: string;
+  markdown: string;
+  base: string;
+  pending: DossieState["pending"];
+  blocked: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [result, dump, dumping] = useActionState(dumpCeremonyAction, DUMP_INITIAL_STATE);
+  const hasPending = pending.length > 0;
+
+  if (result.status === "success") {
+    return (
+      <p role="status" className="rounded-lg border border-line px-5 py-4 text-sm text-muted">
+        Despejo concluído: a Spec e os Registros de decisão estão na US.
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        disabled={blocked}
+        onClick={() => setOpen(true)}
+        className="self-start rounded-xl border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background disabled:opacity-50"
+      >
+        Revisar despejo
+      </button>
+    );
+  }
+
+  return (
+    <section aria-labelledby="gate-despejo" className="flex flex-col gap-4 rounded-lg border border-line px-5 py-4">
+      <div>
+        <h3 id="gate-despejo" className="text-base font-medium">Gate de maturidade</h3>
+        <p className="mt-1 text-sm text-muted">
+          {hasPending
+            ? `${pending.length} ${pending.length === 1 ? "dúvida segue" : "dúvidas seguem"} sem resposta.`
+            : "Nenhuma dúvida ficou aberta."}
+        </p>
+      </div>
+      {hasPending && (
+        <ul className="flex flex-col gap-2 text-sm">
+          {pending.map((question) => <li key={question.id}>{question.question}</li>)}
+        </ul>
+      )}
+      <form action={dump} className="flex flex-col gap-3">
+        <input type="hidden" name="sessionId" value={sessionId} />
+        <input type="hidden" name="markdown" value={markdown} />
+        <input type="hidden" name="base" value={base} />
+        {hasPending ? (
+          <label className="flex items-start gap-3 text-sm">
+            <input type="checkbox" name="confirmPending" value="true" required disabled={dumping} />
+            Entendo que estas dúvidas continuarão explícitas na Spec publicada.
+          </label>
+        ) : (
+          <input type="hidden" name="confirmPending" value="true" />
+        )}
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="submit"
+            disabled={dumping || blocked}
+            className="self-start rounded-xl border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background disabled:opacity-50"
+          >
+            {dumping ? "Despejando…" : "Confirmar despejo"}
+          </button>
+          <button
+            type="button"
+            disabled={dumping}
+            onClick={() => setOpen(false)}
+            className="self-start rounded-xl border border-line px-5 py-3 text-base font-medium disabled:opacity-50"
+          >
+            Voltar à revisão
+          </button>
+        </div>
+        {result.status === "error" && <p role="alert" className="text-sm text-red-600">{result.message}</p>}
+      </form>
+    </section>
   );
 }
 

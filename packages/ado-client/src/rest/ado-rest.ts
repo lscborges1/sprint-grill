@@ -14,7 +14,7 @@ export interface AdoClientOptions {
   readonly logger?: Logger;
 }
 
-interface RequestSpec<TSchema extends z.ZodType> {
+export interface RequestSpec<TSchema extends z.ZodType> {
   /** Nome curto da operação, usado no log e na mensagem de erro. */
   readonly operation: string;
   /** Caminho a partir do projeto, ex.: `_apis/wit/wiql`. */
@@ -24,11 +24,15 @@ interface RequestSpec<TSchema extends z.ZodType> {
   readonly query?: Readonly<Record<string, string>>;
   readonly body?: unknown;
   /** A rota de work items usa PATCH com JSON Patch; POST continua sendo o padrão de escrita. */
-  readonly method?: "GET" | "POST" | "PATCH";
+  readonly method?: "GET" | "POST" | "PATCH" | "PUT";
   /** Conteúdo especial exigido pela rota, por exemplo application/json-patch+json. */
   readonly contentType?: string;
+  /** Cabeçalhos de concorrência específicos da rota, como `If-Match`. */
+  readonly headers?: Readonly<Record<string, string>>;
   /** Uma falha de concorrência conhecida, segura para o Operador tentar de novo. */
   readonly conflict?: string;
+  /** Escopo do PAT exigido por APIs que não pertencem a Work Items. */
+  readonly requiredPatScope?: string;
   /**
    * Mensagem de 404 quando o que sumiu é o recurso pedido, não a config: sem
    * isto o Operador vai conferir org e projeto por causa de um id errado.
@@ -62,9 +66,15 @@ export interface AdoRest {
   readonly logger: Logger;
   /** URL da US no board — é o link que o Operador abre, não o da REST API. */
   workItemUrl(id: number): string;
+  /** URL REST de um work item, usada em relações hierárquicas/de dependência. */
+  workItemApiUrl(id: number): string;
   request<TSchema extends z.ZodType>(
     spec: RequestSpec<TSchema>,
   ): Promise<z.infer<TSchema>>;
+  /** Variante para rotas cuja resposta carrega um ETag ou outro metadado HTTP. */
+  requestWithHeaders<TSchema extends z.ZodType>(
+    spec: RequestSpec<TSchema>,
+  ): Promise<{ readonly data: z.infer<TSchema>; readonly headers: Headers }>;
 }
 
 export function createAdoRest(options: AdoClientOptions): AdoRest {
@@ -81,7 +91,23 @@ export function createAdoRest(options: AdoClientOptions): AdoRest {
       return `${projectUrl}/_workitems/edit/${id}`;
     },
 
+    workItemApiUrl(id) {
+      return `${projectUrl}/_apis/wit/workitems/${id}`;
+    },
+
     async request(spec) {
+      const result = await performRequest(spec);
+      return result.data;
+    },
+
+    async requestWithHeaders(spec) {
+      return performRequest(spec);
+    },
+  };
+
+  async function performRequest<TSchema extends z.ZodType>(
+    spec: RequestSpec<TSchema>,
+  ): Promise<{ readonly data: z.infer<TSchema>; readonly headers: Headers }> {
       const url = buildUrl(`${projectUrl}/${spec.path}`, {
         ...spec.query,
         "api-version": spec.apiVersion ?? DEFAULT_API_VERSION,
@@ -103,7 +129,7 @@ export function createAdoRest(options: AdoClientOptions): AdoRest {
                 `inesperado — a gravação provavelmente foi feita.${CHECK_THE_US}`
             : `O Azure DevOps respondeu ${spec.operation} num formato inesperado. ` +
                 `Confira se a organização "${organization}" e o projeto "${project}" estão certos.`,
-          { cause: parsed.error },
+          { cause: parsed.error, writeMayHaveSucceeded: spec.write === true },
         );
       }
 
@@ -127,9 +153,8 @@ export function createAdoRest(options: AdoClientOptions): AdoRest {
         );
       }
 
-      return parsed.data;
-    },
-  };
+      return { data: parsed.data, headers: response.headers };
+  }
 }
 
 async function send(
@@ -148,6 +173,7 @@ async function send(
       headers: {
         accept: "application/json",
         authorization,
+        ...spec.headers,
         ...(spec.body === undefined
           ? {}
           : { "content-type": spec.contentType ?? "application/json" }),
@@ -158,10 +184,10 @@ async function send(
     throw new AdoError(
       "connection",
       `Não foi possível falar com o Azure DevOps (${spec.operation}). ` +
-        `Verifique a conexão e se ${new URL(url).origin} está acessível.` +
+      `Verifique a conexão e se ${new URL(url).origin} está acessível.` +
         // A requisição pode ter chegado lá antes de a conexão cair.
         (spec.write ? CHECK_THE_US : ""),
-      { cause },
+      { cause, writeMayHaveSucceeded: spec.write === true },
     );
   }
 
@@ -178,10 +204,12 @@ function failedResponse(
   spec: RequestSpec<z.ZodType>,
 ): AdoError {
   if (response.status === 401 || response.status === 403) {
+    const requiredPatScope = spec.requiredPatScope ??
+      `${spec.write ? "leitura e escrita" : "leitura"} de work items`;
     return new AdoError(
       "auth",
       "O Azure DevOps recusou a credencial. Gere um novo Personal Access Token " +
-        `com escopo de ${spec.write ? "leitura e escrita" : "leitura"} de work items ` +
+        `com escopo de ${requiredPatScope} ` +
         "e atualize AZURE_DEVOPS_PAT.",
     );
   }
@@ -206,6 +234,7 @@ function failedResponse(
       "unexpected-response",
       `O Azure DevOps falhou em ${spec.operation} (HTTP ${response.status})` +
         ` — a gravação pode ter acontecido mesmo assim.${CHECK_THE_US}`,
+      { writeMayHaveSucceeded: true },
     );
   }
 
@@ -232,6 +261,7 @@ async function readJson(
         "unexpected-response",
         `O Azure DevOps aceitou ${spec.operation} mas respondeu sem JSON ` +
           `— a gravação provavelmente foi feita.${CHECK_THE_US}`,
+        { writeMayHaveSucceeded: true },
       );
     }
 
@@ -249,7 +279,7 @@ async function readJson(
       "unexpected-response",
       `O Azure DevOps respondeu ${spec.operation} com um corpo que não é JSON válido.` +
         (spec.write ? CHECK_THE_US : ""),
-      { cause },
+      { cause, writeMayHaveSucceeded: spec.write === true },
     );
   }
 }

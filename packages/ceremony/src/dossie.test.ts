@@ -109,6 +109,35 @@ describe("readDossie", () => {
     expect(readDossie(store, "thread-1")?.timeZone).toBe("America/Sao_Paulo");
   });
 
+  it("should expose the task draft the ceremony agent wrote in its closing message", () => {
+    const store = open();
+    newSession(store);
+    store.appendEvent("thread-1", {
+      kind: "mensagem",
+      text: `Resumo da cerimônia.\n\n<!-- sprint-griller:tasks:start -->\n## Criar exportação\n\n### Critérios de aceite\n\n- Gera o CSV.\n<!-- sprint-griller:tasks:end -->`,
+    });
+
+    expect(readDossie(store, "thread-1")?.taskPreview).toContain("## Criar exportação");
+  });
+
+  it("should expose signed dump Spec, Tasks and estimate after beginDump", () => {
+    const store = open();
+    newSession(store);
+    store.beginDump("thread-1", {
+      dumpId: "dump-fingerprint",
+      markdown: "# Spec assinada",
+      tasksMarkdown: "## Task assinada\n\n### Critérios de aceite\n\n- Critério.",
+      estimate: 8,
+    });
+    store.abortDump("thread-1");
+
+    expect(readDossie(store, "thread-1")?.dumpInputs).toEqual({
+      markdown: "# Spec assinada",
+      tasksMarkdown: "## Task assinada\n\n### Critérios de aceite\n\n- Critério.",
+      estimate: 8,
+    });
+  });
+
   it("should carry the impact context of the Investigação into the document", () => {
     const store = open();
     newSession(store);

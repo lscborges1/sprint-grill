@@ -35,7 +35,17 @@ const decisionSchema = z.object({
  */
 export const dossieStateSchema: z.ZodType<DossieState> = z.object({
   sessionId: z.string(),
+  status: z.enum(["ativa", "encerrada", "falhou"]),
   timeZone: z.string(),
+  taskPreview: z.string(),
+  dumpInputs: z
+    .object({
+      markdown: z.string(),
+      tasksMarkdown: z.string(),
+      estimate: z.number().finite().positive(),
+    })
+    .optional(),
+  dumpedAt: z.number().int().nonnegative().optional(),
   story: storySchema,
   decisions: z.array(decisionSchema),
   pending: z.array(z.object({ id: z.string(), question: z.string() })),

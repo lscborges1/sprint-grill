@@ -4,6 +4,7 @@ import {
   reportSectionMarker,
 } from "@sprint-griller/investigation";
 import { renderSpecMarkdown } from "./spec";
+import { taskPreviewFromTranscript } from "./task-draft";
 import type { CeremonyStore } from "./store";
 import type {
   DossieDocument,
@@ -48,7 +49,21 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
   return {
     ...document,
     sessionId,
+    status: session.status,
     timeZone: session.timeZone,
+    taskPreview: taskPreviewFromTranscript(store.listTranscript(sessionId)),
+    ...(session.dumpMarkdown === null
+      || session.dumpTasksMarkdown === null
+      || session.dumpEstimate === null
+      ? {}
+      : {
+          dumpInputs: {
+            markdown: session.dumpMarkdown,
+            tasksMarkdown: session.dumpTasksMarkdown,
+            estimate: session.dumpEstimate,
+          },
+        }),
+    ...(session.dumpedAt === null ? {} : { dumpedAt: session.dumpedAt }),
     spec: {
       generated: renderSpecMarkdown(document, session.timeZone),
       draft: store.getSpecDraft(sessionId) ?? null,

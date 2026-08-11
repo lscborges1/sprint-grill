@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -12,6 +13,10 @@ const getInvestigation = vi.hoisted(() => vi.fn());
 const loadAdoCredentials = vi.hoisted(() => vi.fn());
 const publishDecisionRecord = vi.hoisted(() => vi.fn());
 const publishStorySpec = vi.hoisted(() => vi.fn());
+const publishChildTasks = vi.hoisted(() => vi.fn());
+const publishDumpCompletion = vi.hoisted(() => vi.fn());
+const readDumpCompletion = vi.hoisted(() => vi.fn());
+const readIncompleteDumps = vi.hoisted(() => vi.fn());
 
 vi.mock("@sprint-griller/agent-runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@sprint-griller/agent-runtime")>()),
@@ -25,6 +30,10 @@ vi.mock("@sprint-griller/ado-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@sprint-griller/ado-client")>()),
   publishDecisionRecord,
   publishStorySpec,
+  publishChildTasks,
+  publishDumpCompletion,
+  readDumpCompletion,
+  readIncompleteDumps,
 }));
 vi.mock("./investigations", () => ({ getInvestigation }));
 vi.mock("./squad-config", () => ({
@@ -80,9 +89,20 @@ const QUESTION: AgentQuestion = {
   allowFreeText: true,
 };
 
+const TASKS_MARKDOWN = `## Implementar exportação
+
+### Critérios de aceite
+
+- A exportação segue a decisão registrada pela sala.`;
+
+const DUMP_DETAILS = { tasksMarkdown: TASKS_MARKDOWN, estimate: 5 } as const;
+
 /** Cada teste usa uma US própria: o banco é o mesmo do começo ao fim, como em produção. */
 let nextStoryId = 100;
 let nextSessionId = 0;
+
+/** Libera o turno mockado para emitir `turn-completed` pelo caminho de produção. */
+const ceremonyFinishers = new Map<string, () => void>();
 
 function fakeSession(id: string): AgentSession {
   return {
@@ -93,6 +113,7 @@ function fakeSession(id: string): AgentSession {
         const gate = new Promise<void>((resolve) => {
           release = resolve;
         });
+        ceremonyFinishers.set(id, release);
         yield {
           type: "question",
           question: {
@@ -103,14 +124,30 @@ function fakeSession(id: string): AgentSession {
           },
         } as const;
         await gate;
+        yield {
+          type: "turn-completed",
+          turn: { id: "turn-1", status: "completed", durationMs: 1 },
+        } as const;
       })() as ReturnType<AgentSession["send"]>;
     },
     interrupt: async () => undefined,
   };
 }
 
+/** Encerra pelo mesmo evento que o runtime de produção emite. */
+async function finishCeremony(sessionId: string): Promise<void> {
+  await vi.waitFor(() => {
+    expect(ceremonyFinishers.has(sessionId)).toBe(true);
+  });
+  ceremonyFinishers.get(sessionId)!();
+  await vi.waitFor(() => {
+    expect(getDossie(sessionId)?.status).toBe("encerrada");
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  ceremonyFinishers.clear();
   nextStoryId += 1;
   nextSessionId += 1;
 
@@ -131,6 +168,10 @@ beforeEach(() => {
     url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/1",
   }));
   publishStorySpec.mockResolvedValue(undefined);
+  publishChildTasks.mockResolvedValue(undefined);
+  publishDumpCompletion.mockResolvedValue(undefined);
+  readDumpCompletion.mockResolvedValue([]);
+  readIncompleteDumps.mockResolvedValue([]);
 });
 
 describe("startCeremony", () => {
@@ -275,9 +316,8 @@ describe("getDossie", () => {
 });
 
 describe("dumpCeremony", () => {
-  it("should require explicit confirmation before dumping with open questions", async () => {
+  it("should refuse a dump until the ceremony has ended", async () => {
     const session = await startCeremony(nextStoryId);
-    await vi.waitFor(() => expect(getDossie(session.id)?.pending).toHaveLength(1));
     const dossie = getDossie(session.id)!;
 
     await expect(
@@ -285,12 +325,53 @@ describe("dumpCeremony", () => {
         sessionId: session.id,
         markdown: dossie.spec.generated,
         base: dossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      }),
+    ).rejects.toThrow(/encerre/i);
+
+    expect(publishStorySpec).not.toHaveBeenCalled();
+  });
+
+  it("should require explicit confirmation before dumping with open questions", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getDossie(session.id)?.pending).toHaveLength(1));
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
         confirmPending: false,
+        ...DUMP_DETAILS,
       }),
     ).rejects.toThrow(/confirme/i);
 
     expect(publishDecisionRecord).not.toHaveBeenCalled();
     expect(publishStorySpec).not.toHaveBeenCalled();
+  });
+
+  it("should reject structurally invalid Tasks before any Azure DevOps write", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
+        confirmPending: true,
+        tasksMarkdown: `Introdução\n\n## Implementar\n\n### Critérios de aceite\n\n- Funciona conforme discutido.`,
+        estimate: 5,
+      }),
+    ).rejects.toThrow(/antes da primeira|conforme discutido/i);
+
+    expect(publishDecisionRecord).not.toHaveBeenCalled();
+    expect(publishStorySpec).not.toHaveBeenCalled();
+    expect(publishChildTasks).not.toHaveBeenCalled();
   });
 
   it("should publish the saved draft, link its decision record, and skip it on a retry", async () => {
@@ -310,6 +391,7 @@ describe("dumpCeremony", () => {
       expectedSavedAt: null,
     });
     const signed = getDossie(session.id)!;
+    await finishCeremony(session.id);
 
     publishStorySpec.mockRejectedValueOnce(new AdoError("unexpected", "nada foi gravado"));
     await expect(
@@ -318,6 +400,7 @@ describe("dumpCeremony", () => {
         markdown: signed.spec.draft!.markdown,
         base: signed.spec.draft!.base,
         confirmPending: true,
+        ...DUMP_DETAILS,
       }),
     ).rejects.toThrow(/nada foi gravado/i);
 
@@ -329,6 +412,7 @@ describe("dumpCeremony", () => {
       markdown: signed.spec.draft!.markdown,
       base: signed.spec.draft!.base,
       confirmPending: true,
+      ...DUMP_DETAILS,
     });
 
     expect(publishDecisionRecord).toHaveBeenCalledTimes(1);
@@ -339,6 +423,346 @@ describe("dumpCeremony", () => {
       }),
     );
     expect(publishStorySpec.mock.calls.at(-1)?.[1].markdown).toContain("Registro #91");
+    expect(publishStorySpec).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ estimate: 5 }),
+    );
+    expect(publishChildTasks).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tasks: [expect.objectContaining({ title: "Implementar exportação" })] }),
+    );
+  });
+
+  it("should retry when the decision record may already have been published", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+    await submitDecision({
+      sessionId: session.id,
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+    publishDecisionRecord.mockRejectedValueOnce(
+      new AdoError("connection", "conexão caiu", { writeMayHaveSucceeded: true }),
+    );
+
+    await expect(dumpCeremony(input)).rejects.toThrow("conexão caiu");
+    await expect(dumpCeremony(input)).resolves.toBeUndefined();
+
+    expect(publishDecisionRecord).toHaveBeenCalledTimes(2);
+  });
+
+  it("should retry when creating a Task may have partially succeeded", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+    publishChildTasks.mockRejectedValueOnce(
+      new AdoError("connection", "conexão caiu", { writeMayHaveSucceeded: true }),
+    );
+
+    await expect(dumpCeremony(input)).rejects.toThrow("conexão caiu");
+    await expect(dumpCeremony(input)).resolves.toBeUndefined();
+
+    expect(publishChildTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it("should refuse a retry that changes Tasks or estimate after a partial dump", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+    publishChildTasks.mockRejectedValueOnce(
+      new AdoError("connection", "conexão caiu", { writeMayHaveSucceeded: true }),
+    );
+
+    await expect(dumpCeremony(input)).rejects.toThrow("conexão caiu");
+    await expect(
+      dumpCeremony({
+        ...input,
+        estimate: 8,
+        tasksMarkdown: `## Outra Task
+
+### Critérios de aceite
+
+- Critério diferente.`,
+      }),
+    ).rejects.toThrow(/Spec|Tasks|estimativa/i);
+
+    expect(publishChildTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it("should refuse changing the Spec after a partial dump so the retry stays recoverable", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+    publishChildTasks.mockRejectedValueOnce(
+      new AdoError("connection", "conexão caiu", { writeMayHaveSucceeded: true }),
+    );
+
+    await expect(dumpCeremony(input)).rejects.toThrow("conexão caiu");
+    await expect(
+      dumpCeremony({
+        ...input,
+        markdown: `${dossie.spec.generated}\n\n## Extra\n\nTexto novo.`,
+      }),
+    ).rejects.toThrow(/Spec assinada/i);
+  });
+
+  it("should publish a revised ceremony after a prior dump completed with another fingerprint", async () => {
+    readDumpCompletion.mockResolvedValueOnce(["dump-anterior-concluido"]);
+
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(publishStorySpec).toHaveBeenCalledOnce();
+    expect(publishChildTasks).toHaveBeenCalledOnce();
+    expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
+  });
+
+  it("should restore signed Tasks and estimate after a partial dump so a reload can retry", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    publishChildTasks.mockRejectedValueOnce(
+      new AdoError("connection", "conexão caiu", { writeMayHaveSucceeded: true }),
+    );
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      }),
+    ).rejects.toThrow("conexão caiu");
+
+    expect(getDossie(session.id)?.dumpInputs).toEqual({
+      markdown: dossie.spec.generated,
+      tasksMarkdown: DUMP_DETAILS.tasksMarkdown,
+      estimate: DUMP_DETAILS.estimate,
+    });
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: getDossie(session.id)!.dumpInputs!.markdown,
+        base: dossie.spec.generated,
+        confirmPending: true,
+        tasksMarkdown: getDossie(session.id)!.dumpInputs!.tasksMarkdown,
+        estimate: getDossie(session.id)!.dumpInputs!.estimate,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("should refuse a new ceremony while a prior dump is still incomplete locally", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    publishDumpCompletion.mockRejectedValueOnce(new AdoError("unexpected", "a confirmação caiu"));
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      }),
+    ).rejects.toThrow("a confirmação caiu");
+
+    await expect(startCeremony(nextStoryId)).rejects.toThrow(/despejo incompleto/i);
+  });
+
+  it("should refuse dumping when ADO already has an incomplete dump with another fingerprint", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    readIncompleteDumps.mockResolvedValueOnce(["dump-de-outra-cerimonia"]);
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      }),
+    ).rejects.toThrow(/despejo incompleto/i);
+
+    expect(publishChildTasks).not.toHaveBeenCalled();
+  });
+
+  it("should refuse a new ceremony when ADO already has an incomplete dump", async () => {
+    readIncompleteDumps.mockResolvedValueOnce(["dump-de-outra-cerimonia"]);
+
+    await expect(startCeremony(nextStoryId)).rejects.toThrow(/despejo incompleto/i);
+  });
+
+  it("should allow a retry when Task publication failed before its first write", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+    publishChildTasks.mockRejectedValueOnce(new AdoError("connection", "conexão caiu"));
+
+    await expect(dumpCeremony(input)).rejects.toThrow("conexão caiu");
+    await expect(dumpCeremony(input)).resolves.toBeUndefined();
+
+    expect(publishChildTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it("should persist a successful dump so a later confirmation does not duplicate Tasks", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+
+    await dumpCeremony(input);
+    await dumpCeremony(input);
+
+    expect(publishChildTasks).toHaveBeenCalledTimes(1);
+    expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
+  });
+
+  it("should accept ADO's completion marker without repeating any artifact writes", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const dumpId = createHash("sha256")
+      .update(JSON.stringify({
+        storyId: dossie.story.id,
+        markdown: dossie.spec.generated,
+        tasks: [{
+          title: "Implementar exportação",
+          description: "",
+          acceptanceCriteria: ["A exportação segue a decisão registrada pela sala."],
+          blockedBy: [],
+        }],
+        estimate: 5,
+      }))
+      .digest("hex");
+    readDumpCompletion.mockResolvedValueOnce([dumpId]);
+
+    await dumpCeremony({
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    });
+
+    expect(publishStorySpec).not.toHaveBeenCalled();
+    expect(publishChildTasks).not.toHaveBeenCalled();
+    expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
+  });
+
+  it("should freeze decisions while a dump is publishing", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    let releaseSpec!: () => void;
+    publishStorySpec.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { releaseSpec = resolve; }),
+    );
+
+    const dump = dumpCeremony({
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    });
+    await vi.waitFor(() => expect(publishStorySpec).toHaveBeenCalled());
+
+    await expect(
+      submitDecision({
+        sessionId: session.id,
+        questionId: "q1",
+        answer: "Regra bancária",
+        decidedBy: "PO",
+      }),
+    ).rejects.toThrow(/despejo/i);
+
+    releaseSpec();
+    await dump;
+    expect(getDossie(session.id)?.decisions).toHaveLength(0);
+    expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
+  });
+
+  it("should retry when the completion marker fails after child Tasks were published", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    publishDumpCompletion.mockRejectedValueOnce(new AdoError("unexpected", "a confirmação caiu"));
+
+    await expect(dumpCeremony({
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    })).rejects.toThrow("a confirmação caiu");
+
+    await expect(dumpCeremony({
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    })).resolves.toBeUndefined();
   });
 
   it("should share one in-flight dump when the Operator confirms twice", async () => {
@@ -351,6 +775,7 @@ describe("dumpCeremony", () => {
       decidedBy: "PO",
     });
     const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
     let release!: () => void;
     publishDecisionRecord.mockImplementationOnce(
       () => new Promise((resolve) => { release = () => resolve({ commentId: 91, url: dossie.story.url }); }),
@@ -360,11 +785,13 @@ describe("dumpCeremony", () => {
       markdown: dossie.spec.generated,
       base: dossie.spec.generated,
       confirmPending: true,
+      ...DUMP_DETAILS,
     };
 
     const first = dumpCeremony(input);
     const second = dumpCeremony(input);
     expect(second).toBe(first);
+    await vi.waitFor(() => expect(publishDecisionRecord).toHaveBeenCalled());
     release();
     await first;
 

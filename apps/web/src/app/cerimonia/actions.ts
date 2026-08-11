@@ -169,6 +169,8 @@ export async function dumpCeremonyAction(
     sessionId: formData.get("sessionId"),
     markdown: formData.get("markdown"),
     base: formData.get("base"),
+    tasksMarkdown: formData.get("tasksMarkdown"),
+    estimate: formData.get("estimate"),
     confirmPending: formData.get("confirmPending") === "true",
   });
   if (!parsed.success) {

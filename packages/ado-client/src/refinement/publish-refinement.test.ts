@@ -3,9 +3,15 @@ import { createLogger } from "@sprint-griller/core";
 import { describe, expect, it, vi } from "vitest";
 import { SPEC_MARKER } from "./refinement-status";
 import {
+  publishChildTasks,
+  publishDumpCompletion,
   publishDecisionRecord,
   publishStorySpec,
+  readDumpCompletion,
+  readIncompleteDumps,
   replaceManagedSpec,
+  markdownToAdoHtml,
+  dumpMarker,
 } from "./publish-refinement";
 
 const AZURE_DEVOPS = { organization: "acme", project: "Plataforma" };
@@ -38,20 +44,21 @@ function options(fetch: typeof globalThis.fetch) {
 }
 
 describe("replaceManagedSpec", () => {
-  it("should preserve the User Story description while appending the managed block", () => {
+  it("should preserve the User Story description while appending the managed block as HTML", () => {
     const description = replaceManagedSpec("<div>Texto do PO</div>", "# Spec");
 
     expect(description).toContain("<div>Texto do PO</div>");
     expect(description).toContain(SPEC_MARKER);
-    expect(description).toContain("# Spec");
+    expect(description).toContain("<h1>Spec</h1>");
+    expect(description).not.toContain("# Spec\n");
   });
 
   it("should replace the prior managed block without duplicating the marker", () => {
     const first = replaceManagedSpec("Texto do PO", "# Primeira");
     const second = replaceManagedSpec(first, "# Segunda");
 
-    expect(second).toContain("# Segunda");
-    expect(second).not.toContain("# Primeira");
+    expect(second).toContain("<h1>Segunda</h1>");
+    expect(second).not.toContain("Primeira");
     expect(second.split(SPEC_MARKER)).toHaveLength(2);
   });
 
@@ -62,13 +69,33 @@ describe("replaceManagedSpec", () => {
   });
 });
 
+describe("markdownToAdoHtml", () => {
+  it("should render headings, lists, links and emphasis for work item HTML fields", () => {
+    expect(
+      markdownToAdoHtml("# Spec\n\n_intro_\n\n- **item** — [abrir](https://example.test)"),
+    ).toBe(
+      '<h1>Spec</h1>\n<p><em>intro</em></p>\n<ul><li><strong>item</strong> — <a href="https://example.test">abrir</a></li></ul>',
+    );
+  });
+
+  it("should drop unsafe Markdown link targets instead of writing them into href", () => {
+    expect(markdownToAdoHtml("[pular](javascript:evil)")).toBe("<p>pular</p>");
+    expect(markdownToAdoHtml("[dados](data:text/html,hi)")).toBe("<p>dados</p>");
+    expect(markdownToAdoHtml("[mail](mailto:po@example.test)")).toBe(
+      '<p><a href="mailto:po@example.test">mail</a></p>',
+    );
+  });
+});
+
 describe("publishDecisionRecord", () => {
   it("should publish the deterministic human decision as a Markdown comment", async () => {
-    const ado = fakeAdo(() => json({ commentId: 91 }));
+    const ado = fakeAdo((call) => call.init?.method === "GET" ? json({ comments: [] }) : json({ commentId: 91 }));
 
     await expect(
       publishDecisionRecord(options(ado.fetch), {
         storyId: 4211,
+        dumpId: "dump-4211",
+        questionSeq: 1,
         question: "O TTL é global?",
         answer: "Sim",
         recommendation: "Global",
@@ -80,25 +107,150 @@ describe("publishDecisionRecord", () => {
       url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
     });
 
-    const [call] = ado.calls;
+    const call = ado.calls.at(-1);
     expect(call?.init?.method).toBe("POST");
     expect(call?.url).toContain("format=markdown");
     expect(String(call?.init?.body)).toContain("**Decidido por:** PO + squad");
     expect(String(call?.init?.body)).toContain("2026-08-06T14:30:00.000Z");
+    expect(String(call?.init?.body)).toContain("sprint-griller:dump:dump-4211:decision:1");
+  });
+
+  it("should reuse a marked decision record instead of posting a duplicate", async () => {
+    const ado = fakeAdo(() => json({ comments: [{ commentId: 91, text: "<!-- sprint-griller:dump:dump-4211:decision:1 -->" }] }));
+
+    await expect(publishDecisionRecord(options(ado.fetch), {
+      storyId: 4211,
+      dumpId: "dump-4211",
+      questionSeq: 1,
+      question: "O TTL é global?",
+      answer: "Sim",
+      recommendation: "Global",
+      decidedBy: "PO + squad",
+      decidedAt: Date.UTC(2026, 7, 6, 14, 30),
+    })).resolves.toMatchObject({ commentId: 91 });
+
+    expect(ado.calls).toHaveLength(1);
+  });
+
+  it("should reuse a marked decision record from a later comments page", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("continuationToken=next-page")) {
+        return json({
+          comments: [{ commentId: 91, text: "<!-- sprint-griller:dump:dump-4211:decision:1 -->" }],
+          continuationToken: null,
+        });
+      }
+      if (call.init?.method === "GET") {
+        return json({ comments: [], continuationToken: "next-page" });
+      }
+      return json({ commentId: 999 });
+    });
+
+    await expect(publishDecisionRecord(options(ado.fetch), {
+      storyId: 4211,
+      dumpId: "dump-4211",
+      questionSeq: 1,
+      question: "O TTL é global?",
+      answer: "Sim",
+      recommendation: "Global",
+      decidedBy: "PO + squad",
+      decidedAt: Date.UTC(2026, 7, 6, 14, 30),
+    })).resolves.toMatchObject({ commentId: 91 });
+  });
+});
+
+describe("readDumpCompletion", () => {
+  it("should return completion dump ids from the User Story description", async () => {
+    const ado = fakeAdo(() =>
+      json({
+        id: 4211,
+        rev: 3,
+        fields: {
+          "System.Description": "<!-- sprint-griller:dump:dump-4211:complete -->",
+          "System.WorkItemType": "User Story",
+        },
+      }),
+    );
+
+    await expect(readDumpCompletion(options(ado.fetch), 4211)).resolves.toEqual(["dump-4211"]);
+  });
+});
+
+describe("readIncompleteDumps", () => {
+  it("should return dump ids that left artifacts without a completion marker", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("/comments")) {
+        return json({
+          comments: [{ commentId: 91, text: "<!-- sprint-griller:dump:dump-parcial:decision:1 -->" }],
+        });
+      }
+      return json({
+        id: 4211,
+        rev: 3,
+        fields: {
+          "System.Description": `${SPEC_MARKER}\n<!-- sprint-griller:dump:dump-parcial:spec -->`,
+          "System.WorkItemType": "User Story",
+        },
+      });
+    });
+
+    await expect(readIncompleteDumps(options(ado.fetch), 4211)).resolves.toEqual(["dump-parcial"]);
+  });
+
+  it("should ignore dumps that already have a completion marker", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("/comments")) {
+        return json({
+          comments: [{ commentId: 91, text: "<!-- sprint-griller:dump:dump-ok:decision:1 -->" }],
+        });
+      }
+      return json({
+        id: 4211,
+        rev: 3,
+        fields: {
+          "System.Description": "<!-- sprint-griller:dump:dump-ok:complete -->",
+          "System.WorkItemType": "User Story",
+        },
+      });
+    });
+
+    await expect(readIncompleteDumps(options(ado.fetch), 4211)).resolves.toEqual([]);
+  });
+});
+
+describe("publishDumpCompletion", () => {
+  it("should append the final completion marker with a revision guard", async () => {
+    const ado = fakeAdo((call) => call.init?.method === "PATCH"
+      ? json({ id: 4211 })
+      : json({ id: 4211, rev: 7, fields: { "System.Description": "Spec publicada", "System.WorkItemType": "User Story" } }));
+
+    await publishDumpCompletion(options(ado.fetch), { storyId: 4211, dumpId: "dump-4211" });
+
+    expect(JSON.parse(String(ado.calls.at(-1)?.init?.body))).toEqual([
+      { op: "test", path: "/rev", value: 7 },
+      expect.objectContaining({ value: expect.stringContaining("sprint-griller:dump:dump-4211:complete") }),
+    ]);
   });
 });
 
 describe("publishStorySpec", () => {
   it("should PATCH only the managed description block with a revision guard", async () => {
-    const ado = fakeAdo((call) =>
-      call.init?.method === "PATCH"
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("/workitemtypes/") && call.url.includes("/fields")) {
+        return json({ value: [{ referenceName: "Microsoft.VSTS.Scheduling.StoryPoints" }] });
+      }
+      return call.init?.method === "PATCH"
         ? json({ id: 4211 })
-        : json({ id: 4211, rev: 7, fields: { "System.Description": "<p>Texto do PO</p>" } }),
-    );
+        : json({
+          id: 4211,
+          rev: 7,
+          fields: { "System.Description": "<p>Texto do PO</p>", "System.WorkItemType": "User Story" },
+        });
+    });
 
-    await publishStorySpec(options(ado.fetch), { storyId: 4211, markdown: "# Spec assinada" });
+    await publishStorySpec(options(ado.fetch), { storyId: 4211, dumpId: "dump-4211", markdown: "# Spec assinada", estimate: 8 });
 
-    const patch = ado.calls[1];
+    const patch = ado.calls[2];
     expect(patch?.init?.method).toBe("PATCH");
     expect(patch?.init?.headers).toEqual(
       expect.objectContaining({ "content-type": "application/json-patch+json" }),
@@ -108,20 +260,46 @@ describe("publishStorySpec", () => {
       expect.objectContaining({
         op: "add",
         path: "/fields/System.Description",
-        value: expect.stringContaining("<p>Texto do PO</p>"),
+        value: expect.stringContaining("<h1>Spec assinada</h1>"),
       }),
+      { op: "add", path: "/fields/Microsoft.VSTS.Scheduling.StoryPoints", value: 8 },
     ]);
   });
 
-  it("should report a revision conflict as safe to retry", async () => {
-    const ado = fakeAdo((call) =>
-      call.init?.method === "PATCH"
-        ? json({ message: "revision changed" }, 409)
-        : json({ id: 4211, rev: 7, fields: {} }),
+  it("should skip rewriting a Spec that already carries this dump marker", async () => {
+    const ado = fakeAdo(() =>
+      json({
+        id: 4211,
+        rev: 7,
+        fields: {
+          "System.Description": `${dumpMarker("dump-4211", "spec")}\n<p>Editada no ADO</p>`,
+          "System.WorkItemType": "User Story",
+        },
+      }),
     );
 
+    await publishStorySpec(options(ado.fetch), {
+      storyId: 4211,
+      dumpId: "dump-4211",
+      markdown: "# Spec local",
+      estimate: 8,
+    });
+
+    expect(ado.calls.some((call) => call.init?.method === "PATCH")).toBe(false);
+  });
+
+  it("should report a revision conflict as safe to retry", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("/workitemtypes/") && call.url.includes("/fields")) {
+        return json({ value: [{ referenceName: "Microsoft.VSTS.Scheduling.StoryPoints" }] });
+      }
+      return call.init?.method === "PATCH"
+        ? json({ message: "revision changed" }, 409)
+        : json({ id: 4211, rev: 7, fields: { "System.WorkItemType": "User Story" } });
+    });
+
     await expect(
-      publishStorySpec(options(ado.fetch), { storyId: 4211, markdown: "# Spec" }),
+      publishStorySpec(options(ado.fetch), { storyId: 4211, dumpId: "dump-4211", markdown: "# Spec", estimate: 5 }),
     ).rejects.toMatchObject({ kind: "conflict", message: expect.stringContaining("não foi gravada") });
   });
 
@@ -136,12 +314,245 @@ describe("publishStorySpec", () => {
         },
       }),
     });
-    const ado = fakeAdo((call) =>
-      call.init?.method === "PATCH" ? json({ id: 4211 }) : json({ id: 4211, rev: 7, fields: {} }),
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("/workitemtypes/") && call.url.includes("/fields")) {
+        return json({ value: [{ referenceName: "Microsoft.VSTS.Scheduling.StoryPoints" }] });
+      }
+      return call.init?.method === "PATCH"
+        ? json({ id: 4211 })
+        : json({ id: 4211, rev: 7, fields: { "System.WorkItemType": "User Story" } });
+    });
+
+    await publishStorySpec(
+      { ...options(ado.fetch), logger },
+      { storyId: 4211, dumpId: "dump-4211", markdown: "segredo da spec", estimate: 3 },
     );
 
-    await publishStorySpec({ ...options(ado.fetch), logger }, { storyId: 4211, markdown: "segredo da spec" });
-
     expect(JSON.stringify(lines)).not.toContain("segredo da spec");
+  });
+});
+
+describe("publishChildTasks", () => {
+  const childTasks = {
+    storyId: 4211,
+    dumpId: "dump-4211",
+    specUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+    tasks: [{
+      title: "Criar endpoint",
+      description: "Entrega o CSV.",
+      acceptanceCriteria: ["Retorna o CSV."],
+      blockedBy: [],
+    }],
+  } as const;
+
+  it("should create child Tasks with acceptance criteria, a Spec link, and native blockers", async () => {
+    let nextId = 900;
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
+        return json({ workItemTypes: [{ name: "Task" }] });
+      }
+      if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
+      if (call.init?.method === "PATCH" && call.url.includes("/workitems/")) {
+        return json({ id: nextId++ });
+      }
+      return json({ id: nextId++ });
+    });
+
+    await publishChildTasks(options(ado.fetch), {
+      storyId: 4211,
+      dumpId: "dump-4211",
+      specUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+      tasks: [
+        {
+          title: "Criar endpoint",
+          description: "Entrega o CSV.",
+          acceptanceCriteria: ["Retorna o CSV."],
+          blockedBy: [],
+        },
+        {
+          title: "Mostrar link",
+          description: "",
+          acceptanceCriteria: ["Exibe o link."],
+          blockedBy: ["Criar endpoint"],
+        },
+      ],
+    });
+
+    const bodies = ado.calls.map((call) => String(call.init?.body));
+    expect(bodies.join("\n")).toContain("System.LinkTypes.Hierarchy-Reverse");
+    expect(bodies.join("\n")).toContain("<h2>Critérios de aceite</h2>");
+    expect(bodies.join("\n")).toContain("Spec da US");
+    expect(bodies.join("\n")).toContain("System.LinkTypes.Dependency-Reverse");
+    expect(bodies.join("\n")).not.toContain("## Critérios de aceite");
+    expect(ado.calls.some((call) => call.url.includes("/_apis/wit/workitems/$Task"))).toBe(true);
+  });
+
+  it("should not include operator-authored Task titles in structured logs", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({
+      name: "ado-client",
+      destination: new Writable({
+        write(chunk: Buffer, _encoding, done) {
+          lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+          done();
+        },
+      }),
+    });
+    const ado = fakeAdo((call) =>
+      call.url.includes("workitemtypecategories/Microsoft.TaskCategory")
+        ? json({ workItemTypes: [{ name: "Task" }] })
+        : call.url.includes("/_apis/wit/wiql")
+          ? json({ workItems: [] })
+        : json({ id: 900 }),
+    );
+
+    await publishChildTasks({ ...options(ado.fetch), logger }, {
+      storyId: 4211,
+      dumpId: "dump-4211",
+      specUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+      tasks: [{
+        title: "Transferir dados pessoais de Maria",
+        description: "",
+        acceptanceCriteria: ["Concluído."],
+        blockedBy: [],
+      }],
+    });
+
+    expect(JSON.stringify(lines)).not.toContain("Transferir dados pessoais de Maria");
+  });
+
+  it("should reuse a marked child Task instead of creating it again", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
+        return json({ workItemTypes: [{ name: "Task" }] });
+      }
+      if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [{ id: 900 }] });
+      if (call.url.includes("/_apis/wit/workitemsbatch")) {
+        return json({
+          value: [{
+            id: 900,
+            fields: {
+              "System.Title": "Criar endpoint",
+              "System.Description": "<!-- sprint-griller:dump:dump-4211:task:1 -->",
+            },
+            relations: [],
+          }],
+        });
+      }
+      throw new Error(`escrita inesperada: ${call.url}`);
+    });
+
+    await publishChildTasks(options(ado.fetch), childTasks);
+
+    expect(ado.calls.some((call) => call.init?.method === "PATCH")).toBe(false);
+    const batchBody = JSON.parse(
+      String(ado.calls.find((call) => call.url.includes("/_apis/wit/workitemsbatch"))?.init?.body),
+    ) as { fields?: unknown; $expand?: string };
+    expect(batchBody.fields).toBeUndefined();
+    expect(batchBody.$expand).toBe("Relations");
+  });
+
+  it("should skip Dependency links that already exist when retrying a partial dump", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
+        return json({ workItemTypes: [{ name: "Task" }] });
+      }
+      if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [{ id: 900 }, { id: 901 }] });
+      if (call.url.includes("/_apis/wit/workitemsbatch")) {
+        return json({
+          value: [
+            {
+              id: 900,
+              fields: {
+                "System.Title": "Criar endpoint",
+                "System.Description": "<!-- sprint-griller:dump:dump-4211:task:1 -->",
+              },
+              relations: [],
+            },
+            {
+              id: 901,
+              fields: {
+                "System.Title": "Mostrar link",
+                "System.Description": "<!-- sprint-griller:dump:dump-4211:task:2 -->",
+              },
+              relations: [{
+                rel: "System.LinkTypes.Dependency-Reverse",
+                url: "https://dev.azure.com/acme/Plataforma/_apis/wit/workitems/900",
+              }],
+            },
+          ],
+        });
+      }
+      throw new Error(`escrita inesperada: ${call.url}`);
+    });
+
+    await publishChildTasks(options(ado.fetch), {
+      ...childTasks,
+      tasks: [
+        ...childTasks.tasks,
+        {
+          title: "Mostrar link",
+          description: "",
+          acceptanceCriteria: ["Exibe o link."],
+          blockedBy: ["Criar endpoint"],
+        },
+      ],
+    });
+
+    expect(ado.calls.some((call) => call.init?.method === "PATCH")).toBe(false);
+  });
+
+  it("should report a category lookup failure as safe to retry", async () => {
+    const ado = fakeAdo(() => {
+      throw new TypeError("network down");
+    });
+
+    await expect(publishChildTasks(options(ado.fetch), childTasks)).rejects.toMatchObject({
+      kind: "connection",
+      writeMayHaveSucceeded: false,
+    });
+  });
+
+  it("should report a Task write connection failure as uncertain", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
+        return json({ workItemTypes: [{ name: "Task" }] });
+      }
+      if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
+      throw new TypeError("network down");
+    });
+
+    await expect(publishChildTasks(options(ado.fetch), childTasks)).rejects.toMatchObject({
+      kind: "connection",
+      writeMayHaveSucceeded: true,
+    });
+  });
+
+  it("should report a definite later failure as uncertain after an earlier Task was created", async () => {
+    let writes = 0;
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
+        return json({ workItemTypes: [{ name: "Task" }] });
+      }
+      if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
+      writes += 1;
+      return writes === 1 ? json({ id: 900 }) : json({ message: "invalid Task" }, 400);
+    });
+
+    await expect(publishChildTasks(options(ado.fetch), {
+      ...childTasks,
+      tasks: [
+        ...childTasks.tasks,
+        {
+          title: "Mostrar link",
+          description: "",
+          acceptanceCriteria: ["Exibe o link."],
+          blockedBy: [],
+        },
+      ],
+    })).rejects.toMatchObject({
+      kind: "unexpected",
+      writeMayHaveSucceeded: true,
+    });
   });
 });

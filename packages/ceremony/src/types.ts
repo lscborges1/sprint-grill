@@ -15,6 +15,16 @@ export interface CeremonySession {
   readonly createdAt: number;
   readonly status: SessionStatus;
   readonly failureMessage: string | null;
+  readonly dumpStartedAt: number | null;
+  /** Fingerprint do despejo em curso ou interrompido; null até a primeira tentativa. */
+  readonly dumpId: string | null;
+  /** Spec assinada no beginDump; null até a primeira tentativa. */
+  readonly dumpMarkdown: string | null;
+  /** Tasks assinadas no beginDump; null até a primeira tentativa. */
+  readonly dumpTasksMarkdown: string | null;
+  /** Estimativa assinada no beginDump; null até a primeira tentativa. */
+  readonly dumpEstimate: number | null;
+  readonly dumpedAt: number | null;
 }
 
 export interface CeremonyQuestionOption {
@@ -237,8 +247,23 @@ export interface SpecDraft {
 /** A aba do Operador: o documento vivo mais o preview editável do despejo. */
 export interface DossieState extends DossieDocument {
   readonly sessionId: string;
+  readonly status: SessionStatus;
   /** Fuso capturado na abertura da cerimônia, usado para exibir decisões. */
   readonly timeZone: string;
+  /** Rascunho de Tasks que o agente redigiu no encerramento da cerimônia. */
+  readonly taskPreview: string;
+  /**
+   * Spec, Tasks e estimativa gravadas no beginDump. Sobrevivem ao F5 para o
+   * retry hashear os mesmos inputs — sem isso o fingerprint muda e o despejo
+   * parcial fica irrecuperável.
+   */
+  readonly dumpInputs?: {
+    readonly markdown: string;
+    readonly tasksMarkdown: string;
+    readonly estimate: number;
+  } | undefined;
+  /** O despejo completo já foi persistido; confirmações posteriores são idempotentes. */
+  readonly dumpedAt?: number | undefined;
   readonly spec: {
     readonly generated: string;
     readonly draft: SpecDraft | null;

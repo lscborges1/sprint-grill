@@ -50,6 +50,20 @@ const question = (overrides: Partial<CeremonyQuestion> = {}): CeremonyQuestion =
   ...overrides,
 });
 
+const DUMP_DETAILS = {
+  markdown: "# Spec assinada",
+  tasksMarkdown: "## Task\n\n### Critérios de aceite\n\n- Critério.",
+  estimate: 5,
+} as const;
+
+function beginDump(
+  store: CeremonyStore,
+  sessionId = "thread-1",
+  dumpId = "dump-fingerprint",
+): void {
+  store.beginDump(sessionId, { dumpId, ...DUMP_DETAILS });
+}
+
 describe("openCeremonyStore", () => {
   it("should return the same ceremony when the store is reopened on the same file", () => {
     const file = dbPath();
@@ -72,6 +86,100 @@ describe("openCeremonyStore", () => {
     expect(reopened.getSession("thread-1")?.storyTitle).toBe("Exportar relatório de comissões");
     expect(reopened.countDecisions("thread-1")).toBe(1);
     expect(reopened.currentQuestion("thread-1")?.id).toBe("q2");
+  });
+
+  it("should preserve a completed dump when the store is reopened", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+    first.markDumpCompleted("thread-1");
+    first.close();
+    opened.pop();
+
+    const reopened = open(file);
+
+    expect(reopened.getSession("thread-1")?.dumpedAt).toEqual(expect.any(Number));
+  });
+
+  it("should release a dump interrupted by a process restart", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+    first.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
+    first.close();
+    opened.pop();
+
+    const reopened = open(file);
+    reopened.askQuestions("thread-1", [question()]);
+
+    expect(reopened.currentQuestion("thread-1")?.id).toBe("q1");
+    expect(reopened.getSession("thread-1")?.dumpId).toBe("dump-fingerprint");
+    expect(reopened.getSession("thread-1")?.dumpMarkdown).toBe(DUMP_DETAILS.markdown);
+    expect(reopened.getSession("thread-1")?.dumpTasksMarkdown).toBe(DUMP_DETAILS.tasksMarkdown);
+    expect(reopened.getSession("thread-1")?.dumpEstimate).toBe(DUMP_DETAILS.estimate);
+  });
+
+  it("should keep the dump fingerprint and signed inputs after abort so a retry can reconcile", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(store.getSession("thread-1")).toMatchObject({
+      dumpStartedAt: null,
+      dumpId: "dump-fingerprint",
+      dumpMarkdown: DUMP_DETAILS.markdown,
+      dumpTasksMarkdown: DUMP_DETAILS.tasksMarkdown,
+      dumpEstimate: DUMP_DETAILS.estimate,
+    });
+
+    beginDump(store);
+    expect(store.getSession("thread-1")?.dumpStartedAt).toEqual(expect.any(Number));
+  });
+
+  it("should refuse a retry that changes the dump fingerprint", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(() => beginDump(store, "thread-1", "outro-fingerprint")).toThrow(/Spec|Tasks|estimativa/i);
+    expect(store.getSession("thread-1")?.dumpId).toBe("dump-fingerprint");
+  });
+
+  it("should refuse Spec edits after a partial dump freezes the signed inputs", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: "# Spec diferente",
+        base: "gerado",
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/fingerprint|Spec assinada/i);
+  });
+
+  it("should find an incomplete dump for a story after abort", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.finishSession("thread-1", { status: "encerrada" });
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(store.findIncompleteDumpByStory(4242)?.id).toBe("thread-1");
+  });
+
+  it("should not treat a completed dump as incomplete", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.markDumpCompleted("thread-1");
+
+    expect(store.findIncompleteDumpByStory(4242)).toBeUndefined();
   });
 
   it.each([0, 3])("should refuse a database written by the previous schema %s", (version) => {
@@ -652,6 +760,42 @@ describe("findOpenSessionByStory", () => {
 
     expect(store.findOpenSessionByStory(4242)).toBeUndefined();
     expect(store.getSession("thread-1")?.status).toBe("encerrada");
+  });
+});
+
+describe("dump freeze", () => {
+  it("should reject a decision after the dump has started", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
+
+    expect(() =>
+      store.recordDecision({
+        sessionId: "thread-1",
+        questionId: "q1",
+        answer: "Regra bancária",
+        decidedBy: "PO",
+      }),
+    ).toThrow(/despejo/i);
+  });
+
+  it("should reject questions and consultations while dumping", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
+
+    expect(() => store.askQuestions("thread-1", [question()])).toThrow(/despejo/i);
+    expect(() => store.openConsultation("thread-1", "Qual campo a API aceita?")).toThrow(/despejo/i);
+  });
+
+  it("should refuse completion when the decision revision changed", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
+
+    expect(() => store.markDumpCompleted("thread-1", 1)).toThrow(/conclusão/i);
+    expect(store.getSession("thread-1")?.dumpedAt).toBeNull();
   });
 });
 

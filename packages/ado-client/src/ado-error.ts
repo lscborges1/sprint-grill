@@ -11,12 +11,19 @@ export type AdoErrorKind =
   | "unexpected-response"
   | "unexpected";
 
+export interface AdoErrorOptions extends ErrorOptions {
+  /** A requisição de escrita pode ter chegado ao ADO antes da falha. */
+  readonly writeMayHaveSucceeded?: boolean;
+}
+
 export class AdoError extends Error {
   override readonly name = "AdoError";
   readonly kind: AdoErrorKind;
+  readonly writeMayHaveSucceeded: boolean;
 
-  constructor(kind: AdoErrorKind, message: string, options?: ErrorOptions) {
+  constructor(kind: AdoErrorKind, message: string, options: AdoErrorOptions = {}) {
     super(message, options);
     this.kind = kind;
+    this.writeMayHaveSucceeded = options.writeMayHaveSucceeded ?? false;
   }
 }

@@ -7,6 +7,7 @@ import {
   consultationInstructions,
   consultationPrompt,
 } from "./prompt";
+import { TASK_DRAFT_START } from "./task-draft";
 import type { CeremonyDecision } from "./types";
 
 const repos: SquadConfig["repos"] = {
@@ -50,6 +51,12 @@ describe("ceremonyInstructions", () => {
   it("should require a recommendation on every question", () => {
     expect(ceremonyInstructions(repos)).toMatch(/recommendation/);
   });
+
+  it("should require a task preview when the agent closes the ceremony", () => {
+    expect(ceremonyInstructions(repos)).toContain(TASK_DRAFT_START);
+    expect(ceremonyInstructions(repos)).toContain("Critérios de aceite");
+    expect(ceremonyInstructions(repos)).toContain("conforme discutido");
+  });
 });
 
 describe("ceremonyOpeningPrompt", () => {
@@ -60,6 +67,7 @@ describe("ceremonyOpeningPrompt", () => {
     expect(prompt).toContain("Exportar relatório de comissões");
     expect(prompt).toContain("Sem regra de arredondamento.");
     expect(prompt).toContain("O gerente precisa baixar o CSV.");
+    expect(prompt).toContain(story.url);
   });
 
   it("should say the story has no description when the PO left it empty", () => {

@@ -7,12 +7,21 @@ export type {
 } from "./investigation/publish-investigation";
 export {
   publishDecisionRecord,
+  publishChildTasks,
+  publishDumpCompletion,
   publishStorySpec,
+  readDumpCompletion,
+  readIncompleteDumps,
+  dumpCompletionMarker,
+  dumpMarker,
   renderDecisionRecordMarkdown,
   replaceManagedSpec,
+  markdownToAdoHtml,
 } from "./refinement/publish-refinement";
 export type {
   DecisionRecordToPublish,
+  ChildTaskToPublish,
+  ChildTasksToPublish,
   PublishedDecisionRecord,
   StorySpecToPublish,
 } from "./refinement/publish-refinement";
@@ -30,11 +39,12 @@ export type {
   RolloverCounts,
   SprintRollover,
 } from "./metrics/rollover";
-// Quem gravar artefato novo no ADO precisa embutir o marcador — é o que o
-// picker lê para inferir o status. Ver README, "Status de refinamento".
+// O picker lê a Investigação e a conclusão do dump para inferir o status.
+// SPEC_MARKER identifica o bloco gerenciado, mas não significa "refinada".
 export {
   INVESTIGATION_MARKER,
   SPEC_MARKER,
+  DUMP_COMPLETION_MARKER_PREFIX,
 } from "./refinement/refinement-status";
 export type { RefinementStatus } from "./refinement/refinement-status";
 export type { AdoClientOptions } from "./rest/ado-rest";

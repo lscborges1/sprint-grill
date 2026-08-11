@@ -20,6 +20,9 @@ export const INVESTIGATION_MARKER = "<!-- sprint-griller:investigacao -->";
  */
 export const SPEC_MARKER = "<!-- sprint-griller:spec -->";
 
+/** Só é gravado após Spec, Tasks, Registros e ata terminarem no ADO. */
+export const DUMP_COMPLETION_MARKER_PREFIX = "<!-- sprint-griller:dump:";
+
 /** Textos da US que podem carregar artefatos da ferramenta. */
 export interface WorkItemArtifacts {
   readonly description: string | undefined;
@@ -29,9 +32,15 @@ export interface WorkItemArtifacts {
 export function inferRefinementStatus(
   artifacts: WorkItemArtifacts,
 ): RefinementStatus {
-  if (hasMarker(artifacts, SPEC_MARKER)) return "refinada";
+  if (hasCompletionMarker(artifacts)) return "refinada";
   if (hasMarker(artifacts, INVESTIGATION_MARKER)) return "investigada";
   return "sem-investigacao";
+}
+
+function hasCompletionMarker(artifacts: WorkItemArtifacts): boolean {
+  return [artifacts.description ?? "", ...artifacts.comments].some((text) =>
+    /<!-- sprint-griller:dump:[^:]+:complete -->/.test(text),
+  );
 }
 
 function hasMarker(artifacts: WorkItemArtifacts, marker: string): boolean {

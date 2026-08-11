@@ -11,7 +11,7 @@ Requer Node 22+ e pnpm 11+.
 ```bash
 pnpm install
 
-# 1. Config da squad: repos locais + org/projeto do ADO.
+# 1. Config da squad: repos locais + organização/projeto do ADO.
 cp sprint-griller.config.example.json sprint-griller.config.json
 $EDITOR sprint-griller.config.json
 
@@ -68,9 +68,12 @@ A tela inicial lista as US da iteration atual e mostra em que ponto do fluxo cad
 | Marcador | Artefato que o carrega | Status resultante |
 |---|---|---|
 | `<!-- sprint-griller:investigacao -->` | Investigação publicada como comment na US | investigada |
-| `<!-- sprint-griller:spec -->` | Spec da US gravada pelo despejo (comment ou description) | refinada |
+| `<!-- sprint-griller:dump:<dumpId>:complete -->` | Prova final gravada na description após todo o despejo terminar | refinada |
 
-Quem grava um artefato novo precisa embutir o marcador correspondente (`INVESTIGATION_MARKER` / `SPEC_MARKER`, exportados por `@sprint-griller/ado-client`) — é o que fecha o ciclo entre despejo e picker.
+Quem publica a Investigação precisa embutir `INVESTIGATION_MARKER`. O despejo só
+pode chamar `publishDumpCompletion` depois de Spec, Tasks, estimativa, Registros
+e ata existirem no ADO. `SPEC_MARKER` identifica o bloco gerenciado da Spec, mas
+sozinho não torna a US refinada.
 
 ## Investigação
 
@@ -123,8 +126,8 @@ novo: `HTTP 4xx` garante que nada foi gravado, mas `5xx`, conexão que cai no me
 ou resposta fora do contrato podem ter deixado o comment lá — republicar às cegas
 é o que produz comment duplicado na US.
 
-> O PAT precisa de escopo de **leitura e escrita** de work items. Só de leitura,
-> o disparo funciona e a publicação volta com 403.
+> O PAT precisa do escopo **Work Items (leitura e escrita)** para publicar a
+> Spec, as Tasks, a estimativa e os Registros de decisão na própria US.
 
 ## Baseline de rolagem
 

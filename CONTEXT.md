@@ -30,7 +30,7 @@ Linguagem ubíqua do domínio de refinamento. Termos cristalizados nas sessões 
 
 **Despejo** — o momento final da cerimônia em que a sessão grava tudo no Azure DevOps: spec da US, tasks filhas, estimativa e Registros de decisão. Passa pelo gate de maturidade: pendências abertas são mostradas e despejar com elas é escolha consciente do Operador.
 
-**Spec da US** — artefato único de dupla audiência (humano + agente) que consolida o refinamento: decisões, contexto de impacto da Investigação, unknowns explícitos, fora-de-escopo. Vive na própria US (description/wiki linkada); não existe "ata" separada.
+**Spec da US** — artefato único de dupla audiência (humano + agente) que consolida o refinamento: decisões, contexto de impacto da Investigação, unknowns explícitos, fora-de-escopo. Vive na descrição da própria US; não existe "ata" separada.
 
 **Task agent-ready** — work item filho da US: slice vertical autocontida, dimensionada para uma sessão de agente, com dependências como `Blocked by` nativo do Azure DevOps — insumo direto para futura orquestração de agentes pegar tasks sem bloqueio.
 

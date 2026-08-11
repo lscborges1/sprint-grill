@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./palco-state": "./src/palco-state.ts",
     "./session-state": "./src/session-state.ts",
-    "./spec": "./src/spec.ts"
+    "./spec": "./src/spec.ts",
+    "./task-draft": "./src/task-draft.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

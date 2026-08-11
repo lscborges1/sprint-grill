@@ -79,6 +79,15 @@ export interface AttachDecisionRecordInput {
   readonly recordUrl: string;
 }
 
+export interface BeginDumpInput {
+  readonly dumpId: string;
+  /** Spec que entrou no fingerprint — precisa voltar igual no retry. */
+  readonly markdown: string;
+  /** Markdown de Tasks que entrou no fingerprint — precisa voltar igual no retry. */
+  readonly tasksMarkdown: string;
+  readonly estimate: number;
+}
+
 export type FinishSessionOutcome =
   | { readonly status: "encerrada" }
   | { readonly status: "falhou"; readonly message: string };
@@ -93,6 +102,8 @@ export interface CeremonyStore {
   createSession(input: CreateSessionInput): CeremonySession;
   getSession(sessionId: string): CeremonySession | undefined;
   findOpenSessionByStory(storyId: number): CeremonySession | undefined;
+  /** Sessão cujo despejo começou e ainda não concluiu — bloqueia nova cerimônia da mesma US. */
+  findIncompleteDumpByStory(storyId: number): CeremonySession | undefined;
   finishSession(sessionId: string, outcome: FinishSessionOutcome): void;
   askQuestions(sessionId: string, asked: readonly CeremonyQuestion[]): void;
   currentQuestion(sessionId: string): PersistedCeremonyQuestion | undefined;
@@ -102,6 +113,17 @@ export interface CeremonyStore {
   recordDecision(input: RecordDecisionInput): CeremonyDecision;
   /** Persiste o comment criado no ADO para que um retry não duplique o Registro. */
   attachDecisionRecord(input: AttachDecisionRecordInput): void;
+  /**
+   * Congela a cerimônia e grava o fingerprint do despejo com os inputs assinados.
+   * Retries posteriores precisam reutilizar o mesmo `dumpId` — senão Tasks já
+   * marcadas no ADO deixam de ser reconhecidas e o retry cria duplicatas. Spec,
+   * Markdown de Tasks e estimativa ficam gravados para o F5 restaurar o form.
+   */
+  beginDump(sessionId: string, input: BeginDumpInput): void;
+  /** Libera o congelamento; mantém o `dumpId` para o retry reconciliar no ADO. */
+  abortDump(sessionId: string): void;
+  /** Persiste o sucesso para que um novo processo não repita as Tasks. */
+  markDumpCompleted(sessionId: string, expectedDecisionCount?: number): void;
   countDecisions(sessionId: string): number;
   lastDecision(sessionId: string): CeremonyDecision | undefined;
   listDecisions(sessionId: string): readonly CeremonyDecision[];
@@ -193,12 +215,44 @@ export function openCeremonyStore(
     );
   }
 
+  const recoveredDumps = sqlite
+    .prepare(
+      `UPDATE sessions
+       SET dump_started_at = NULL
+       WHERE dump_started_at IS NOT NULL AND dumped_at IS NULL`,
+    )
+    .run();
+  if (recoveredDumps.changes > 0) {
+    options.logger?.warn(
+      { dumps: recoveredDumps.changes },
+      "despejos interrompidos liberados durante a recuperação",
+    );
+  }
+
   const db = drizzle(sqlite);
 
   function requireSession(sessionId: string): CeremonySession {
     const session = store.getSession(sessionId);
     if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
     return session;
+  }
+
+  function assertDumpUnlocked(sessionId: string): void {
+    const session = requireSession(sessionId);
+    if (session.dumpStartedAt !== null) {
+      throw new CeremonyError("a cerimônia está em despejo e não aceita novas alterações.");
+    }
+  }
+
+  /** Spec e demais inputs do fingerprint ficam congelados até o despejo concluir. */
+  function assertDumpInputsUnlocked(sessionId: string): void {
+    assertDumpUnlocked(sessionId);
+    const session = requireSession(sessionId);
+    if (session.dumpId !== null && session.dumpedAt === null) {
+      throw new CeremonyError(
+        "um despejo parcial já assinou a Spec — use a mesma no retry; editar agora mudaria o fingerprint.",
+      );
+    }
   }
 
   const store: CeremonyStore = {
@@ -208,6 +262,12 @@ export function openCeremonyStore(
         createdAt: Date.now(),
         status: "ativa",
         failureMessage: null,
+        dumpStartedAt: null,
+        dumpId: null,
+        dumpMarkdown: null,
+        dumpTasksMarkdown: null,
+        dumpEstimate: null,
+        dumpedAt: null,
       };
       db.insert(sessions).values(session).run();
       return session;
@@ -226,6 +286,19 @@ export function openCeremonyStore(
         .get();
     },
 
+    findIncompleteDumpByStory(storyId) {
+      return db
+        .select()
+        .from(sessions)
+        .where(and(
+          eq(sessions.storyId, storyId),
+          sql`${sessions.dumpId} IS NOT NULL`,
+          sql`${sessions.dumpedAt} IS NULL`,
+        ))
+        .orderBy(desc(sessions.createdAt))
+        .get();
+    },
+
     finishSession(sessionId, outcome) {
       db.update(sessions)
         .set({
@@ -237,7 +310,7 @@ export function openCeremonyStore(
     },
 
     askQuestions(sessionId, asked) {
-      requireSession(sessionId);
+      assertDumpUnlocked(sessionId);
       if (asked.length === 0) return;
 
       const askedAt = Date.now();
@@ -319,6 +392,16 @@ export function openCeremonyStore(
     },
 
     recordDecision({ sessionId, questionId, answer, decidedBy, recordId, recordUrl }) {
+      const session = db
+        .select({ dumpStartedAt: sessions.dumpStartedAt, dumpedAt: sessions.dumpedAt })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .get();
+      if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+      if (session.dumpStartedAt !== null || session.dumpedAt !== null) {
+        throw new CeremonyError("a cerimônia está em despejo e não aceita novas decisões.");
+      }
+
       const who = decidedBy.trim();
       if (who === "") throw new CeremonyError("registre quem decidiu antes de gravar a decisão.");
 
@@ -412,6 +495,98 @@ export function openCeremonyStore(
       }
     },
 
+    beginDump(sessionId, input) {
+      const fingerprint = input.dumpId.trim();
+      if (fingerprint === "") {
+        throw new CeremonyError("o despejo precisa de um fingerprint antes de começar.");
+      }
+      const markdown = input.markdown;
+      if (markdown.trim() === "") {
+        throw new CeremonyError("o despejo precisa da Spec assinada antes de começar.");
+      }
+      const tasksMarkdown = input.tasksMarkdown;
+      if (tasksMarkdown.trim() === "") {
+        throw new CeremonyError("o despejo precisa das Tasks assinadas antes de começar.");
+      }
+      if (!Number.isFinite(input.estimate) || input.estimate <= 0) {
+        throw new CeremonyError("o despejo precisa de uma estimativa positiva antes de começar.");
+      }
+
+      const session = db
+        .select({
+          dumpStartedAt: sessions.dumpStartedAt,
+          dumpId: sessions.dumpId,
+          dumpedAt: sessions.dumpedAt,
+        })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .get();
+      if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+      if (session.dumpedAt !== null) {
+        throw new CeremonyError("a cerimônia já está em despejo ou já foi despejada.");
+      }
+      if (session.dumpStartedAt !== null) {
+        throw new CeremonyError("a cerimônia já está em despejo ou já foi despejada.");
+      }
+      if (session.dumpId !== null && session.dumpId !== fingerprint) {
+        throw new CeremonyError(
+          "o despejo já começou com outra Spec, outras Tasks ou outra estimativa — use os mesmos valores no retry.",
+        );
+      }
+
+      const result = db
+        .update(sessions)
+        .set({
+          dumpStartedAt: Date.now(),
+          dumpId: fingerprint,
+          dumpMarkdown: markdown,
+          dumpTasksMarkdown: tasksMarkdown,
+          dumpEstimate: input.estimate,
+        })
+        .where(and(
+          eq(sessions.id, sessionId),
+          sql`${sessions.dumpStartedAt} IS NULL`,
+          sql`${sessions.dumpedAt} IS NULL`,
+          session.dumpId === null
+            ? sql`${sessions.dumpId} IS NULL`
+            : eq(sessions.dumpId, fingerprint),
+        ))
+        .run();
+      if (result.changes !== 1) {
+        throw new CeremonyError("a cerimônia já está em despejo ou já foi despejada.");
+      }
+    },
+
+    abortDump(sessionId) {
+      db
+        .update(sessions)
+        .set({ dumpStartedAt: null })
+        .where(and(
+          eq(sessions.id, sessionId),
+          sql`${sessions.dumpStartedAt} IS NOT NULL`,
+          sql`${sessions.dumpedAt} IS NULL`,
+        ))
+        .run();
+    },
+
+    markDumpCompleted(sessionId, expectedDecisionCount) {
+      const expectedDecisions = expectedDecisionCount === undefined
+        ? undefined
+        : sql`(SELECT count(*) FROM decisions WHERE session_id = ${sessionId}) = ${expectedDecisionCount}`;
+      const result = db
+        .update(sessions)
+        .set({ dumpStartedAt: null, dumpedAt: Date.now() })
+        .where(and(
+          eq(sessions.id, sessionId),
+          ...(expectedDecisions === undefined ? [] : [expectedDecisions]),
+          sql`${sessions.dumpedAt} IS NULL`,
+        ))
+        .run();
+      if (result.changes !== 1) {
+        throw new CeremonyError("não foi possível persistir a conclusão do despejo.");
+      }
+    },
+
     countDecisions(sessionId) {
       const row = db
         .select({ total: sql<number>`count(*)` })
@@ -442,7 +617,7 @@ export function openCeremonyStore(
     },
 
     openConsultation(sessionId, question) {
-      requireSession(sessionId);
+      assertDumpUnlocked(sessionId);
 
       const asked = question.trim();
       if (asked === "") throw new CeremonyError("escreva a pergunta de fato para o agente.");
@@ -479,6 +654,7 @@ export function openCeremonyStore(
         .get();
 
       if (!open) throw new CeremonyError(`a consulta ${consultationId} não está aberta.`);
+      assertDumpUnlocked(open.sessionId);
 
       const answeredAt = Date.now();
       db.transaction((tx) => {
@@ -570,6 +746,7 @@ export function openCeremonyStore(
     },
 
     appendEvent(sessionId, event) {
+      assertDumpUnlocked(sessionId);
       db.insert(events)
         .values({ sessionId, at: Date.now(), kind: event.kind, payload: JSON.stringify(event) })
         .run();
@@ -601,7 +778,7 @@ export function openCeremonyStore(
     },
 
     saveSpecDraft({ sessionId, markdown, base, expectedSavedAt, overwrite = false }) {
-      requireSession(sessionId);
+      assertDumpInputsUnlocked(sessionId);
 
       // Só valida vazio: `.trim()` no conteúdo apagaria Markdown legítimo
       // (ex.: bloco de código indentado na primeira linha).
@@ -686,6 +863,7 @@ export function openCeremonyStore(
     },
 
     discardSpecDraft({ sessionId, expectedSavedAt }) {
+      assertDumpInputsUnlocked(sessionId);
       const discard = sqlite.transaction(() => {
         const current = db
           .select({ savedAt: specDrafts.savedAt })

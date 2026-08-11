@@ -10,7 +10,7 @@ const HEARTBEAT_MS = 15_000;
  */
 export function sessionEventStream<T>(
   request: Request,
-  initial: T,
+  readCurrent: () => T,
   subscribe: (send: (state: T) => void) => () => void,
 ): Response {
   const encoder = new TextEncoder();
@@ -30,9 +30,12 @@ export function sessionEventStream<T>(
       };
       const send = (state: T): void => write(`data: ${JSON.stringify(state)}\n\n`);
 
-      send(initial);
-
       const unsubscribe = subscribe(send);
+      // Assinar antes de ler o snapshot fecha a janela em que uma mudança
+      // poderia acontecer depois da leitura da rota e antes do listener existir.
+      // Se a mudança vier durante `subscribe`, o listener a envia e este
+      // snapshot a repete no máximo uma vez, sempre com o estado mais recente.
+      send(readCurrent());
       const heartbeat = setInterval(() => write(": ping\n\n"), HEARTBEAT_MS);
 
       stop = () => {

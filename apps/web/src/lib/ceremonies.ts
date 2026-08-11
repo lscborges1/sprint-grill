@@ -14,6 +14,7 @@ import type {
   DiscardSpecDraftInput,
   PalcoState,
   SaveSpecDraftInput,
+  SpecDraft,
 } from "@sprint-griller/ceremony";
 import { defaultCeremonyDbPath } from "@sprint-griller/core";
 import { z } from "zod";
@@ -187,9 +188,10 @@ export function getDossie(sessionId: string): DossieState | undefined {
 }
 
 /** Grava a edição do Operador e avisa as telas — o despejo é outro passo. */
-export function saveSpecDraft(input: SaveSpecDraftInput): void {
-  getStore().saveSpecDraft(input);
+export function saveSpecDraft(input: SaveSpecDraftInput): SpecDraft {
+  const draft = getStore().saveSpecDraft(input);
   publish(input.sessionId);
+  return draft;
 }
 
 export function discardSpecDraft(input: DiscardSpecDraftInput): void {

@@ -3,6 +3,11 @@
 import { AgentRuntimeError } from "@sprint-griller/agent-runtime";
 import { CeremonyError } from "@sprint-griller/ceremony";
 import { redirect } from "next/navigation";
+import { z } from "zod";
+import type {
+  DiscardSpecDraftActionState,
+  SaveSpecDraftActionState,
+} from "./spec-draft-action-state";
 import {
   askFact,
   consultationSchema,
@@ -95,9 +100,9 @@ export async function askFactAction(
  * revisado no despejo.
  */
 export async function saveSpecDraftAction(
-  _previous: string | null,
+  _previous: SaveSpecDraftActionState,
   formData: FormData,
-): Promise<string | null> {
+): Promise<SaveSpecDraftActionState> {
   const parsed = specDraftSchema.safeParse({
     sessionId: formData.get("sessionId"),
     markdown: formData.get("markdown"),
@@ -107,40 +112,46 @@ export async function saveSpecDraftAction(
   });
 
   if (!parsed.success) {
-    return parsed.error.issues[0]?.message ?? "Documento inválido.";
+    return { status: "error", message: parsed.error.issues[0]?.message ?? "Documento inválido." };
   }
 
   try {
-    saveSpecDraft(parsed.data);
-    return null;
+    const draft = saveSpecDraft(parsed.data);
+    return { status: "success", savedAt: draft.savedAt };
   } catch (error) {
     if (!(error instanceof CeremonyError)) throw error;
     logger.error({ err: error, sessionId: parsed.data.sessionId }, "edição do Dossiê recusada");
-    return error.message;
+    return { status: "error", message: error.message };
   }
 }
 
 /** Joga a edição fora e volta ao documento gerado do que a cerimônia gravou. */
 export async function discardSpecDraftAction(
-  _previous: string | null,
+  _previous: DiscardSpecDraftActionState,
   formData: FormData,
-): Promise<string | null> {
-  const parsed = discardSpecDraftSchema.safeParse({
+): Promise<DiscardSpecDraftActionState> {
+  const requestId = formData.get("requestId");
+  const parsed = discardSpecDraftSchema.extend({ requestId: z.string().min(1).max(128) }).safeParse({
     sessionId: formData.get("sessionId"),
     expectedSavedAt: formData.get("expectedSavedAt") ?? "",
+    requestId,
   });
 
   if (!parsed.success) {
-    return parsed.error.issues[0]?.message ?? "Edição inválida.";
+    return {
+      status: "error",
+      requestId: typeof requestId === "string" ? requestId : "",
+      message: parsed.error.issues[0]?.message ?? "Edição inválida.",
+    };
   }
 
   try {
     discardSpecDraft(parsed.data);
-    return null;
+    return { status: "success", requestId: parsed.data.requestId };
   } catch (error) {
     if (!(error instanceof CeremonyError)) throw error;
     logger.error({ err: error, sessionId: parsed.data.sessionId }, "descarte do Dossiê recusado");
-    return error.message;
+    return { status: "error", requestId: parsed.data.requestId, message: error.message };
   }
 }
 /** Retoma uma cerimônia cujo turno morreu com o processo. */

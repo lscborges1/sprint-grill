@@ -82,13 +82,13 @@ function decisionEntry(decision: CeremonyDecision, timeZone: string): string {
   return [
     `- **${decision.question}** — ${decision.answer}`,
     `  - Recomendação do agente: ${decision.recommendation}`,
-    `  - ${italic(`Decidido por ${decision.decidedBy} em ${formatWhen(decision.decidedAt, timeZone)}.`)}`,
+    `  - ${italic(`Decidido por ${decision.decidedBy} em ${formatDecisionWhen(decision.decidedAt, timeZone)}.`)}`,
     record,
   ].filter((line): line is string => line !== undefined).join("\n");
 }
 
 /** Hora local do Operador: o documento é lido por quem estava na sala. */
-function formatWhen(at: number, timeZone: string): string {
+export function formatDecisionWhen(at: number, timeZone: string): string {
   const when = new Date(at);
   const date = when.toLocaleDateString("pt-BR", { dateStyle: "short", timeZone });
   const time = when.toLocaleTimeString("pt-BR", { timeStyle: "short", timeZone });

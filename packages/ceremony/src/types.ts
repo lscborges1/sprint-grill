@@ -108,6 +108,18 @@ export type CeremonyConsultation =
   | (ConsultationAsked & { readonly status: "buscando" })
   | (ConsultationAsked & ConsultationOutcome & { readonly answeredAt: number });
 
+/** Consulta que respondeu, mas cuja alegação não passou pela checagem no disco. */
+export type UnverifiedConsultation = Extract<
+  CeremonyConsultation,
+  { readonly status: "sem-lastro" }
+>;
+
+/** Consulta factual cuja resposta e evidências passaram pela checagem no disco. */
+export type VerifiedConsultation = Extract<
+  CeremonyConsultation,
+  { readonly status: "respondida" }
+>;
+
 /** O transcript. Deltas de mensagem não entram: ruído não é registro. */
 export type TranscriptEvent =
   | { readonly kind: "mensagem"; readonly text: string }
@@ -225,6 +237,8 @@ export interface SpecDraft {
 /** A aba do Operador: o documento vivo mais o preview editável do despejo. */
 export interface DossieState extends DossieDocument {
   readonly sessionId: string;
+  /** Fuso capturado na abertura da cerimônia, usado para exibir decisões. */
+  readonly timeZone: string;
   readonly spec: {
     readonly generated: string;
     readonly draft: SpecDraft | null;

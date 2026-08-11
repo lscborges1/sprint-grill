@@ -35,6 +35,7 @@ const decisionSchema = z.object({
  */
 export const dossieStateSchema: z.ZodType<DossieState> = z.object({
   sessionId: z.string(),
+  timeZone: z.string(),
   story: storySchema,
   decisions: z.array(decisionSchema),
   pending: z.array(z.object({ id: z.string(), question: z.string() })),

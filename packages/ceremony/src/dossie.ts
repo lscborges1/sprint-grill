@@ -1,7 +1,16 @@
-import { REPORT_SECTIONS } from "@sprint-griller/investigation";
+import {
+  REPORT_SECTION_NAMES,
+  REPORT_SECTIONS,
+  reportSectionMarker,
+} from "@sprint-griller/investigation";
 import { renderSpecMarkdown } from "./spec";
 import type { CeremonyStore } from "./store";
-import type { DossieDocument, DossieState } from "./types";
+import type {
+  DossieDocument,
+  DossieState,
+  UnverifiedConsultation,
+  VerifiedConsultation,
+} from "./types";
 
 const REPORT_HEADINGS = Object.values(REPORT_SECTIONS).map((section) => section.heading);
 
@@ -25,14 +34,21 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
       question: asked.question,
     })),
     investigation: {
-      impact: sectionOf(session.investigationMarkdown, REPORT_SECTIONS.impacts.heading),
-      unverified: sectionOf(session.investigationMarkdown, REPORT_SECTIONS.unverified.heading),
+      impact: verifiedContext(
+        sectionOf(session.investigationMarkdown, "impacts"),
+        store.listVerifiedConsultations(sessionId),
+      ),
+      unverified: unverifiedContext(
+        sectionOf(session.investigationMarkdown, "unverified"),
+        store.listUnverifiedConsultations(sessionId),
+      ),
     },
   };
 
   return {
     ...document,
     sessionId,
+    timeZone: session.timeZone,
     spec: {
       generated: renderSpecMarkdown(document, session.timeZone),
       draft: store.getSpecDraft(sessionId) ?? null,
@@ -40,16 +56,107 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
   };
 }
 
+/** A resposta factual que fechou com o disco é impacto conhecido, não hipótese. */
+function verifiedContext(
+  investigation: string,
+  consultations: readonly VerifiedConsultation[],
+): string {
+  return consultationContext(investigation, consultations, renderVerifiedConsultation);
+}
+
+function renderVerifiedConsultation({
+  question,
+  answer,
+  citations,
+}: VerifiedConsultation): string {
+  return [
+    "### Consulta ao vivo verificada",
+    `**Pergunta:** ${question}`,
+    `**Resposta:** ${answer}`,
+    [
+      "**Evidências:**",
+      ...citations.map(
+        (citation) =>
+          `- \`${citation.repo}:${citation.path}${citation.symbol ? `#${citation.symbol}` : ""}\``,
+      ),
+    ].join("\n"),
+  ].join("\n\n");
+}
+
 /**
- * O trecho da Investigação sob um heading. Recortar por título é exato aqui, e
- * não heurística: o Markdown da Investigação foi renderizado por código
- * ([ADR 0002](../../../docs/adr/0002-escrita-no-ado-e-deterministica.md)), com
- * estes mesmos headings — que vêm do `REPORT_SECTIONS`, não de uma cópia.
- *
- * Markdown de outro formato (uma sessão antiga, um relatório colado à mão) sai
- * como seção vazia: a Spec mostra o vazio em vez de inventar contexto.
+ * A consulta que não fechou com o disco não desaparece quando a sala termina:
+ * a resposta e o motivo seguem para "Não verificado", sem contaminar impacto.
  */
-function sectionOf(markdown: string, heading: string): string {
+function unverifiedContext(
+  investigation: string,
+  consultations: readonly UnverifiedConsultation[],
+): string {
+  return consultationContext(investigation, consultations, renderUnverifiedConsultation);
+}
+
+/** Junta a seção persistida às consultas do mesmo tipo, sem separadores vazios. */
+function consultationContext<T>(
+  investigation: string,
+  consultations: readonly T[],
+  render: (consultation: T) => string,
+): string {
+  return [investigation, ...consultations.map(render)]
+    .filter((entry) => entry !== "")
+    .join("\n\n");
+}
+
+function renderUnverifiedConsultation({
+  question,
+  answer,
+  motivo,
+}: UnverifiedConsultation): string {
+  return [
+    "### Consulta ao vivo sem lastro",
+    `**Pergunta:** ${question}`,
+    `**Resposta:** ${answer}`,
+    `**Falha de grounding:** ${motivo}`,
+  ].join("\n\n");
+}
+
+/**
+ * O trecho da Investigação sob um marcador estrutural. O Markdown de claims é
+ * livre para ter headings, então só o marcador invisível emitido pelo renderer
+ * delimita uma seção nova.
+ *
+ * Relatórios antigos sem marcador ainda usam os headings canônicos; Markdown de
+ * outro formato sai como seção vazia em vez de inventar contexto.
+ */
+function sectionOf(
+  markdown: string,
+  section: (typeof REPORT_SECTION_NAMES)[number],
+): string {
+  const marked = markedSectionOf(markdown, section);
+  return marked ?? legacySectionOf(markdown, REPORT_SECTIONS[section].heading);
+}
+
+function markedSectionOf(
+  markdown: string,
+  section: (typeof REPORT_SECTION_NAMES)[number],
+): string | undefined {
+  const opening = `${reportSectionMarker(section)}\n\n## ${REPORT_SECTIONS[section].heading}\n`;
+  const start = markdown.indexOf(opening);
+  if (start === -1) return undefined;
+
+  const body = markdown.slice(start + opening.length);
+  const end = REPORT_SECTION_NAMES.filter((candidate) => candidate !== section)
+    .map(
+      (candidate) =>
+        body.indexOf(
+          `\n\n${reportSectionMarker(candidate)}\n\n## ${REPORT_SECTIONS[candidate].heading}\n`,
+        ),
+    )
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0];
+  return (end === undefined ? body : body.slice(0, end)).trim();
+}
+
+/** Compatibilidade para investigações renderizadas antes dos marcadores. */
+function legacySectionOf(markdown: string, heading: string): string {
   const opening = `\n## ${heading}\n`;
   const start = markdown.indexOf(opening);
   if (start === -1) return "";

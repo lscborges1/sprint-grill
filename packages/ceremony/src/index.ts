@@ -43,4 +43,6 @@ export type {
   StoryRef,
   TranscriptEntry,
   TranscriptEvent,
+  UnverifiedConsultation,
+  VerifiedConsultation,
 } from "./types";

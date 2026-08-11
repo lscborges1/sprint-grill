@@ -16,5 +16,9 @@ export async function GET(
   const initial = getDossie(sessionId);
   if (!initial) return new Response("cerimônia não encontrada", { status: 404 });
 
-  return sessionEventStream(request, initial, (send) => subscribeToDossie(sessionId, send));
+  return sessionEventStream(
+    request,
+    () => getDossie(sessionId) ?? initial,
+    (send) => subscribeToDossie(sessionId, send),
+  );
 }

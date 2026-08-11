@@ -20,6 +20,9 @@ export {
   MARKDOWN_PREVIEW,
   REJECTED_BLURB,
   REJECTED_HEADING,
+  REPORT_SECTION_NAMES,
   REPORT_SECTIONS,
   formatCitation,
+  reportSectionMarker,
 } from "./vocabulary";
+export type { ReportSectionName } from "./vocabulary";

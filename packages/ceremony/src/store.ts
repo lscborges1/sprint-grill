@@ -27,6 +27,8 @@ import type {
   SpecDraft,
   TranscriptEntry,
   TranscriptEvent,
+  UnverifiedConsultation,
+  VerifiedConsultation,
 } from "./types";
 
 export interface OpenCeremonyStoreOptions {
@@ -102,6 +104,10 @@ export interface CeremonyStore {
   openConsultation(sessionId: string, question: string): CeremonyConsultation;
   answerConsultation(consultationId: string, outcome: ConsultationOutcome): void;
   lastConsultation(sessionId: string): CeremonyConsultation | undefined;
+  /** Respostas ao vivo que passaram pela checagem e entram como impacto conhecido. */
+  listVerifiedConsultations(sessionId: string): readonly VerifiedConsultation[];
+  /** Respostas ao vivo que precisam constar como hipótese, não como fato. */
+  listUnverifiedConsultations(sessionId: string): readonly UnverifiedConsultation[];
   appendEvent(sessionId: string, event: TranscriptEvent): void;
   listTranscript(sessionId: string): readonly TranscriptEntry[];
   saveSpecDraft(input: SaveSpecDraftInput): SpecDraft;
@@ -498,6 +504,38 @@ export function openCeremonyStore(
       return row && toConsultation(row);
     },
 
+    listVerifiedConsultations(sessionId) {
+      return db
+        .select()
+        .from(consultations)
+        .where(
+          and(
+            eq(consultations.sessionId, sessionId),
+            eq(consultations.status, "respondida"),
+          ),
+        )
+        .orderBy(asc(consultations.seq))
+        .all()
+        .map(toConsultation)
+        .filter(isVerifiedConsultation);
+    },
+
+    listUnverifiedConsultations(sessionId) {
+      return db
+        .select()
+        .from(consultations)
+        .where(
+          and(
+            eq(consultations.sessionId, sessionId),
+            eq(consultations.status, "sem-lastro"),
+          ),
+        )
+        .orderBy(asc(consultations.seq))
+        .all()
+        .map(toConsultation)
+        .filter(isUnverifiedConsultation);
+    },
+
     appendEvent(sessionId, event) {
       db.insert(events)
         .values({ sessionId, at: Date.now(), kind: event.kind, payload: JSON.stringify(event) })
@@ -766,6 +804,18 @@ function toConsultation(row: ConsultationRow): CeremonyConsultation {
         motivo: row.motivo ?? "a citação não fechou com o código.",
         answeredAt,
       };
+}
+
+function isUnverifiedConsultation(
+  consultation: CeremonyConsultation,
+): consultation is UnverifiedConsultation {
+  return consultation.status === "sem-lastro";
+}
+
+function isVerifiedConsultation(
+  consultation: CeremonyConsultation,
+): consultation is VerifiedConsultation {
+  return consultation.status === "respondida";
 }
 
 function toDecision(row: DecisionRow): CeremonyDecision {

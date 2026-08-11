@@ -3,14 +3,12 @@
 // Subpath de propósito: o barril do pacote puxa o store, e o binding nativo do
 // SQLite não existe no bundle do cliente.
 import { SPEC_SECTIONS, dossieStateSchema } from "@sprint-griller/ceremony/session-state";
-import { readSpecSection } from "@sprint-griller/ceremony/spec";
+import { formatDecisionWhen, readSpecSection } from "@sprint-griller/ceremony/spec";
 import type { CeremonyDecision, DossieState } from "@sprint-griller/ceremony";
 import Link from "next/link";
-import { useActionState, useState } from "react";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
-import { discardSpecDraftAction, saveSpecDraftAction } from "../../actions";
-import { reconcileSpecDraft } from "./spec-editor-state";
+import { useSpecEditor } from "./use-spec-editor";
 
 /**
  * Modo Dossiê: a aba do Operador. A Spec da US se forma aqui ao vivo enquanto a
@@ -75,7 +73,11 @@ export function Dossie({ initial }: { initial: DossieState }) {
         ) : (
           <ol className="flex flex-col gap-3">
             {state.decisions.map((decision) => (
-              <Decided key={`${decision.questionId}:${decision.decidedAt}`} decision={decision} />
+              <Decided
+                key={`${decision.questionId}:${decision.decidedAt}`}
+                decision={decision}
+                timeZone={state.timeZone}
+              />
             ))}
           </ol>
         )}
@@ -170,7 +172,13 @@ function CeremonyProgress({
   );
 }
 
-function Decided({ decision }: { decision: CeremonyDecision }) {
+function Decided({
+  decision,
+  timeZone,
+}: {
+  decision: CeremonyDecision;
+  timeZone: string;
+}) {
   return (
     <li className="flex flex-col gap-1.5 rounded-lg border border-line px-5 py-4">
       <p className="text-base font-medium">{decision.question}</p>
@@ -179,7 +187,7 @@ function Decided({ decision }: { decision: CeremonyDecision }) {
         Recomendação do agente: {decision.recommendation}
       </p>
       <p className="text-sm text-muted">
-        {decision.decidedBy} · {formatWhen(decision.decidedAt)}
+        {decision.decidedBy} · {formatDecisionWhen(decision.decidedAt, timeZone)}
       </p>
     </li>
   );
@@ -216,11 +224,11 @@ function operatorOutOfScope(markdown: string): string {
  * O preview do despejo, editável. O texto sai gerado do que a cerimônia gravou;
  * o que o Operador salvar é o que o despejo vai levar.
  *
- * O editor é semeado uma vez e não é mexido pelo SSE — texto sendo digitado não
- * pode ser sobrescrito por uma decisão que acabou de entrar. O preço disso é o
- * documento andar por baixo da edição, e é exatamente o que o aviso de
- * desatualizado existe para mostrar: despejar uma Spec sem a última decisão é o
- * erro que esta tela não pode deixar passar calado.
+ * Enquanto ainda não há rascunho nem edição local, o editor acompanha o
+ * documento que chega pelo SSE. Depois que o Operador edita ou salva, texto
+ * sendo digitado não pode ser sobrescrito por uma decisão que acabou de entrar.
+ * Nesse caso, o aviso de desatualizado impede despejar uma Spec sem a última
+ * decisão sem que isso fique claro.
  *
  * O mesmo vale entre abas: o SSE atualiza `spec.draft`, mas o textarea fica no
  * que esta aba carregou. Sem o aviso de conflito, salvar aqui apagaria a edição
@@ -234,49 +242,20 @@ function SpecEditor({
   sessionId: string;
   spec: DossieState["spec"];
 }) {
-  const [markdown, setMarkdown] = useState(spec.draft?.markdown ?? spec.generated);
-  const [base, setBase] = useState(spec.draft?.base ?? spec.generated);
-  /** `savedAt` do rascunho que esta aba já incorporou no editor (null = gerado). */
-  const [adoptedAt, setAdoptedAt] = useState<number | null>(spec.draft?.savedAt ?? null);
-  const [saveError, save, saving] = useActionState(saveSpecDraftAction, null);
-  const [discardError, discard, discarding] = useActionState(discardSpecDraftAction, null);
-  const busy = saving || discarding;
-  const reconciled = reconcileSpecDraft({
-    draft: spec.draft,
-    generated: spec.generated,
-    markdown,
+  const {
+    adoptRemote,
     base,
-    adoptedAt,
-  });
-  // Ajustar o estado no render é o caminho do React para estado derivado de
-  // prop: a revisão precisa ser incorporada quando o eco chega, não quando o
-  // Operador voltar a digitar.
-  if (reconciled.adoptedAt !== adoptedAt) setAdoptedAt(reconciled.adoptedAt);
-
-  const { expectedSavedAt, conflict } = reconciled;
-  const stale = spec.generated !== base;
-  const remoteDraftConflict = conflict === "edicao";
-
-  function regenerate(formData: FormData): void {
-    if (remoteDraftConflict) return;
-
-    setMarkdown(spec.generated);
-    setBase(spec.generated);
-    setAdoptedAt(null);
-    discard(formData);
-  }
-
-  function adoptRemote(): void {
-    if (spec.draft) {
-      setMarkdown(spec.draft.markdown);
-      setBase(spec.draft.base);
-      setAdoptedAt(spec.draft.savedAt);
-      return;
-    }
-    setMarkdown(spec.generated);
-    setBase(spec.generated);
-    setAdoptedAt(null);
-  }
+    busy,
+    conflict,
+    error,
+    expectedSavedAt,
+    markdown,
+    regenerate,
+    remoteDraftConflict,
+    save,
+    stale,
+    updateMarkdown,
+  } = useSpecEditor(spec);
 
   return (
     <Section id="despejo" heading="Preview do despejo">
@@ -351,7 +330,8 @@ function SpecEditor({
           id="markdown"
           name="markdown"
           value={markdown}
-          onChange={(event) => setMarkdown(event.target.value)}
+          disabled={busy}
+          onChange={(event) => updateMarkdown(event.target.value)}
           rows={24}
           spellCheck={false}
           className="w-full rounded-lg border border-line bg-transparent px-5 py-4 font-mono text-sm leading-relaxed"
@@ -366,13 +346,13 @@ function SpecEditor({
           </button>
           <span className="text-sm text-muted">
             {spec.draft
-              ? `Editado por último às ${formatWhen(spec.draft.savedAt)}.`
+              ? `Editado por último às ${formatSavedAt(spec.draft.savedAt)}.`
               : "Sem edição salva: o texto acima é o gerado da cerimônia."}
           </span>
         </div>
-        {(saveError ?? discardError) && (
+        {error !== null && (
           <p role="alert" className="text-sm text-red-600">
-            {saveError ?? discardError}
+            {error}
           </p>
         )}
       </form>
@@ -418,6 +398,6 @@ function Regenerate({
   );
 }
 
-function formatWhen(at: number): string {
+function formatSavedAt(at: number): string {
   return new Date(at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }

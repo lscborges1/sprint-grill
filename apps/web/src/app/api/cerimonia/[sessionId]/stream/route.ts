@@ -16,5 +16,9 @@ export async function GET(
   const initial = getPalco(sessionId);
   if (!initial) return new Response("cerimônia não encontrada", { status: 404 });
 
-  return sessionEventStream(request, initial, (send) => subscribeToPalco(sessionId, send));
+  return sessionEventStream(
+    request,
+    () => getPalco(sessionId) ?? initial,
+    (send) => subscribeToPalco(sessionId, send),
+  );
 }

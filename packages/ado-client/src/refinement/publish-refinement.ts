@@ -1,5 +1,11 @@
 import { z } from "zod";
 import { AdoError } from "../ado-error";
+import {
+  completedDumpIds,
+  dumpCompletionMarker,
+  dumpMarker,
+  incompleteDumpIds,
+} from "./dump-marker";
 import { SPEC_MARKER } from "./refinement-status";
 import { COMMENTS_API_VERSION, createAdoRest } from "../rest/ado-rest";
 import type { AdoClientOptions } from "../rest/ado-rest";
@@ -86,17 +92,6 @@ const taskBatchSchema = z.object({
   })),
 });
 
-const DUMP_MARKER_PREFIX = "<!-- sprint-griller:dump:";
-const DUMP_MARKER_SUFFIX = " -->";
-
-export function dumpMarker(dumpId: string, artifact: string): string {
-  return `${DUMP_MARKER_PREFIX}${dumpId}:${artifact}${DUMP_MARKER_SUFFIX}`;
-}
-
-export function dumpCompletionMarker(dumpId: string): string {
-  return dumpMarker(dumpId, "complete");
-}
-
 /** Renderização determinística do Registro — o LLM nunca participa da escrita. */
 export function renderDecisionRecordMarkdown(record: Omit<DecisionRecordToPublish, "storyId">): string {
   return [
@@ -127,7 +122,7 @@ export async function publishDecisionRecord(
     if (!commentId) {
       throw new AdoError("unexpected-response", "O Azure DevOps devolveu um Registro sem id para reconciliação.");
     }
-    return { commentId, url: rest.workItemUrl(record.storyId) };
+    return { commentId, url: `${rest.workItemUrl(record.storyId)}#discussion_${commentId}` };
   }
   const comment = await rest.request({
     operation: "o Registro de decisão",
@@ -140,7 +135,10 @@ export async function publishDecisionRecord(
     notFound: `O Azure DevOps não encontrou a US #${record.storyId} no projeto configurado — nada foi publicado.`,
   });
 
-  return { commentId: comment.commentId, url: rest.workItemUrl(record.storyId) };
+  return {
+    commentId: comment.commentId,
+    url: `${rest.workItemUrl(record.storyId)}#discussion_${comment.commentId}`,
+  };
 }
 
 async function listDecisionRecordComments(
@@ -218,7 +216,7 @@ export async function readDumpCompletion(
     schema: storySchema,
     notFound: `O Azure DevOps não encontrou a US #${storyId} no projeto configurado.`,
   });
-  return completedDumpIds(story.fields["System.Description"] ?? "");
+  return completedDumpIds([story.fields["System.Description"] ?? ""]);
 }
 
 /**
@@ -239,31 +237,6 @@ export async function readIncompleteDumps(
   const comments = await listDecisionRecordComments(rest, storyId);
   const texts = [story.fields["System.Description"] ?? "", ...comments.map((comment) => comment.text)];
   return incompleteDumpIds(texts);
-}
-
-const DUMP_MARKER_RE = /<!-- sprint-griller:dump:([^:]+):([^ ]+) -->/g;
-
-function completedDumpIds(description: string): readonly string[] {
-  return [...description.matchAll(/<!-- sprint-griller:dump:([^:]+):complete -->/g)]
-    .map((match) => match[1])
-    .filter((dumpId): dumpId is string => dumpId !== undefined);
-}
-
-function incompleteDumpIds(texts: readonly string[]): readonly string[] {
-  const artifacts = new Map<string, Set<string>>();
-  for (const text of texts) {
-    for (const match of text.matchAll(DUMP_MARKER_RE)) {
-      const dumpId = match[1];
-      const artifact = match[2];
-      if (dumpId === undefined || artifact === undefined) continue;
-      const seen = artifacts.get(dumpId) ?? new Set<string>();
-      seen.add(artifact);
-      artifacts.set(dumpId, seen);
-    }
-  }
-  return [...artifacts.entries()]
-    .filter(([, kinds]) => !kinds.has("complete"))
-    .map(([dumpId]) => dumpId);
 }
 
 /** Escreve a prova final somente depois de todos os artefatos do dump existirem. */

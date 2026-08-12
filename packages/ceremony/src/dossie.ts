@@ -27,13 +27,21 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
   const session = store.getSession(sessionId);
   if (!session) return undefined;
 
+  const unverifiedConsultations = store.listUnverifiedConsultations(sessionId);
+
   const document: DossieDocument = {
     story: { id: session.storyId, title: session.storyTitle, url: session.storyUrl },
     decisions: store.listDecisions(sessionId),
-    pending: store.unansweredQuestions(sessionId).map((asked) => ({
-      id: asked.id,
-      question: asked.question,
-    })),
+    pending: [
+      ...store.unansweredQuestions(sessionId).map((asked) => ({
+        id: asked.id,
+        question: asked.question,
+      })),
+      ...unverifiedConsultations.map((consultation) => ({
+        id: `consulta:${consultation.id}`,
+        question: consultation.question,
+      })),
+    ],
     investigation: {
       impact: verifiedContext(
         sectionOf(session.investigationMarkdown, "impacts"),
@@ -41,7 +49,7 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
       ),
       unverified: unverifiedContext(
         sectionOf(session.investigationMarkdown, "unverified"),
-        store.listUnverifiedConsultations(sessionId),
+        unverifiedConsultations,
       ),
     },
   };

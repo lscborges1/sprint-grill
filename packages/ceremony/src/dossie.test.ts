@@ -4,6 +4,7 @@ import path from "node:path";
 import { renderReportMarkdown, reportSectionMarker } from "@sprint-griller/investigation";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readDossie } from "./dossie";
+import { readSpecSection } from "./spec";
 import { SPEC_SECTIONS } from "./spec-vocabulary";
 import { openCeremonyStore } from "./store";
 import type { CeremonyStore } from "./store";
@@ -215,6 +216,47 @@ describe("readDossie", () => {
     );
     expect(dossie?.investigation.impact).not.toContain("O portal do vendedor também parece");
     expect(dossie?.spec.generated).toContain("O portal do vendedor também parece consumir o total.");
+  });
+
+  it("should carry an ungrounded factual consultation into the pending and unverified Spec sections", () => {
+    const store = open();
+    newSession(store);
+    const consultation = store.openConsultation(
+      "thread-1",
+      "Quem também consome o total da comissão?",
+    );
+    store.answerConsultation(consultation.id, {
+      status: "sem-lastro",
+      answer: "O portal do vendedor também parece consumir o total.",
+      citations: [],
+      motivo: "a resposta veio sem citar nenhum arquivo dos repos da squad.",
+    });
+
+    const spec = readDossie(store, "thread-1")!.spec.generated;
+
+    expect(readSpecSection(spec, SPEC_SECTIONS.pending.heading)).toContain(
+      "Quem também consome o total da comissão?",
+    );
+    expect(readSpecSection(spec, SPEC_SECTIONS.unverified.heading)).toContain(
+      "O portal do vendedor também parece consumir o total.",
+    );
+  });
+
+  it("should namespace pending identifiers for ungrounded factual consultations", () => {
+    const store = open();
+    newSession(store);
+    const consultation = store.openConsultation("thread-1", "Onde está a regra de comissão?");
+    store.answerConsultation(consultation.id, {
+      status: "sem-lastro",
+      answer: "A regra parece estar no serviço de folha.",
+      citations: [],
+      motivo: "a resposta veio sem citar nenhum arquivo dos repos da squad.",
+    });
+
+    expect(readDossie(store, "thread-1")?.pending).toContainEqual({
+      id: `consulta:${consultation.id}`,
+      question: "Onde está a regra de comissão?",
+    });
   });
 
   it("should survive an Investigação without the expected headings", () => {

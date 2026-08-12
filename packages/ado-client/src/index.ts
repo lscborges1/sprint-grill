@@ -12,12 +12,14 @@ export {
   publishStorySpec,
   readDumpCompletion,
   readIncompleteDumps,
-  dumpCompletionMarker,
-  dumpMarker,
   renderDecisionRecordMarkdown,
   replaceManagedSpec,
   markdownToAdoHtml,
 } from "./refinement/publish-refinement";
+export {
+  dumpCompletionMarker,
+  dumpMarker,
+} from "./refinement/dump-marker";
 export type {
   DecisionRecordToPublish,
   ChildTaskToPublish,
@@ -44,7 +46,6 @@ export type {
 export {
   INVESTIGATION_MARKER,
   SPEC_MARKER,
-  DUMP_COMPLETION_MARKER_PREFIX,
 } from "./refinement/refinement-status";
 export type { RefinementStatus } from "./refinement/refinement-status";
 export type { AdoClientOptions } from "./rest/ado-rest";

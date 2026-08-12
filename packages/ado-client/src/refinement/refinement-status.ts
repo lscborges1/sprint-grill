@@ -1,3 +1,5 @@
+import { completedDumpIds } from "./dump-marker";
+
 /**
  * Onde a US está no fluxo de refinamento. Não é estado nosso: cada valor é
  * apenas o nome do artefato mais avançado que a ferramenta já gravou no ADO
@@ -20,9 +22,6 @@ export const INVESTIGATION_MARKER = "<!-- sprint-griller:investigacao -->";
  */
 export const SPEC_MARKER = "<!-- sprint-griller:spec -->";
 
-/** Só é gravado após Spec, Tasks, estimativa e Registros terminarem no ADO. */
-export const DUMP_COMPLETION_MARKER_PREFIX = "<!-- sprint-griller:dump:";
-
 /** Textos da US que podem carregar artefatos da ferramenta. */
 export interface WorkItemArtifacts {
   readonly description: string | undefined;
@@ -38,9 +37,7 @@ export function inferRefinementStatus(
 }
 
 function hasCompletionMarker(artifacts: WorkItemArtifacts): boolean {
-  return [artifacts.description ?? "", ...artifacts.comments].some((text) =>
-    /<!-- sprint-griller:dump:[^:]+:complete -->/.test(text),
-  );
+  return completedDumpIds([artifacts.description ?? "", ...artifacts.comments]).length > 0;
 }
 
 function hasMarker(artifacts: WorkItemArtifacts, marker: string): boolean {

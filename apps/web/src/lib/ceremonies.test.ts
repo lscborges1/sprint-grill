@@ -7,6 +7,7 @@ import type { AgentQuestion, AgentSession } from "@sprint-griller/agent-runtime"
 import { AdoError } from "@sprint-griller/ado-client";
 import { createLogger } from "@sprint-griller/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Ceremony } from "@sprint-griller/ceremony";
 
 const createAgentRuntime = vi.hoisted(() => vi.fn());
 const getInvestigation = vi.hoisted(() => vi.fn());
@@ -59,6 +60,7 @@ vi.stubEnv(
 );
 
 const {
+  askFact,
   discardSpecDraft,
   dumpCeremony,
   getDossie,
@@ -89,6 +91,16 @@ const QUESTION: AgentQuestion = {
   allowFreeText: true,
 };
 
+const SECOND_QUESTION: AgentQuestion = {
+  id: "q2",
+  header: "Formato",
+  question: "O CSV usa ponto e vírgula?",
+  recommendation: "Sim, compatível com planilhas locais.",
+  evidence: ["core-api · src/reports/csv.ts"],
+  options: [],
+  allowFreeText: true,
+};
+
 const TASKS_MARKDOWN = `## Implementar exportação
 
 ### Critérios de aceite
@@ -97,6 +109,11 @@ const TASKS_MARKDOWN = `## Implementar exportação
 
 const DUMP_DETAILS = { tasksMarkdown: TASKS_MARKDOWN, estimate: 5 } as const;
 
+interface CeremonyRegistryForTest {
+  ceremony?: Ceremony | undefined;
+  starting?: Promise<Ceremony> | undefined;
+}
+
 /** Cada teste usa uma US própria: o banco é o mesmo do começo ao fim, como em produção. */
 let nextStoryId = 100;
 let nextSessionId = 0;
@@ -104,7 +121,7 @@ let nextSessionId = 0;
 /** Libera o turno mockado para emitir `turn-completed` pelo caminho de produção. */
 const ceremonyFinishers = new Map<string, () => void>();
 
-function fakeSession(id: string): AgentSession {
+function fakeSession(id: string, questions: readonly AgentQuestion[] = [QUESTION]): AgentSession {
   return {
     id,
     send() {
@@ -117,12 +134,48 @@ function fakeSession(id: string): AgentSession {
         yield {
           type: "question",
           question: {
-            questions: [QUESTION],
+            questions,
             answer: async () => {
               release();
             },
           },
         } as const;
+        await gate;
+        yield {
+          type: "turn-completed",
+          turn: { id: "turn-1", status: "completed", durationMs: 1 },
+        } as const;
+      })() as ReturnType<AgentSession["send"]>;
+    },
+    interrupt: async () => undefined,
+  };
+}
+
+function terminalSession(
+  id: string,
+  events: readonly { readonly type: "message"; readonly text: string }[],
+): AgentSession {
+  return {
+    id,
+    send() {
+      return (async function* () {
+        yield* events;
+      })() as ReturnType<AgentSession["send"]>;
+    },
+    interrupt: async () => undefined,
+  };
+}
+
+function waitingSession(id: string): AgentSession {
+  return {
+    id,
+    send() {
+      return (async function* () {
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        ceremonyFinishers.set(id, release);
         await gate;
         yield {
           type: "turn-completed",
@@ -354,6 +407,63 @@ describe("dumpCeremony", () => {
     expect(publishStorySpec).not.toHaveBeenCalled();
   });
 
+  it("should require confirmation before any ADO write with an ungrounded factual consultation", async () => {
+    let sessionCount = 0;
+    createAgentRuntime.mockResolvedValue({
+      startSession: async () => {
+        sessionCount += 1;
+        return sessionCount === 1
+          ? waitingSession(`thread-${nextSessionId}`)
+          : terminalSession("consulta-sem-lastro", [{
+              type: "message",
+              text: '```json\n{"answer":"O portal parece consumir o total.","citations":[]}\n```',
+            }]);
+      },
+      resumeSession: async (id: string) => waitingSession(id),
+      close: async () => undefined,
+    });
+    const registry = (globalThis as { __sprintGrillerCeremonies?: CeremonyRegistryForTest })
+      .__sprintGrillerCeremonies;
+    if (registry) {
+      registry.ceremony = undefined;
+      registry.starting = undefined;
+    }
+
+    try {
+      const session = await startCeremony(nextStoryId);
+      await vi.waitFor(() => expect(ceremonyFinishers.has(session.id)).toBe(true));
+      await askFact({ sessionId: session.id, question: "Quem consome o total?" });
+      await vi.waitFor(() =>
+        expect(getDossie(session.id)?.pending).toContainEqual({
+          id: "consulta:1",
+          question: "Quem consome o total?",
+        }),
+      );
+      const dossie = getDossie(session.id)!;
+      await finishCeremony(session.id);
+
+      await expect(
+        dumpCeremony({
+          sessionId: session.id,
+          markdown: dossie.spec.generated,
+          base: dossie.spec.generated,
+          confirmPending: false,
+          ...DUMP_DETAILS,
+        }),
+      ).rejects.toThrow(/confirme/i);
+
+      expect(publishDecisionRecord).not.toHaveBeenCalled();
+      expect(publishStorySpec).not.toHaveBeenCalled();
+      expect(publishChildTasks).not.toHaveBeenCalled();
+      expect(publishDumpCompletion).not.toHaveBeenCalled();
+    } finally {
+      if (registry) {
+        registry.ceremony = undefined;
+        registry.starting = undefined;
+      }
+    }
+  });
+
   it("should reject structurally invalid Tasks before any Azure DevOps write", async () => {
     const session = await startCeremony(nextStoryId);
     const dossie = getDossie(session.id)!;
@@ -424,7 +534,9 @@ describe("dumpCeremony", () => {
         markdown: expect.stringContaining("# Spec revisada pelo Operador"),
       }),
     );
-    expect(publishStorySpec.mock.calls.at(-1)?.[1].markdown).toContain("Registro #91");
+    expect(publishStorySpec.mock.calls.at(-1)?.[1].markdown).toContain(
+      "[Registro #91](https://dev.azure.com/acme/Plataforma/_workitems/edit/1#discussion_91)",
+    );
     expect(publishStorySpec).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({ estimate: 5 }),
@@ -433,6 +545,61 @@ describe("dumpCeremony", () => {
       expect.anything(),
       expect.objectContaining({ tasks: [expect.objectContaining({ title: "Implementar exportação" })] }),
     );
+  });
+
+  it("should publish a distinct deep link for each decision in traceability", async () => {
+    const firstUrl = "https://dev.azure.com/acme/Plataforma/_workitems/edit/1#discussion_91";
+    const secondUrl = "https://dev.azure.com/acme/Plataforma/_workitems/edit/1#discussion_92";
+    createAgentRuntime.mockResolvedValue({
+      startSession: async () => fakeSession(`thread-${nextSessionId}`, [QUESTION, SECOND_QUESTION]),
+      resumeSession: async (id: string) => fakeSession(id, [QUESTION, SECOND_QUESTION]),
+      close: async () => undefined,
+    });
+    publishDecisionRecord
+      .mockResolvedValueOnce({ commentId: 91, url: firstUrl })
+      .mockResolvedValueOnce({ commentId: 92, url: secondUrl });
+    const ceremonyRegistry = (globalThis as { __sprintGrillerCeremonies?: CeremonyRegistryForTest })
+      .__sprintGrillerCeremonies;
+    if (ceremonyRegistry) {
+      ceremonyRegistry.ceremony = undefined;
+      ceremonyRegistry.starting = undefined;
+    }
+
+    try {
+      const session = await startCeremony(nextStoryId);
+      await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+      await submitDecision({
+        sessionId: session.id,
+        questionId: "q1",
+        answer: "Regra bancária",
+        decidedBy: "PO",
+      });
+      await submitDecision({
+        sessionId: session.id,
+        questionId: "q2",
+        answer: "Sim",
+        decidedBy: "squad",
+      });
+      await finishCeremony(session.id);
+      const dossie = getDossie(session.id)!;
+
+      await dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      });
+
+      const markdown = publishStorySpec.mock.calls.at(-1)?.[1].markdown;
+      expect(markdown).toContain(`[Registro #91](${firstUrl})`);
+      expect(markdown).toContain(`[Registro #92](${secondUrl})`);
+    } finally {
+      if (ceremonyRegistry) {
+        ceremonyRegistry.ceremony = undefined;
+        ceremonyRegistry.starting = undefined;
+      }
+    }
   });
 
   it("should retry when the decision record may already have been published", async () => {

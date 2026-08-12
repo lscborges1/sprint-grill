@@ -204,7 +204,9 @@ describe("appendDecisionTraceability", () => {
 
     expect(markdown).toContain("# Texto editado");
     expect(markdown).toContain("## Rastreabilidade de decisões");
-    expect(markdown).toContain("[Registro #99](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)");
+    expect(markdown).toContain(
+      "[Registro #99](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211#discussion_99)",
+    );
   });
 });
 

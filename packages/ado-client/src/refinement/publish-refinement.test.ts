@@ -1,6 +1,7 @@
 import { Writable } from "node:stream";
 import { createLogger } from "@sprint-griller/core";
 import { describe, expect, it, vi } from "vitest";
+import { dumpMarker } from "./dump-marker";
 import { SPEC_MARKER } from "./refinement-status";
 import {
   publishChildTasks,
@@ -11,7 +12,6 @@ import {
   readIncompleteDumps,
   replaceManagedSpec,
   markdownToAdoHtml,
-  dumpMarker,
 } from "./publish-refinement";
 
 const AZURE_DEVOPS = { organization: "acme", project: "Plataforma" };
@@ -104,7 +104,7 @@ describe("publishDecisionRecord", () => {
       }),
     ).resolves.toEqual({
       commentId: 91,
-      url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+      url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211#discussion_91",
     });
 
     const call = ado.calls.at(-1);
@@ -127,7 +127,10 @@ describe("publishDecisionRecord", () => {
       recommendation: "Global",
       decidedBy: "PO + squad",
       decidedAt: Date.UTC(2026, 7, 6, 14, 30),
-    })).resolves.toMatchObject({ commentId: 91 });
+    })).resolves.toEqual({
+      commentId: 91,
+      url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211#discussion_91",
+    });
 
     expect(ado.calls).toHaveLength(1);
   });

@@ -58,6 +58,8 @@ function validSpec(note: string): string {
       `## ${section.heading}`,
       `${section.heading}: ${note}`,
     ]),
+    "## Rastreabilidade de decisões",
+    "_Nenhuma decisão foi registrada._",
   ].join("\n\n");
 }
 
@@ -779,6 +781,36 @@ describe("saveSpecDraft", () => {
     expect(store.getSpecDraft("thread-1")).toBeUndefined();
   });
 
+  it("should reject unsigned decision traceability before saving or beginning a dump", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    const decision = store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+    const signed = validSpec("Spec assinada").replace(
+      "_Nenhuma decisão foi registrada._",
+      `- **${decision.question}** — ${decision.answer}\n\nObservação livre do Operador.`,
+    );
+    const unsigned = signed.replace(`- **${decision.question}** — ${decision.answer}`, "");
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: unsigned,
+        base: signed,
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/rastreabilidade/i);
+    expect(() =>
+      store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS, markdown: unsigned }),
+    ).toThrow(/rastreabilidade/i);
+    expect(store.getSession("thread-1")?.dump).toEqual({ status: "not-started" });
+  });
+
   it("should keep leading Markdown whitespace the Operator typed", () => {
     const store = open(dbPath());
     newSession(store);
@@ -940,7 +972,14 @@ describe("dump freeze", () => {
       answer: "Regra bancária",
       decidedBy: "PO",
     });
-    beginDump(store);
+    store.beginDump("thread-1", {
+      dumpId: "dump-fingerprint",
+      ...DUMP_DETAILS,
+      markdown: DUMP_DETAILS.markdown.replace(
+        "_Nenhuma decisão foi registrada._",
+        `- **${decision.question}** — ${decision.answer}`,
+      ),
+    });
     store.markDumpCompleted("thread-1", 1);
 
     expect(() => store.askQuestions("thread-1", [question({ id: "q2" })])).toThrow(/despejo/i);

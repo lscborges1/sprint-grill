@@ -442,6 +442,40 @@ describe("getDossie", () => {
 });
 
 describe("dumpCeremony", () => {
+  it("should reject persisted unsigned traceability before any Azure DevOps preflight", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+    await submitDecision({
+      sessionId: session.id,
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+    const generated = getDossie(session.id)!.spec.generated;
+    const markdown = generated.replace(
+      /(## Rastreabilidade de decisões[\s\S]*?)- \*\*A comissão arredonda para cima\?\*\* — Regra bancária/,
+      "$1",
+    );
+    const database = new Database(ceremonyDbPath);
+    database
+      .prepare("INSERT INTO spec_drafts (session_id, markdown, base, saved_at) VALUES (?, ?, ?, ?)")
+      .run(session.id, markdown, generated, Date.now());
+    database.close();
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown,
+      base: generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+
+    await expect(dumpCeremony(input)).rejects.toThrow(/rastreabilidade/i);
+    expect(readDumpCompletion).not.toHaveBeenCalled();
+    expect(publishDecisionRecord).not.toHaveBeenCalled();
+    expect(getDossie(session.id)?.dump.status).toBe("not-started");
+  });
+
   it("should refuse a dump until the ceremony has ended", async () => {
     const session = await startCeremony(nextStoryId);
     const dossie = getDossie(session.id)!;

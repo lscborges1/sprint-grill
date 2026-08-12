@@ -2,6 +2,7 @@ import { createAgentRuntime } from "@sprint-griller/agent-runtime";
 import { createHash } from "node:crypto";
 import {
   appendDecisionTraceability,
+  assertValidSpecMarkdown,
   CeremonyError,
   createCeremony,
   openCeremonyStore,
@@ -347,6 +348,7 @@ async function dumpCeremonyNow(
     input.estimate,
   );
 
+  assertValidSpecMarkdown(signed, initial.decisions);
   const store = getStore();
   store.beginDump(input.sessionId, {
     dumpId,

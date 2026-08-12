@@ -14,6 +14,16 @@ interface SpecSectionStart extends Omit<SpecSectionOccurrence, "bodyEnd"> {
   readonly headingStart: number;
 }
 
+interface DecisionTraceabilityMatch {
+  readonly reviewedStart: number;
+  readonly reviewedEnd: number;
+}
+
+interface DecisionTraceability {
+  readonly appendix: SpecSectionOccurrence;
+  readonly matches: readonly DecisionTraceabilityMatch[];
+}
+
 /**
  * A Spec da US em Markdown: o artefato de dupla audiência (humano + agente) que
  * o despejo grava na própria US. Renderizada por código, não pelo modelo
@@ -66,8 +76,14 @@ export function renderSpecMarkdown(document: DossieDocument, timeZone = "UTC"): 
  * A edição é livre dentro e fora das seções, mas não pode apagar o contrato da
  * Spec. A mesma asserção protege o save e a última fronteira antes do despejo.
  */
-export function assertValidSpecMarkdown(markdown: string): void {
-  const requiredHeadings = Object.values(SPEC_SECTIONS).map((section) => section.heading);
+export function assertValidSpecMarkdown(
+  markdown: string,
+  decisions: readonly CeremonyDecision[] = [],
+): void {
+  const requiredHeadings = [
+    ...Object.values(SPEC_SECTIONS).map((section) => section.heading),
+    DECISION_TRACEABILITY_HEADING,
+  ];
   const occurrences = findCanonicalSections(markdown, requiredHeadings);
   const errors = requiredHeadings.flatMap((heading) => {
     const matching = occurrences.filter((section) => section.heading === heading);
@@ -85,6 +101,8 @@ export function assertValidSpecMarkdown(markdown: string): void {
       `a Spec da US precisa preservar as seções obrigatórias:\n${errors.map((error) => `- ${error}`).join("\n")}`,
     );
   }
+
+  findDecisionTraceability(markdown, decisions);
 }
 
 /**
@@ -144,42 +162,19 @@ export function appendDecisionTraceability(
   markdown: string,
   decisions: readonly CeremonyDecision[],
 ): string {
-  const heading = `## ${DECISION_TRACEABILITY_HEADING}`;
-  const occurrences = markdown.split(heading).length - 1;
-  if (occurrences !== 1) {
-    throw new CeremonyError(
-      "a rastreabilidade assinada precisa aparecer exatamente uma vez antes da publicação.",
-    );
-  }
+  const traceability = findDecisionTraceability(markdown, decisions);
+  let published = markdown;
 
-  const headingStart = markdown.indexOf(heading);
-  const traceStart = headingStart + heading.length;
-  const afterHeading = markdown.slice(traceStart);
-  const nextHeading = afterHeading.search(/\n {0,3}##[ \t]+/);
-  const traceEnd = nextHeading === -1 ? markdown.length : traceStart + nextHeading;
-  let trace = markdown.slice(traceStart, traceEnd);
-  let searchFrom = 0;
-  for (const decision of decisions) {
+  for (let index = decisions.length - 1; index >= 0; index -= 1) {
+    const decision = decisions[index]!;
     if (!decision.recordId || !decision.recordUrl) {
       throw new CeremonyError(`a decisão ${decision.questionSeq} ainda não tem Registro no Azure DevOps.`);
     }
-    const reviewed = traceabilityEntry({
-      ...decision,
-      recordId: undefined,
-      recordUrl: undefined,
-    });
-    const reviewedAt = trace.indexOf(reviewed, searchFrom);
-    if (reviewedAt === -1) {
-      throw new CeremonyError(
-        `a rastreabilidade assinada não contém a pergunta e a resposta da decisão ${decision.questionSeq}.`,
-      );
-    }
-    const published = traceabilityEntry(decision);
-    trace = `${trace.slice(0, reviewedAt)}${published}${trace.slice(reviewedAt + reviewed.length)}`;
-    searchFrom = reviewedAt + published.length;
+    const match = traceability.matches[index]!;
+    published = `${published.slice(0, match.reviewedStart)}${traceabilityEntry(decision)}${published.slice(match.reviewedEnd)}`;
   }
 
-  return `${markdown.slice(0, traceStart)}${trace}${markdown.slice(traceEnd)}`;
+  return published;
 }
 
 /** Links despejados não tornam a revisão do Operador semanticamente velha. */
@@ -195,6 +190,69 @@ function traceabilityEntry(decision: CeremonyDecision): string {
 
   const recordUrl = `${decision.recordUrl.replace(/#.*$/, "")}#discussion_${decision.recordId}`;
   return `${reviewed}\n  - [Registro #${decision.recordId}](${recordUrl})`;
+}
+
+function findDecisionTraceability(
+  markdown: string,
+  decisions: readonly CeremonyDecision[],
+): DecisionTraceability {
+  const appendices = findCanonicalSections(markdown, [DECISION_TRACEABILITY_HEADING]);
+  if (appendices.length !== 1) {
+    throw new CeremonyError(
+      "a rastreabilidade assinada precisa aparecer exatamente uma vez antes da publicação.",
+    );
+  }
+
+  const appendix = {
+    ...appendices[0]!,
+    bodyEnd: findNextLevelTwoHeading(markdown, appendices[0]!.bodyStart),
+  };
+  const traceability = markdown.slice(appendix.bodyStart, appendix.bodyEnd);
+  let searchFrom = 0;
+  const matches = decisions.map((decision) => {
+    const reviewed = traceabilityEntry({ ...decision, recordId: undefined, recordUrl: undefined });
+    const reviewedStart = traceability.indexOf(reviewed, searchFrom);
+    if (reviewedStart === -1) {
+      throw new CeremonyError(
+        `a rastreabilidade assinada não contém a pergunta e a resposta da decisão ${decision.questionSeq}.`,
+      );
+    }
+    const reviewedEnd = reviewedStart + reviewed.length;
+    searchFrom = reviewedEnd;
+    return {
+      reviewedStart: appendix.bodyStart + reviewedStart,
+      reviewedEnd: appendix.bodyStart + reviewedEnd,
+    };
+  });
+
+  return { appendix, matches };
+}
+
+function findNextLevelTwoHeading(markdown: string, bodyStart: number): number {
+  let offset = bodyStart;
+  let fence = "";
+
+  for (const line of markdown.slice(bodyStart).split(/(?<=\n)/)) {
+    const withoutNewline = line.replace(/\r?\n$/, "");
+    const fenceMatch = withoutNewline.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fenceMatch?.[1]) {
+      const closesFence =
+        fence !== "" &&
+        fenceMatch[1][0] === fence[0] &&
+        fenceMatch[1].length >= fence.length &&
+        fenceMatch[2]?.trim() === "";
+      if (closesFence) {
+        fence = "";
+      } else if (fence === "") {
+        fence = fenceMatch[1];
+      }
+    } else if (fence === "" && /^ {0,3}##[ \t]+/.test(withoutNewline)) {
+      return offset;
+    }
+    offset += line.length;
+  }
+
+  return markdown.length;
 }
 
 function findCanonicalSections(

@@ -185,6 +185,45 @@ describe("assertValidSpecMarkdown", () => {
     expect(() => assertValidSpecMarkdown(markdown)).toThrow(/Decisões.*mais de uma vez/i);
   });
 
+  it("should reject a signed Spec that removes decision traceability", () => {
+    const markdown = renderSpecMarkdown(REFINED).replace(
+      /\n\n## Rastreabilidade de decisões[\s\S]*$/,
+      "\n",
+    );
+
+    expect(() => assertValidSpecMarkdown(markdown, REFINED.decisions)).toThrow(
+      /rastreabilidade.*ausente/i,
+    );
+  });
+
+  it("should require repeated reviewed entries in decision order", () => {
+    const repeated = {
+      ...REFINED.decisions[0]!,
+      question: "A integração fica síncrona?",
+      answer: "Sim",
+    };
+    const decisions = [
+      repeated,
+      { ...repeated, questionSeq: 2, questionId: "q2" },
+    ];
+    const markdown = renderSpecMarkdown({ ...REFINED, decisions }).replace(
+      "- **A integração fica síncrona?** — Sim\n- **A integração fica síncrona?** — Sim",
+      "- **A integração fica síncrona?** — Sim",
+    );
+
+    expect(() => assertValidSpecMarkdown(markdown, decisions)).toThrow(/decisão 2/i);
+  });
+
+  it("should ignore a traceability heading inside fenced code", () => {
+    const markdown = renderSpecMarkdown(REFINED)
+      .replace(/\n\n## Rastreabilidade de decisões[\s\S]*$/, "\n")
+      .concat("\n```markdown\n## Rastreabilidade de decisões\n\nEntrada de exemplo.\n```\n");
+
+    expect(() => assertValidSpecMarkdown(markdown, REFINED.decisions)).toThrow(
+      /rastreabilidade.*ausente/i,
+    );
+  });
+
   it("should ignore canonical-looking headings inside fenced code", () => {
     const fenced = [
       "````markdown",

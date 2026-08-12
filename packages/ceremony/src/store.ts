@@ -516,7 +516,7 @@ export function openCeremonyStore(
       if (markdown.trim() === "") {
         throw new CeremonyError("o despejo precisa da Spec assinada antes de começar.");
       }
-      assertValidSpecMarkdown(markdown);
+      assertValidSpecMarkdown(markdown, store.listDecisions(sessionId));
       const tasksMarkdown = input.tasksMarkdown;
       if (tasksMarkdown.trim() === "") {
         throw new CeremonyError("o despejo precisa das Tasks assinadas antes de começar.");
@@ -802,7 +802,7 @@ export function openCeremonyStore(
       if (markdown.trim() === "") {
         throw new CeremonyError("a Spec da US não pode ficar vazia — regenere o documento.");
       }
-      assertValidSpecMarkdown(markdown);
+      assertValidSpecMarkdown(markdown, store.listDecisions(sessionId));
 
       /**
        * A revisão nasce da linha gravada, nunca da que a tela esperava: num

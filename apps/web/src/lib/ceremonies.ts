@@ -264,6 +264,18 @@ export function dumpCeremony(input: z.infer<typeof dumpCeremonySchema>): Promise
     return Promise.reject(new CeremonyError(`cerimônia ${input.sessionId} não existe.`));
   }
 
+  if (registry.startingByStory.has(initial.story.id)) {
+    return Promise.reject(new CeremonyError(
+      `a US #${initial.story.id} já está abrindo outra cerimônia. Aguarde antes de despejar.`,
+    ));
+  }
+  const open = getStore().findOpenSessionByStory(initial.story.id);
+  if (open && open.id !== input.sessionId) {
+    return Promise.reject(new CeremonyError(
+      `a US #${initial.story.id} já tem outra cerimônia aberta. Encerre-a antes de despejar esta.`,
+    ));
+  }
+
   const signature = signedInputSignature(input);
   const inFlight = registry.dumpsInFlightByStory.get(initial.story.id);
   if (inFlight) {

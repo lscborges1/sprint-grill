@@ -977,6 +977,83 @@ Entrega outro slice vertical.
     await expect(startCeremony(nextStoryId)).rejects.toThrow(/despejo incompleto/i);
   });
 
+  it("should reject an old dump while startup for its story is waiting", async () => {
+    let starts = 0;
+    createAgentRuntime.mockResolvedValue({
+      startSession: async () => fakeSession(`thread-${nextSessionId}-${++starts}`),
+      resumeSession: async (id: string) => fakeSession(id),
+      close: async () => undefined,
+    });
+    const ceremonyRegistry = (globalThis as { __sprintGrillerCeremonies?: CeremonyRegistryForTest })
+      .__sprintGrillerCeremonies;
+    if (ceremonyRegistry) {
+      ceremonyRegistry.ceremony = undefined;
+      ceremonyRegistry.starting = undefined;
+    }
+
+    try {
+      const first = await startCeremony(nextStoryId);
+      const firstDossie = getDossie(first.id)!;
+      await finishCeremony(first.id);
+      let releaseIncompleteDumps!: () => void;
+      readIncompleteDumps.mockImplementationOnce(
+        () => new Promise<readonly string[]>((resolve) => {
+          releaseIncompleteDumps = () => resolve([]);
+        }),
+      );
+
+      const starting = startCeremony(nextStoryId);
+      await vi.waitFor(() => expect(readIncompleteDumps).toHaveBeenCalled());
+
+      await expect(dumpCeremony({
+        sessionId: first.id,
+        markdown: firstDossie.spec.generated,
+        base: firstDossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      })).rejects.toThrow(/abrindo outra cerimônia/i);
+
+      expect(publishDecisionRecord).not.toHaveBeenCalled();
+      expect(publishStorySpec).not.toHaveBeenCalled();
+      expect(publishChildTasks).not.toHaveBeenCalled();
+      expect(publishDumpCompletion).not.toHaveBeenCalled();
+
+      releaseIncompleteDumps();
+      await expect(starting).resolves.toMatchObject({ storyId: nextStoryId });
+    } finally {
+      if (ceremonyRegistry) {
+        ceremonyRegistry.ceremony = undefined;
+        ceremonyRegistry.starting = undefined;
+      }
+    }
+  });
+
+  it("should reject startup when a prior dump has reserved its inputs locally", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    let releaseCompletion!: () => void;
+    readDumpCompletion.mockImplementationOnce(
+      () => new Promise<readonly string[]>((resolve) => {
+        releaseCompletion = () => resolve([]);
+      }),
+    );
+
+    const dump = dumpCeremony({
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    });
+    await vi.waitFor(() => expect(readDumpCompletion).toHaveBeenCalled());
+
+    await expect(startCeremony(nextStoryId)).rejects.toThrow(/despejo incompleto/i);
+
+    releaseCompletion();
+    await dump;
+  });
+
   it("should refuse dumping when ADO already has an incomplete dump with another fingerprint", async () => {
     const session = await startCeremony(nextStoryId);
     const dossie = getDossie(session.id)!;

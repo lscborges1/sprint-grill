@@ -299,10 +299,11 @@ describe("getDossie", () => {
   it("should go back to the generated document when the edit is discarded", async () => {
     const session = await startCeremony(nextStoryId);
     const draft = getDossie(session.id)?.spec.draft;
+    const generated = getDossie(session.id)!.spec.generated;
     saveSpecDraft({
       sessionId: session.id,
-      markdown: "assinado",
-      base: "gerado",
+      markdown: `${generated}\nNota assinada pelo Operador.`,
+      base: generated,
       expectedSavedAt: draft?.savedAt ?? null,
     });
 
@@ -384,9 +385,10 @@ describe("dumpCeremony", () => {
       decidedBy: "PO + squad",
     });
     const generated = getDossie(session.id)!.spec.generated;
+    const revised = generated.replace(/^# .+$/m, "# Spec revisada pelo Operador");
     saveSpecDraft({
       sessionId: session.id,
-      markdown: "# Spec revisada pelo Operador",
+      markdown: revised,
       base: generated,
       expectedSavedAt: null,
     });
@@ -559,7 +561,7 @@ describe("dumpCeremony", () => {
     expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
   });
 
-  it("should restore signed Tasks and estimate after a partial dump so a reload can retry", async () => {
+  it("should restore signed inputs and ignore stale editor state when a partial dump retries", async () => {
     const session = await startCeremony(nextStoryId);
     const dossie = getDossie(session.id)!;
     await finishCeremony(session.id);
@@ -587,7 +589,7 @@ describe("dumpCeremony", () => {
       dumpCeremony({
         sessionId: session.id,
         markdown: getDossie(session.id)!.dumpInputs!.markdown,
-        base: dossie.spec.generated,
+        base: "# base stale de outra aba",
         confirmPending: true,
         tasksMarkdown: getDossie(session.id)!.dumpInputs!.tasksMarkdown,
         estimate: getDossie(session.id)!.dumpInputs!.estimate,

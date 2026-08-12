@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  dumpGateResetKey,
+  isDumpGateBlocked,
   isSpecStale,
   reconcileSpecDraft,
   resolveRegeneration,
@@ -198,5 +200,51 @@ describe("isSpecStale", () => {
 
   it("should flag a later decision as stale", () => {
     expect(isSpecStale("# Spec\n\n- Decisão nova", "# Spec")).toBe(true);
+  });
+});
+
+describe("dumpGateResetKey", () => {
+  it("should reset the task editor when unchanged inputs become frozen", () => {
+    const tasksMarkdown = "## Implementar retry\n\n### Critérios de aceite\n\n- Reutiliza as Tasks assinadas.";
+
+    expect(dumpGateResetKey(tasksMarkdown, false)).not.toBe(
+      dumpGateResetKey(tasksMarkdown, true),
+    );
+  });
+});
+
+describe("isDumpGateBlocked", () => {
+  it("should allow a frozen partial-dump retry despite stale and conflicting editor state", () => {
+    expect(
+      isDumpGateBlocked({
+        busy: false,
+        conflict: "edicao",
+        stale: true,
+        dumpLocked: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("should block a frozen retry while another editor action is busy", () => {
+    expect(
+      isDumpGateBlocked({ busy: true, conflict: null, stale: false, dumpLocked: true }),
+    ).toBe(true);
+  });
+
+  it("should block an unfrozen dump when the Spec is stale", () => {
+    expect(
+      isDumpGateBlocked({ busy: false, conflict: null, stale: true, dumpLocked: false }),
+    ).toBe(true);
+  });
+
+  it("should block an unfrozen dump when the editor has a conflict", () => {
+    expect(
+      isDumpGateBlocked({
+        busy: false,
+        conflict: "descarte",
+        stale: false,
+        dumpLocked: false,
+      }),
+    ).toBe(true);
   });
 });

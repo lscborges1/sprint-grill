@@ -102,6 +102,24 @@ export function isSpecStale(generated: string, base: string): boolean {
   return stripDecisionRecordLinks(generated) !== stripDecisionRecordLinks(base);
 }
 
+export function dumpGateResetKey(tasksMarkdown: string, dumpLocked: boolean): string {
+  return `${dumpLocked ? "frozen" : "editable"}:${tasksMarkdown}`;
+}
+
+export function isDumpGateBlocked({
+  busy,
+  conflict,
+  stale,
+  dumpLocked,
+}: {
+  readonly busy: boolean;
+  readonly conflict: SpecEditorState["conflict"];
+  readonly stale: boolean;
+  readonly dumpLocked: boolean;
+}): boolean {
+  return busy || (!dumpLocked && (conflict !== null || stale));
+}
+
 /**
  * Reconcilia o editor com o rascunho gravado que chega pelo SSE.
  *

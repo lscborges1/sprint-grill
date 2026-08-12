@@ -123,16 +123,17 @@ describe("readDossie", () => {
   it("should expose signed dump Spec, Tasks and estimate after beginDump", () => {
     const store = open();
     newSession(store);
+    const markdown = readDossie(store, "thread-1")!.spec.generated;
     store.beginDump("thread-1", {
       dumpId: "dump-fingerprint",
-      markdown: "# Spec assinada",
+      markdown,
       tasksMarkdown: "## Task assinada\n\n### Critérios de aceite\n\n- Critério.",
       estimate: 8,
     });
     store.abortDump("thread-1");
 
     expect(readDossie(store, "thread-1")?.dumpInputs).toEqual({
-      markdown: "# Spec assinada",
+      markdown,
       tasksMarkdown: "## Task assinada\n\n### Critérios de aceite\n\n- Critério.",
       estimate: 8,
     });
@@ -293,7 +294,7 @@ describe("readDossie", () => {
     const before = readDossie(store, "thread-1")?.spec.generated ?? "";
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "assinado",
+      markdown: `${before}\nNota assinada pelo Operador.`,
       base: before,
       expectedSavedAt: null,
     });

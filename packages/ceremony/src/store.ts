@@ -6,6 +6,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { CeremonyError } from "./ceremony-error";
+import { assertValidSpecMarkdown } from "./spec";
 import {
   SCHEMA_DDL,
   SCHEMA_VERSION,
@@ -504,6 +505,7 @@ export function openCeremonyStore(
       if (markdown.trim() === "") {
         throw new CeremonyError("o despejo precisa da Spec assinada antes de começar.");
       }
+      assertValidSpecMarkdown(markdown);
       const tasksMarkdown = input.tasksMarkdown;
       if (tasksMarkdown.trim() === "") {
         throw new CeremonyError("o despejo precisa das Tasks assinadas antes de começar.");
@@ -785,6 +787,7 @@ export function openCeremonyStore(
       if (markdown.trim() === "") {
         throw new CeremonyError("a Spec da US não pode ficar vazia — regenere o documento.");
       }
+      assertValidSpecMarkdown(markdown);
 
       /**
        * A revisão nasce da linha gravada, nunca da que a tela esperava: num

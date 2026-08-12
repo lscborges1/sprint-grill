@@ -10,6 +10,7 @@ import Link from "next/link";
 import { useActionState, useState } from "react";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
+import { dumpGateResetKey, isDumpGateBlocked } from "./spec-editor-state";
 import { useSpecEditor } from "./use-spec-editor";
 import { dumpCeremonyAction } from "../../actions";
 import { DUMP_INITIAL_STATE } from "../../spec-draft-action-state";
@@ -400,7 +401,7 @@ function SpecEditor({
       )}
 
       <DumpGate
-        key={dumpInputs?.tasksMarkdown ?? taskPreview}
+        key={dumpGateResetKey(dumpInputs?.tasksMarkdown ?? taskPreview, dumpLocked)}
         sessionId={sessionId}
         storyUrl={storyUrl}
         markdown={dumpMarkdown}
@@ -410,7 +411,7 @@ function SpecEditor({
         dumpInputs={dumpInputs}
         dumpedAt={dumpedAt}
         ceremonyStatus={ceremonyStatus}
-        blocked={busy || conflict !== null || stale}
+        blocked={isDumpGateBlocked({ busy, conflict, stale, dumpLocked })}
       />
     </Section>
   );

@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SCHEMA_VERSION } from "./schema";
+import { SPEC_SECTIONS } from "./spec-vocabulary";
 import { openCeremonyStore } from "./store";
 import type { CeremonyStore } from "./store";
 import type { CeremonyQuestion } from "./types";
@@ -50,8 +51,18 @@ const question = (overrides: Partial<CeremonyQuestion> = {}): CeremonyQuestion =
   ...overrides,
 });
 
+function validSpec(note: string): string {
+  return [
+    `# ${note}`,
+    ...Object.values(SPEC_SECTIONS).flatMap((section) => [
+      `## ${section.heading}`,
+      `${section.heading}: ${note}`,
+    ]),
+  ].join("\n\n");
+}
+
 const DUMP_DETAILS = {
-  markdown: "# Spec assinada",
+  markdown: validSpec("Spec assinada"),
   tasksMarkdown: "## Task\n\n### Critérios de aceite\n\n- Critério.",
   estimate: 5,
 } as const;
@@ -524,7 +535,7 @@ describe("saveSpecDraft", () => {
 
     first.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "# Spec da US #4242\n\nFora de escopo: relatório mensal.",
+      markdown: validSpec("Fora de escopo: relatório mensal."),
       base: "# Spec da US #4242",
       expectedSavedAt: null,
     });
@@ -532,7 +543,7 @@ describe("saveSpecDraft", () => {
     opened.pop();
 
     expect(open(file).getSpecDraft("thread-1")).toMatchObject({
-      markdown: "# Spec da US #4242\n\nFora de escopo: relatório mensal.",
+      markdown: validSpec("Fora de escopo: relatório mensal."),
       base: "# Spec da US #4242",
     });
   });
@@ -543,18 +554,18 @@ describe("saveSpecDraft", () => {
 
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "rascunho",
+      markdown: validSpec("rascunho"),
       base: "gerado",
       expectedSavedAt: null,
     });
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "revisado",
+      markdown: validSpec("revisado"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
 
-    expect(store.getSpecDraft("thread-1")?.markdown).toBe("revisado");
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe(validSpec("revisado"));
   });
 
   it("should assign distinct revisions when saves share the same clock tick", () => {
@@ -564,13 +575,13 @@ describe("saveSpecDraft", () => {
 
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     const second = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segundo",
+      markdown: validSpec("segundo"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
@@ -584,13 +595,13 @@ describe("saveSpecDraft", () => {
     newSession(store);
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segunda aba",
+      markdown: validSpec("segunda aba"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
@@ -598,12 +609,12 @@ describe("saveSpecDraft", () => {
     expect(() =>
       store.saveSpecDraft({
         sessionId: "thread-1",
-        markdown: "primeira aba atrasada",
+        markdown: validSpec("primeira aba atrasada"),
         base: "gerado",
         expectedSavedAt: first.savedAt,
       }),
     ).toThrow(/desatualizado/i);
-    expect(store.getSpecDraft("thread-1")?.markdown).toBe("segunda aba");
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe(validSpec("segunda aba"));
   });
 
   it("should overwrite a stale revision only when explicitly confirmed", () => {
@@ -611,26 +622,26 @@ describe("saveSpecDraft", () => {
     newSession(store);
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segunda aba",
+      markdown: validSpec("segunda aba"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
 
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeira aba confirmada",
+      markdown: validSpec("primeira aba confirmada"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
       overwrite: true,
     });
 
-    expect(store.getSpecDraft("thread-1")?.markdown).toBe("primeira aba confirmada");
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe(validSpec("primeira aba confirmada"));
   });
 
   it("should assign a revision above the one it overwrote when both land on the same tick", () => {
@@ -638,13 +649,13 @@ describe("saveSpecDraft", () => {
     newSession(store);
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     const other = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segunda aba",
+      markdown: validSpec("segunda aba"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
@@ -652,7 +663,7 @@ describe("saveSpecDraft", () => {
 
     const confirmed = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeira aba confirmada",
+      markdown: validSpec("primeira aba confirmada"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
       overwrite: true,
@@ -678,10 +689,25 @@ describe("saveSpecDraft", () => {
     expect(store.getSpecDraft("thread-1")).toBeUndefined();
   });
 
+  it("should refuse a draft that removes mandatory Spec sections", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: "# Nota",
+        base: "gerado",
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/Decisões.*Contexto de impacto.*Não verificado.*Pendências.*Fora de escopo/s);
+    expect(store.getSpecDraft("thread-1")).toBeUndefined();
+  });
+
   it("should keep leading Markdown whitespace the Operator typed", () => {
     const store = open(dbPath());
     newSession(store);
-    const markdown = "    code\n\n# Spec";
+    const markdown = `    code\n\n${validSpec("Spec")}`;
 
     store.saveSpecDraft({ sessionId: "thread-1", markdown, base: "gerado", expectedSavedAt: null });
 
@@ -708,7 +734,7 @@ describe("discardSpecDraft", () => {
     newSession(store);
     const draft = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "rascunho",
+      markdown: validSpec("rascunho"),
       base: "gerado",
       expectedSavedAt: null,
     });
@@ -726,13 +752,13 @@ describe("discardSpecDraft", () => {
     newSession(store);
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     const second = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segunda aba",
+      markdown: validSpec("segunda aba"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
@@ -764,6 +790,20 @@ describe("findOpenSessionByStory", () => {
 });
 
 describe("dump freeze", () => {
+  it("should refuse invalid Spec Markdown before freezing dump inputs", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    expect(() =>
+      store.beginDump("thread-1", {
+        dumpId: "dump-fingerprint",
+        ...DUMP_DETAILS,
+        markdown: "# Nota",
+      }),
+    ).toThrow(/Decisões.*Fora de escopo/s);
+    expect(store.getSession("thread-1")?.dumpId).toBeNull();
+  });
+
   it("should reject a decision after the dump has started", () => {
     const store = open(dbPath());
     newSession(store);

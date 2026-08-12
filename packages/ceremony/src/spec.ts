@@ -2,6 +2,16 @@ import { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
 import { CeremonyError } from "./ceremony-error";
 import type { CeremonyDecision, DossieDocument } from "./types";
 
+interface SpecSectionOccurrence {
+  readonly heading: string;
+  readonly bodyStart: number;
+  readonly bodyEnd: number;
+}
+
+interface SpecSectionStart extends Omit<SpecSectionOccurrence, "bodyEnd"> {
+  readonly headingStart: number;
+}
+
 /**
  * A Spec da US em Markdown: o artefato de dupla audiência (humano + agente) que
  * o despejo grava na própria US. Renderizada por código, não pelo modelo
@@ -45,6 +55,31 @@ export function renderSpecMarkdown(document: DossieDocument, timeZone = "UTC"): 
   ];
 
   return `${blocks.join("\n\n")}\n`;
+}
+
+/**
+ * A edição é livre dentro e fora das seções, mas não pode apagar o contrato da
+ * Spec. A mesma asserção protege o save e a última fronteira antes do despejo.
+ */
+export function assertValidSpecMarkdown(markdown: string): void {
+  const requiredHeadings = Object.values(SPEC_SECTIONS).map((section) => section.heading);
+  const occurrences = findCanonicalSections(markdown, requiredHeadings);
+  const errors = requiredHeadings.flatMap((heading) => {
+    const matching = occurrences.filter((section) => section.heading === heading);
+    if (matching.length === 0) return [`${heading}: seção ausente.`];
+    if (matching.length > 1) return [`${heading}: seção aparece mais de uma vez.`];
+
+    const section = matching[0];
+    return section !== undefined && markdown.slice(section.bodyStart, section.bodyEnd).trim() === ""
+      ? [`${heading}: seção vazia.`]
+      : [];
+  });
+
+  if (errors.length > 0) {
+    throw new CeremonyError(
+      `a Spec da US precisa preservar as seções obrigatórias:\n${errors.map((error) => `- ${error}`).join("\n")}`,
+    );
+  }
 }
 
 /**
@@ -117,6 +152,49 @@ export function appendDecisionTraceability(
 /** Links despejados não tornam a revisão do Operador semanticamente velha. */
 export function stripDecisionRecordLinks(markdown: string): string {
   return markdown.replace(/^ {2}- Registro no Azure DevOps: .*(?:\n|$)/gm, "");
+}
+
+function findCanonicalSections(
+  markdown: string,
+  requiredHeadings: readonly string[],
+): readonly SpecSectionOccurrence[] {
+  const headings = new Set(requiredHeadings);
+  const found: SpecSectionStart[] = [];
+  let offset = 0;
+  let fence = "";
+
+  for (const line of markdown.split(/(?<=\n)/)) {
+    const withoutNewline = line.replace(/\r?\n$/, "");
+    const fenceMatch = withoutNewline.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fenceMatch?.[1]) {
+      const closesFence =
+        fence !== "" &&
+        fenceMatch[1][0] === fence[0] &&
+        fenceMatch[1].length >= fence.length &&
+        fenceMatch[2]?.trim() === "";
+      if (closesFence) {
+        fence = "";
+      } else if (fence === "") {
+        fence = fenceMatch[1];
+      }
+      offset += line.length;
+      continue;
+    }
+
+    if (fence === "") {
+      const heading = withoutNewline.match(/^ {0,3}##[ \t]+(.+?)[ \t]*$/)?.[1];
+      if (heading !== undefined && headings.has(heading)) {
+        found.push({ heading, headingStart: offset, bodyStart: offset + line.length });
+      }
+    }
+    offset += line.length;
+  }
+
+  return found.map((section, index) => ({
+    heading: section.heading,
+    bodyStart: section.bodyStart,
+    bodyEnd: found[index + 1]?.headingStart ?? markdown.length,
+  }));
 }
 
 function italic(text: string): string {

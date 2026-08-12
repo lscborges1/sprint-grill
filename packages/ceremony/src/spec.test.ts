@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendDecisionTraceability,
+  assertValidSpecMarkdown,
   readSpecSection,
   renderSpecMarkdown,
   stripDecisionRecordLinks,
@@ -143,6 +144,51 @@ describe("renderSpecMarkdown", () => {
 
     expect(markdown.endsWith("\n")).toBe(true);
     expect(markdown.endsWith("\n\n")).toBe(false);
+  });
+});
+
+describe("assertValidSpecMarkdown", () => {
+  it("should accept generated and valid Operator-edited Specs", () => {
+    const generated = renderSpecMarkdown(REFINED);
+    const edited = `${generated}\n## Nota do Operador\n\nDetalhe adicional.\n`;
+
+    expect(() => assertValidSpecMarkdown(generated)).not.toThrow();
+    expect(() => assertValidSpecMarkdown(edited)).not.toThrow();
+  });
+
+  it("should report every missing canonical section", () => {
+    expect(() => assertValidSpecMarkdown("# Nota\n")).toThrow(
+      /Decisões.*Contexto de impacto.*Não verificado.*Pendências.*Fora de escopo/s,
+    );
+  });
+
+  it("should reject an empty canonical section", () => {
+    const markdown = renderSpecMarkdown(REFINED).replace(
+      `${SPEC_SECTIONS.impact.blurb}\n\n${REFINED.investigation.impact}`,
+      "",
+    );
+
+    expect(() => assertValidSpecMarkdown(markdown)).toThrow(/Contexto de impacto.*vazia/i);
+  });
+
+  it("should reject a duplicated canonical section", () => {
+    const markdown = `${renderSpecMarkdown(REFINED)}\n## ${SPEC_SECTIONS.decisions.heading}\n\nOutra versão.\n`;
+
+    expect(() => assertValidSpecMarkdown(markdown)).toThrow(/Decisões.*mais de uma vez/i);
+  });
+
+  it("should ignore canonical-looking headings inside fenced code", () => {
+    const fenced = [
+      "````markdown",
+      "```",
+      ...Object.values(SPEC_SECTIONS).flatMap((section) => [
+        `## ${section.heading}`,
+        "conteúdo de exemplo",
+      ]),
+      "````",
+    ].join("\n");
+
+    expect(() => assertValidSpecMarkdown(fenced)).toThrow(/Decisões.*Fora de escopo/s);
   });
 });
 

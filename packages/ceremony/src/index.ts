@@ -15,6 +15,7 @@ export { palcoStateSchema } from "./palco-state";
 export { dossieStateSchema } from "./session-state";
 export {
   appendDecisionTraceability,
+  assertValidSpecMarkdown,
   readSpecSection,
   renderSpecMarkdown,
   stripDecisionRecordLinks,

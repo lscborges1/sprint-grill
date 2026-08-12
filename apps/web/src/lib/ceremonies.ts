@@ -279,7 +279,10 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
   }
   // O próprio despejo pode ter acabado de anexar links de Registro ao documento
   // gerado. Isso não é uma nova decisão da sala e não invalida um retry.
-  if (stripDecisionRecordLinks(input.base) !== stripDecisionRecordLinks(initial.spec.generated)) {
+  if (
+    frozen === undefined &&
+    stripDecisionRecordLinks(input.base) !== stripDecisionRecordLinks(initial.spec.generated)
+  ) {
     throw new CeremonyError(
       "a cerimônia andou depois desta edição — regenere ou salve uma Spec atualizada antes de despejar.",
     );

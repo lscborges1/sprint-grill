@@ -10,6 +10,7 @@ import {
   stripDecisionRecordLinks,
   parseTaskDraft,
 } from "@sprint-griller/ceremony";
+import { isCeremonyEstimate } from "@sprint-griller/ceremony/estimate";
 import type {
   Ceremony,
   CeremonyDumpState,
@@ -19,6 +20,7 @@ import type {
   DiscardSpecDraftInput,
   PalcoState,
   SaveSpecDraftInput,
+  SignedDumpInputs,
   SpecDraft,
 } from "@sprint-griller/ceremony";
 import { defaultCeremonyDbPath, loadAdoCredentials } from "@sprint-griller/core";
@@ -269,7 +271,8 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
     throw new CeremonyError("encerre a cerimônia antes de despejar.");
   }
 
-  const frozen = signedDumpMarkdown(initial.dump);
+  const frozenInputs = signedDumpInputs(initial.dump);
+  const frozen = frozenInputs?.markdown;
   const signed = frozen ?? initial.spec.draft?.markdown ?? initial.spec.generated;
   if (input.markdown !== signed) {
     throw new CeremonyError(
@@ -290,6 +293,14 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
   }
   if (initial.pending.length > 0 && !input.confirmPending) {
     throw new CeremonyError("confirme que deseja despejar com as pendências abertas.");
+  }
+  if (frozenInputs !== undefined && input.estimate !== frozenInputs.estimate) {
+    throw new CeremonyError(
+      "o despejo já começou com outra estimativa — use a estimativa assinada no retry.",
+    );
+  }
+  if (frozenInputs === undefined && !isCeremonyEstimate(input.estimate)) {
+    throw new CeremonyError("a estimativa deve usar a escala Fibonacci da squad.");
   }
   const tasks = parseTaskDraft(input.tasksMarkdown, initial.story.url);
   const dumpId = dumpFingerprint(initial.story.id, signed, tasks, input.estimate);
@@ -385,14 +396,14 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
   }
 }
 
-function signedDumpMarkdown(dump: CeremonyDumpState): string | undefined {
+function signedDumpInputs(dump: CeremonyDumpState): SignedDumpInputs | undefined {
   switch (dump.status) {
     case "not-started":
       return undefined;
     case "publishing":
     case "retryable":
     case "completed":
-      return dump.inputs.markdown;
+      return dump.inputs;
   }
 }
 

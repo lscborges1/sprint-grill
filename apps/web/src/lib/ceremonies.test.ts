@@ -1,13 +1,29 @@
 import { mkdtempSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import type { AgentQuestion, AgentSession } from "@sprint-griller/agent-runtime";
 import { AdoError } from "@sprint-griller/ado-client";
+import { parseTaskDraft } from "@sprint-griller/ceremony/task-draft";
 import { createLogger } from "@sprint-griller/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Ceremony } from "@sprint-griller/ceremony";
+
+interface SqliteDatabase {
+  prepare(sql: string): { run(...parameters: readonly unknown[]): unknown };
+  close(): void;
+}
+
+interface SqliteDatabaseConstructor {
+  new(path: string): SqliteDatabase;
+}
+
+const requireFromCeremony = createRequire(
+  new URL("../../../../packages/ceremony/src/store.ts", import.meta.url),
+);
+const Database = requireFromCeremony("better-sqlite3") as SqliteDatabaseConstructor;
 
 const createAgentRuntime = vi.hoisted(() => vi.fn());
 const getInvestigation = vi.hoisted(() => vi.fn());
@@ -54,10 +70,8 @@ vi.mock("./logger", () => ({
   }),
 }));
 
-vi.stubEnv(
-  "SPRINT_GRILLER_DB",
-  path.join(mkdtempSync(path.join(tmpdir(), "sprint-griller-web-")), "cerimonias.db"),
-);
+const ceremonyDbPath = path.join(mkdtempSync(path.join(tmpdir(), "sprint-griller-web-")), "cerimonias.db");
+vi.stubEnv("SPRINT_GRILLER_DB", ceremonyDbPath);
 
 const {
   askFact,
@@ -229,6 +243,29 @@ async function prepareSignedDecisionDump() {
       ...DUMP_DETAILS,
     },
   } as const;
+}
+
+function dumpIdForLegacyEstimate({
+  storyId,
+  markdown,
+  tasksMarkdown,
+  storyUrl,
+  estimate,
+}: {
+  readonly storyId: number;
+  readonly markdown: string;
+  readonly tasksMarkdown: string;
+  readonly storyUrl: string;
+  readonly estimate: number;
+}): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      storyId,
+      markdown,
+      tasks: parseTaskDraft(tasksMarkdown, storyUrl),
+      estimate,
+    }))
+    .digest("hex");
 }
 
 beforeEach(() => {
@@ -438,6 +475,28 @@ describe("dumpCeremony", () => {
 
     expect(publishDecisionRecord).not.toHaveBeenCalled();
     expect(publishStorySpec).not.toHaveBeenCalled();
+  });
+
+  it("should reject a tampered non-Fibonacci estimate before any Azure DevOps write", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+
+    await expect(
+      dumpCeremony({
+        sessionId: session.id,
+        markdown: dossie.spec.generated,
+        base: dossie.spec.generated,
+        confirmPending: true,
+        tasksMarkdown: TASKS_MARKDOWN,
+        estimate: 4,
+      }),
+    ).rejects.toThrow(/Fibonacci/i);
+
+    expect(publishDecisionRecord).not.toHaveBeenCalled();
+    expect(publishStorySpec).not.toHaveBeenCalled();
+    expect(publishChildTasks).not.toHaveBeenCalled();
+    expect(publishDumpCompletion).not.toHaveBeenCalled();
   });
 
   it("should require confirmation before any ADO write with an ungrounded factual consultation", async () => {
@@ -708,6 +767,42 @@ Entrega outro slice vertical.
     ).rejects.toThrow(/Spec|Tasks|estimativa/i);
 
     expect(publishChildTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it("should retry a frozen legacy non-Fibonacci estimate only with its signed value", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+    publishStorySpec.mockRejectedValueOnce(new AdoError("connection", "conexão caiu"));
+
+    await expect(dumpCeremony(input)).rejects.toThrow("conexão caiu");
+
+    const legacyEstimate = 4;
+    const database = new Database(ceremonyDbPath);
+    database.prepare("UPDATE sessions SET dump_id = ?, dump_estimate = ? WHERE id = ?").run(
+      dumpIdForLegacyEstimate({
+        storyId: nextStoryId,
+        markdown: input.markdown,
+        tasksMarkdown: input.tasksMarkdown,
+        storyUrl: dossie.story.url,
+        estimate: legacyEstimate,
+      }),
+      legacyEstimate,
+      session.id,
+    );
+    database.close();
+
+    await expect(dumpCeremony(input)).rejects.toThrow(/estimativa assinada/i);
+    await expect(dumpCeremony({ ...input, estimate: legacyEstimate })).resolves.toBeUndefined();
+
+    expect(publishStorySpec).toHaveBeenCalledTimes(2);
   });
 
   it("should refuse changing the Spec after a partial dump so the retry stays recoverable", async () => {

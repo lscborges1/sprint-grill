@@ -1,7 +1,9 @@
 "use client";
 
 import type { DossieState } from "@sprint-griller/ceremony";
-import { useDumpGate } from "./use-dump-gate";
+import { CEREMONY_ESTIMATES } from "@sprint-griller/ceremony/estimate";
+import type { ReactElement } from "react";
+import { useDumpGate, type DumpGateController } from "./use-dump-gate";
 
 interface DumpGateProps {
   readonly sessionId: string;
@@ -16,7 +18,7 @@ interface DumpGateProps {
 }
 
 /** Última porta antes de qualquer escrita no tracker: a pendência não some nem bloqueia em silêncio. */
-export function DumpGate(props: DumpGateProps) {
+export function DumpGate(props: DumpGateProps): ReactElement {
   const gate = useDumpGate(props);
 
   if (gate.dumpCompleted) return <CompletedDump />;
@@ -76,7 +78,7 @@ function DumpReviewForm({
   pending,
   blocked,
   gate,
-}: DumpGateProps & { readonly gate: ReturnType<typeof useDumpGate> }) {
+}: DumpGateProps & { readonly gate: DumpGateController }) {
   const hasPending = pending.length > 0;
 
   return (
@@ -136,19 +138,31 @@ function DumpReviewForm({
         </label>
         <label className="flex max-w-xs flex-col gap-2 text-sm" htmlFor="estimate">
           Estimativa da squad
-          <input
-            id="estimate"
-            name="estimate"
-            type="number"
-            min="0.1"
-            step="0.5"
-            required
-            disabled={gate.dumping}
-            readOnly={gate.dumpLocked}
-            key={`estimate:${gate.estimateDefault ?? "new"}`}
-            defaultValue={gate.estimateDefault ?? ""}
-            className="rounded-lg border border-line bg-transparent px-4 py-3 text-base"
-          />
+          {gate.dumpLocked ? (
+            <>
+              <input type="hidden" name="estimate" value={gate.estimateDefault ?? ""} />
+              <output
+                id="estimate"
+                className="rounded-lg border border-line px-4 py-3 text-base"
+              >
+                {gate.estimateDefault}
+              </output>
+            </>
+          ) : (
+            <select
+              id="estimate"
+              name="estimate"
+              required
+              disabled={gate.dumping}
+              defaultValue=""
+              className="rounded-lg border border-line bg-transparent px-4 py-3 text-base"
+            >
+              <option value="" disabled>Selecione a estimativa</option>
+              {CEREMONY_ESTIMATES.map((estimate) => (
+                <option key={estimate} value={estimate}>{estimate}</option>
+              ))}
+            </select>
+          )}
         </label>
         {hasPending ? (
           <label className="flex items-start gap-3 text-sm">

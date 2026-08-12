@@ -4,7 +4,7 @@ import { validateTaskDraft } from "@sprint-griller/ceremony/task-draft";
 import type { CeremonyDumpState, DossieState, SignedDumpInputs } from "@sprint-griller/ceremony";
 import { useActionState, useState } from "react";
 import { dumpCeremonyAction } from "../../actions";
-import { DUMP_INITIAL_STATE } from "../../spec-draft-action-state";
+import { DUMP_INITIAL_STATE, type DumpActionState } from "../../spec-draft-action-state";
 
 interface UseDumpGateInput {
   readonly storyUrl: string;
@@ -13,7 +13,25 @@ interface UseDumpGateInput {
   readonly ceremonyStatus: DossieState["status"];
 }
 
-export function useDumpGate({ storyUrl, taskPreview, dump, ceremonyStatus }: UseDumpGateInput) {
+export interface DumpGateController {
+  readonly action: (formData: FormData) => void;
+  readonly ceremonyClosed: boolean;
+  readonly close: () => void;
+  readonly dumpCompleted: boolean;
+  readonly dumpLocked: boolean;
+  readonly dumping: boolean;
+  readonly estimateDefault: number | undefined;
+  readonly open: boolean;
+  readonly openGate: () => void;
+  readonly result: DumpActionState;
+  readonly setTasksMarkdown: (tasksMarkdown: string) => void;
+  readonly taskErrors: readonly string[];
+  readonly tasksMarkdown: string;
+}
+
+export function useDumpGate(
+  { storyUrl, taskPreview, dump, ceremonyStatus }: UseDumpGateInput,
+): DumpGateController {
   const dumpState = dumpGateState(dump);
   const initialTasksMarkdown = dumpState.inputs?.tasksMarkdown ?? taskPreview;
   const [open, setOpen] = useState(false);

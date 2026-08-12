@@ -25,6 +25,7 @@ import type {
   PersistedCeremonyQuestion,
   CeremonySession,
   ConsultationOutcome,
+  SignedDumpInputs,
   SpecDraft,
   TranscriptEntry,
   TranscriptEvent,
@@ -82,14 +83,7 @@ export interface AttachDecisionRecordInput {
   readonly recordUrl: string;
 }
 
-export interface BeginDumpInput {
-  readonly dumpId: string;
-  /** Spec que entrou no fingerprint — precisa voltar igual no retry. */
-  readonly markdown: string;
-  /** Markdown de Tasks que entrou no fingerprint — precisa voltar igual no retry. */
-  readonly tasksMarkdown: string;
-  readonly estimate: number;
-}
+export type BeginDumpInput = SignedDumpInputs;
 
 export type FinishSessionOutcome =
   | { readonly status: "encerrada" }

@@ -442,6 +442,36 @@ describe("getDossie", () => {
 });
 
 describe("dumpCeremony", () => {
+  it.each([
+    ["missing", "Observação livre do Operador."],
+    ["altered", "_Nenhuma decisão relevante foi registrada._"],
+  ] as const)("should reject a %s empty traceability before any Azure DevOps preflight", async (_kind, replacement) => {
+    const session = await startCeremony(nextStoryId);
+    await finishCeremony(session.id);
+    const generated = getDossie(session.id)!.spec.generated;
+    const markdown = generated.replace(
+      "_Nenhuma decisão foi registrada._",
+      replacement,
+    );
+    const database = new Database(ceremonyDbPath);
+    database
+      .prepare("INSERT INTO spec_drafts (session_id, markdown, base, saved_at) VALUES (?, ?, ?, ?)")
+      .run(session.id, markdown, generated, Date.now());
+    database.close();
+    const input = {
+      sessionId: session.id,
+      markdown,
+      base: generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+
+    await expect(dumpCeremony(input)).rejects.toThrow(/nenhuma decisão foi registrada/i);
+    expect(readDumpCompletion).not.toHaveBeenCalled();
+    expect(publishDecisionRecord).not.toHaveBeenCalled();
+    expect(getDossie(session.id)?.dump.status).toBe("not-started");
+  });
+
   it("should reject persisted unsigned traceability before any Azure DevOps preflight", async () => {
     const session = await startCeremony(nextStoryId);
     await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));

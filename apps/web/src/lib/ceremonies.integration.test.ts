@@ -219,6 +219,9 @@ const azureFetch = vi.fn(async (
     });
   }
   if (/\/workitems\/\$Task$/i.test(pathName)) {
+    if (method !== "POST") {
+      throw new Error(`task creation requires POST, received ${method}`);
+    }
     const title = patchValue(body, "/fields/System.Title");
     const description = patchValue(body, "/fields/System.Description");
     if (typeof title !== "string" || typeof description !== "string") {

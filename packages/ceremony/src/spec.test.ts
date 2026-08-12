@@ -196,6 +196,18 @@ describe("assertValidSpecMarkdown", () => {
     );
   });
 
+  it.each([
+    ["missing", "Observação livre do Operador."],
+    ["altered", "_Nenhuma decisão relevante foi registrada._"],
+  ] as const)("should reject a %s canonical empty traceability entry", (_kind, replacement) => {
+    const markdown = renderSpecMarkdown(EMPTY).replace(
+      "_Nenhuma decisão foi registrada._",
+      replacement,
+    );
+
+    expect(() => assertValidSpecMarkdown(markdown, [])).toThrow(/nenhuma decisão foi registrada/i);
+  });
+
   it("should require repeated reviewed entries in decision order", () => {
     const repeated = {
       ...REFINED.decisions[0]!,
@@ -365,8 +377,23 @@ describe("readSpecSection", () => {
     );
   });
 
+  it("should stop at the decision traceability appendix", () => {
+    const markdown = renderSpecMarkdown(EMPTY).replace(
+      `_${SPEC_SECTIONS.outOfScope.empty}_`,
+      "Fora de escopo: relatório mensal.",
+    );
+
+    const content = readSpecSection(markdown, SPEC_SECTIONS.outOfScope.heading);
+
+    expect(content).toContain("Fora de escopo: relatório mensal.");
+    expect(content).not.toContain("Rastreabilidade de decisões");
+  });
+
   it("should not treat an unknown Markdown heading as a section boundary", () => {
-    const markdown = `${renderSpecMarkdown(REFINED)}\n## Nota do Operador\ntexto`;
+    const markdown = renderSpecMarkdown(REFINED).replace(
+      "\n\n## Rastreabilidade de decisões",
+      "\n\n## Nota do Operador\ntexto\n\n## Rastreabilidade de decisões",
+    );
 
     expect(readSpecSection(markdown, SPEC_SECTIONS.outOfScope.heading)).toContain(
       "## Nota do Operador",

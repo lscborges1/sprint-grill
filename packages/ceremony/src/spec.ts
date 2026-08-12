@@ -3,6 +3,7 @@ import { CeremonyError } from "./ceremony-error";
 import type { CeremonyDecision, DossieDocument } from "./types";
 
 const DECISION_TRACEABILITY_HEADING = "Rastreabilidade de decisões";
+const EMPTY_DECISION_TRACEABILITY = italic("Nenhuma decisão foi registrada.");
 
 interface SpecSectionOccurrence {
   readonly heading: string;
@@ -66,7 +67,7 @@ export function renderSpecMarkdown(document: DossieDocument, timeZone = "UTC"): 
     italic(SPEC_SECTIONS.outOfScope.empty),
 
     `## ${DECISION_TRACEABILITY_HEADING}`,
-    list(decisions, traceabilityEntry) ?? italic("Nenhuma decisão foi registrada."),
+    list(decisions, traceabilityEntry) ?? EMPTY_DECISION_TRACEABILITY,
   ];
 
   return `${blocks.join("\n\n")}\n`;
@@ -78,7 +79,7 @@ export function renderSpecMarkdown(document: DossieDocument, timeZone = "UTC"): 
  */
 export function assertValidSpecMarkdown(
   markdown: string,
-  decisions: readonly CeremonyDecision[] = [],
+  decisions?: readonly CeremonyDecision[],
 ): void {
   const requiredHeadings = [
     ...Object.values(SPEC_SECTIONS).map((section) => section.heading),
@@ -102,7 +103,7 @@ export function assertValidSpecMarkdown(
     );
   }
 
-  findDecisionTraceability(markdown, decisions);
+  findDecisionTraceability(markdown, decisions ?? [], decisions !== undefined);
 }
 
 /**
@@ -116,8 +117,11 @@ export function readSpecSection(markdown: string, heading: string): string {
   if (start === -1) return "";
 
   const body = markdown.slice(start + opening.length + (startsAtDocument ? 0 : 1));
-  const end = Object.values(SPEC_SECTIONS)
-    .map((section) => section.heading)
+  const canonicalHeadings: readonly string[] = [
+    ...Object.values(SPEC_SECTIONS).map((section) => section.heading),
+    DECISION_TRACEABILITY_HEADING,
+  ];
+  const end = canonicalHeadings
     .filter((candidate) => candidate !== heading)
     .map((candidate) => body.indexOf(`\n## ${candidate}\n`))
     .filter((index) => index >= 0)
@@ -195,6 +199,7 @@ function traceabilityEntry(decision: CeremonyDecision): string {
 function findDecisionTraceability(
   markdown: string,
   decisions: readonly CeremonyDecision[],
+  requireEmptyEntry = false,
 ): DecisionTraceability {
   const appendices = findCanonicalSections(markdown, [DECISION_TRACEABILITY_HEADING]);
   if (appendices.length !== 1) {
@@ -208,6 +213,15 @@ function findDecisionTraceability(
     bodyEnd: findNextLevelTwoHeading(markdown, appendices[0]!.bodyStart),
   };
   const traceability = markdown.slice(appendix.bodyStart, appendix.bodyEnd);
+  if (
+    requireEmptyEntry &&
+    decisions.length === 0 &&
+    !traceability.split(/\r?\n/).some((line) => line.trim() === EMPTY_DECISION_TRACEABILITY)
+  ) {
+    throw new CeremonyError(
+      `a rastreabilidade assinada sem decisões precisa conter ${EMPTY_DECISION_TRACEABILITY}.`,
+    );
+  }
   let searchFrom = 0;
   const matches = decisions.map((decision) => {
     const reviewed = traceabilityEntry({ ...decision, recordId: undefined, recordUrl: undefined });

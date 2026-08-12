@@ -399,10 +399,19 @@ Preservar clientes antigos.
         return json({ workItemTypes: [{ name: "Task" }] });
       }
       if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
-      if (call.init?.method === "PATCH" && call.url.includes("/workitems/")) {
+      if (call.url.includes("/_apis/wit/workitems/$Task")) {
+        if (call.init?.method !== "POST") {
+          throw new Error(`a criação de Task deve usar POST, recebeu ${call.init?.method}`);
+        }
         return json({ id: nextId++ });
       }
-      return json({ id: nextId++ });
+      if (call.url.includes("/workitems/")) {
+        if (call.init?.method !== "PATCH") {
+          throw new Error(`a dependência de Task deve usar PATCH, recebeu ${call.init?.method}`);
+        }
+        return json({ id: nextId++ });
+      }
+      throw new Error(`requisição inesperada: ${call.url}`);
     });
 
     await publishChildTasks(options(ado.fetch), {
@@ -431,6 +440,8 @@ Preservar clientes antigos.
     expect(bodies.join("\n")).toContain("System.LinkTypes.Dependency-Reverse");
     expect(bodies.join("\n")).not.toContain("## Critérios de aceite");
     expect(ado.calls.some((call) => call.url.includes("/_apis/wit/workitems/$Task"))).toBe(true);
+    expect(ado.calls.find((call) => call.url.includes("/_apis/wit/workitems/$Task"))?.init?.method)
+      .toBe("POST");
   });
 
   it("should not include operator-authored Task titles in structured logs", async () => {

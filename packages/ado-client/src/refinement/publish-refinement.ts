@@ -342,7 +342,7 @@ export async function publishChildTasks(
         operation: `a Task filha ${taskNumber}`,
         path: `_apis/wit/workitems/$${encodeURIComponent(taskType)}`,
         schema: updatedStorySchema,
-        method: "PATCH",
+        method: "POST",
         contentType: "application/json-patch+json",
         write: true,
         body: [

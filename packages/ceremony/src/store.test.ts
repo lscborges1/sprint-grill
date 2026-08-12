@@ -811,6 +811,31 @@ describe("saveSpecDraft", () => {
     expect(store.getSession("thread-1")?.dump).toEqual({ status: "not-started" });
   });
 
+  it.each([
+    ["missing", "Observação livre do Operador."],
+    ["altered", "_Nenhuma decisão relevante foi registrada._"],
+  ] as const)("should reject a %s empty traceability entry before saving or beginning a dump", (_kind, replacement) => {
+    const store = open(dbPath());
+    newSession(store);
+    const invalid = validSpec("Spec assinada").replace(
+      "_Nenhuma decisão foi registrada._",
+      replacement,
+    );
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: invalid,
+        base: validSpec("Spec assinada"),
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/nenhuma decisão foi registrada/i);
+    expect(() =>
+      store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS, markdown: invalid }),
+    ).toThrow(/nenhuma decisão foi registrada/i);
+    expect(store.getSession("thread-1")?.dump).toEqual({ status: "not-started" });
+  });
+
   it("should keep leading Markdown whitespace the Operator typed", () => {
     const store = open(dbPath());
     newSession(store);

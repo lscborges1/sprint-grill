@@ -48,6 +48,8 @@ const TASKS_MARKDOWN = `## Preparar cálculo
 
 Entrega o cálculo de comissão como um slice executável.
 
+[Spec da US](${STORY_URL})
+
 ### Critérios de aceite
 
 - O cálculo usa a regra bancária.

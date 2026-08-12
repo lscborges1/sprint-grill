@@ -59,7 +59,7 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
     sessionId,
     status: session.status,
     timeZone: session.timeZone,
-    taskPreview: taskPreviewFromTranscript(store.listTranscript(sessionId)),
+    taskPreview: taskPreviewFromTranscript(store.listTranscript(sessionId), session.storyUrl),
     dump: session.dump,
     spec: {
       generated: renderSpecMarkdown(document, session.timeZone),

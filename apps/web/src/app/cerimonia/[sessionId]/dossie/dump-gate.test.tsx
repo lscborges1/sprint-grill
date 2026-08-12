@@ -16,7 +16,7 @@ const controller = vi.hoisted(() => ({
     result: { status: "idle" as const },
     setTasksMarkdown: () => undefined,
     taskErrors: [],
-    tasksMarkdown: "## Implementar\n\n### Critérios de aceite\n\n- Funciona.",
+    tasksMarkdown: "## Implementar\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/1)\n\n### Critérios de aceite\n\n- Funciona.",
   },
 }));
 
@@ -30,7 +30,7 @@ const props = {
   markdown: "# Spec",
   base: "# Spec",
   pending: [],
-  taskPreview: "## Implementar\n\n### Critérios de aceite\n\n- Funciona.",
+  taskPreview: "## Implementar\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/1)\n\n### Critérios de aceite\n\n- Funciona.",
   dump: { status: "not-started" as const },
   ceremonyStatus: "encerrada" as const,
   blocked: false,

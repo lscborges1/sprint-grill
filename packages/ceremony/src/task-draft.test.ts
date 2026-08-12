@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  TASK_DRAFT_TEMPLATE,
   parseTaskDraft,
+  taskDraftTemplate,
   taskPreviewFromTranscript,
   validateTaskDraft,
 } from "./task-draft";
@@ -12,6 +12,8 @@ const VALID = `## Criar endpoint de exportação
 
 Entrega o CSV de comissões para o Operador.
 
+[Spec da US](${SPEC_URL})
+
 ### Critérios de aceite
 
 - Retorna um CSV com a comissão arredondada pela regra bancária.
@@ -19,6 +21,8 @@ Entrega o CSV de comissões para o Operador.
 ## Mostrar link no portal
 
 Mostra o resultado da exportação no fluxo existente do portal.
+
+[Spec da US](${SPEC_URL})
 
 ### Critérios de aceite
 
@@ -33,6 +37,8 @@ describe("parseTaskDraft", () => {
     const markdown = `## Criar endpoint
 
 Entrega o CSV ao Operador.
+
+[Spec da US](${SPEC_URL})
 
 ### Contexto técnico
 
@@ -50,6 +56,8 @@ Preservar compatibilidade com clientes antigos.
 
 Documenta o contrato público.
 
+[Spec da US](${SPEC_URL})
+
 ### Critérios de aceite
 
 - Publica o schema.`;
@@ -57,6 +65,8 @@ Documenta o contrato público.
     expect(parseTaskDraft(markdown, SPEC_URL)[0]).toEqual({
       title: "Criar endpoint",
       bodyMarkdown: `Entrega o CSV ao Operador.
+
+[Spec da US](${SPEC_URL})
 
 ### Contexto técnico
 
@@ -80,6 +90,8 @@ Preservar compatibilidade com clientes antigos.
         title: "Criar endpoint de exportação",
         bodyMarkdown: `Entrega o CSV de comissões para o Operador.
 
+[Spec da US](${SPEC_URL})
+
 ### Critérios de aceite
 
 - Retorna um CSV com a comissão arredondada pela regra bancária.`,
@@ -89,6 +101,8 @@ Preservar compatibilidade com clientes antigos.
       {
         title: "Mostrar link no portal",
         bodyMarkdown: `Mostra o resultado da exportação no fluxo existente do portal.
+
+[Spec da US](${SPEC_URL})
 
 ### Critérios de aceite
 
@@ -167,7 +181,7 @@ Descrição`, SPEC_URL);
     expect(result.errors).toEqual(expect.arrayContaining([
       expect.stringMatching(/antes da primeira/i),
       expect.stringMatching(/ao menos um critério/i),
-      expect.stringMatching(/conforme discutido/i),
+      expect.stringMatching(/Spec atual/i),
       expect.stringMatching(/não existe/i),
       expect.stringMatching(/aparece mais de uma vez/i),
       expect.stringMatching(/não tem critérios/i),
@@ -190,6 +204,48 @@ Implementa o comportamento refinado pela sala.
 ### Critérios de aceite
 
 - Funciona conforme discutido na [Spec da US](${SPEC_URL}).`, SPEC_URL)).toMatchObject({ valid: true });
+  });
+
+  it("should reject every Task that omits the current Spec link", () => {
+    const result = validateTaskDraft(`## Implementar
+
+Entrega o comportamento refinado pela sala.
+
+### Critérios de aceite
+
+- Entrega observável.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava a ausência do link da Spec");
+    expect(result.errors).toEqual([
+      expect.stringMatching(/link.*Spec atual/i),
+    ]);
+  });
+
+  it("should reject a Task that links a different Spec", () => {
+    const result = validateTaskDraft(`## Implementar
+
+Entrega o comportamento refinado pela sala.
+
+### Critérios de aceite
+
+- Entrega observável na [Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/9999).`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava o link exato da Spec atual");
+    expect(result.errors).toEqual([
+      expect.stringMatching(/link.*Spec atual/i),
+    ]);
+  });
+
+  it("should accept a Task only when it contains the exact current Spec link", () => {
+    expect(validateTaskDraft(`## Implementar
+
+Entrega o comportamento refinado pela sala.
+
+### Critérios de aceite
+
+- Entrega observável na [Spec da US](${SPEC_URL}).`, SPEC_URL)).toMatchObject({ valid: true });
   });
 
   it.each([
@@ -215,14 +271,17 @@ Entrega o contrato público.
   });
 
   it("should fall back to the template when no transcript message contains a draft", () => {
-    expect(taskPreviewFromTranscript([{ at: 1, event: { kind: "turno-encerrado" } }])).toBe(TASK_DRAFT_TEMPLATE);
+    expect(taskPreviewFromTranscript(
+      [{ at: 1, event: { kind: "turno-encerrado" } }],
+      SPEC_URL,
+    )).toContain(`[Spec da US](${SPEC_URL})`);
   });
 
   it("should ignore an unclosed draft marker", () => {
     expect(taskPreviewFromTranscript([{
       at: 1,
       event: { kind: "mensagem", text: "<!-- sprint-griller:tasks:start -->\n## Incompleta" },
-    }])).toBe(TASK_DRAFT_TEMPLATE);
+    }], SPEC_URL)).toBe(taskDraftTemplate(SPEC_URL));
   });
 
   it("should select the newest complete non-empty transcript draft", () => {
@@ -235,6 +294,6 @@ Entrega o contrato público.
         at: 2,
         event: { kind: "mensagem", text: "<!-- sprint-griller:tasks:start -->\n## Nova\n<!-- sprint-griller:tasks:end -->" },
       },
-    ])).toBe("## Nova");
+    ], SPEC_URL)).toBe("## Nova");
   });
 });

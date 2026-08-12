@@ -85,6 +85,14 @@ describe("markdownToAdoHtml", () => {
       '<p><a href="mailto:po@example.test">mail</a></p>',
     );
   });
+
+  it("should format link labels without rewriting underscores in the href", () => {
+    const href = "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211?source=task_preview";
+
+    expect(markdownToAdoHtml(`[**Spec _atual_**](${href})`)).toBe(
+      `<p><a href="${href}"><strong>Spec <em>atual</em></strong></a></p>`,
+    );
+  });
 });
 
 describe("publishDecisionRecord", () => {
@@ -339,16 +347,15 @@ describe("publishChildTasks", () => {
   const childTasks = {
     storyId: 4211,
     dumpId: "dump-4211",
-    specUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
     tasks: [{
       title: "Criar endpoint",
-      bodyMarkdown: "Entrega o CSV.\n\n### Critérios de aceite\n\n- Retorna o CSV.",
+      bodyMarkdown: "Entrega o CSV.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Retorna o CSV.",
       acceptanceCriteria: ["Retorna o CSV."],
       blockedBy: [],
     }],
   } as const;
 
-  it("should preserve the signed Task body and append the Spec link only when absent", async () => {
+  it("should publish only the signed Task body plus its deterministic marker", async () => {
     const ado = fakeAdo((call) => {
       if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
         return json({ workItemTypes: [{ name: "Task" }] });
@@ -356,12 +363,9 @@ describe("publishChildTasks", () => {
       if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
       return json({ id: 900 });
     });
-    const specUrl = "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211";
-
     await publishChildTasks(options(ado.fetch), {
       storyId: 4211,
       dumpId: "dump-4211",
-      specUrl,
       tasks: [{
         title: "Criar endpoint",
         bodyMarkdown: `Entrega o CSV.
@@ -373,8 +377,7 @@ Preservar clientes antigos.
 ### Critérios de aceite
 
 - Retorna o CSV.
-
-[Spec da US](${specUrl})`,
+`,
         acceptanceCriteria: ["Retorna o CSV."],
         blockedBy: [],
       }],
@@ -385,7 +388,8 @@ Preservar clientes antigos.
     );
     expect(taskBody).toContain("<h3>Contexto técnico</h3>");
     expect(taskBody).toContain("Preservar clientes antigos.");
-    expect(taskBody.match(/Spec da US/g)).toHaveLength(1);
+    expect(taskBody).not.toContain("Spec da US");
+    expect(taskBody).toContain("sprint-griller:dump:dump-4211:task:1");
   });
 
   it("should create child Tasks with acceptance criteria, a Spec link, and native blockers", async () => {
@@ -404,17 +408,16 @@ Preservar clientes antigos.
     await publishChildTasks(options(ado.fetch), {
       storyId: 4211,
       dumpId: "dump-4211",
-      specUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
       tasks: [
         {
           title: "Criar endpoint",
-          bodyMarkdown: "Entrega o CSV.\n\n### Critérios de aceite\n\n- Retorna o CSV.",
+          bodyMarkdown: "Entrega o CSV.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Retorna o CSV.",
           acceptanceCriteria: ["Retorna o CSV."],
           blockedBy: [],
         },
         {
           title: "Mostrar link",
-          bodyMarkdown: "Mostra o link no portal.\n\n### Critérios de aceite\n\n- Exibe o link.\n\n### Bloqueada por\n\n- Criar endpoint",
+          bodyMarkdown: "Mostra o link no portal.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Exibe o link.\n\n### Bloqueada por\n\n- Criar endpoint",
           acceptanceCriteria: ["Exibe o link."],
           blockedBy: ["Criar endpoint"],
         },
@@ -452,10 +455,9 @@ Preservar clientes antigos.
     await publishChildTasks({ ...options(ado.fetch), logger }, {
       storyId: 4211,
       dumpId: "dump-4211",
-      specUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
       tasks: [{
         title: "Transferir dados pessoais de Maria",
-        bodyMarkdown: "Transfere os dados solicitados.\n\n### Critérios de aceite\n\n- Concluído.",
+        bodyMarkdown: "Transfere os dados solicitados.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Concluído.",
         acceptanceCriteria: ["Concluído."],
         blockedBy: [],
       }],
@@ -535,7 +537,7 @@ Preservar clientes antigos.
         ...childTasks.tasks,
         {
           title: "Mostrar link",
-          bodyMarkdown: "Mostra o link no portal.\n\n### Critérios de aceite\n\n- Exibe o link.\n\n### Bloqueada por\n\n- Criar endpoint",
+          bodyMarkdown: "Mostra o link no portal.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Exibe o link.\n\n### Bloqueada por\n\n- Criar endpoint",
           acceptanceCriteria: ["Exibe o link."],
           blockedBy: ["Criar endpoint"],
         },
@@ -588,7 +590,7 @@ Preservar clientes antigos.
         ...childTasks.tasks,
         {
           title: "Mostrar link",
-          bodyMarkdown: "Mostra o link no portal.\n\n### Critérios de aceite\n\n- Exibe o link.",
+          bodyMarkdown: "Mostra o link no portal.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Exibe o link.",
           acceptanceCriteria: ["Exibe o link."],
           blockedBy: [],
         },

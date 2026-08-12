@@ -4,9 +4,12 @@ import type { TranscriptEntry } from "./types";
 export const TASK_DRAFT_START = "<!-- sprint-griller:tasks:start -->";
 export const TASK_DRAFT_END = "<!-- sprint-griller:tasks:end -->";
 
-export const TASK_DRAFT_TEMPLATE = `## Título da Task
+export function taskDraftTemplate(specUrl: string): string {
+  return `## Título da Task
 
 Explique o slice vertical que um agente consegue concluir em uma sessão.
+
+[Spec da US](${specUrl})
 
 ### Critérios de aceite
 
@@ -15,6 +18,7 @@ Explique o slice vertical que um agente consegue concluir em uma sessão.
 ### Bloqueada por
 
 - Título de outra Task deste preview (remova esta seção se não houver bloqueio).`;
+}
 
 export interface TaskDraft {
   readonly title: string;
@@ -30,7 +34,6 @@ export type TaskDraftValidation =
 
 const ACCEPTANCE_HEADING = "### Critérios de aceite";
 const BLOCKERS_HEADING = "### Bloqueada por";
-const CONTEXTUAL_REFERENCE = /\bconforme discutido\b/i;
 const MARKDOWN_LINK = /\[([^\u005b\u005d\n]+)\]\(([^()\u005b\u005d\s]+)\)/g;
 
 /**
@@ -103,7 +106,10 @@ export function validateTaskDraft(markdown: string, specUrl: string): TaskDraftV
 }
 
 /** O rascunho sai da mensagem final do agente, mas nunca substitui a assinatura humana. */
-export function taskPreviewFromTranscript(transcript: readonly TranscriptEntry[]): string {
+export function taskPreviewFromTranscript(
+  transcript: readonly TranscriptEntry[],
+  specUrl: string,
+): string {
   const messages = transcript
     .filter((entry): entry is TranscriptEntry & { readonly event: Extract<TranscriptEntry["event"], { readonly kind: "mensagem" }> } =>
       entry.event.kind === "mensagem",
@@ -120,7 +126,7 @@ export function taskPreviewFromTranscript(transcript: readonly TranscriptEntry[]
     if (draft !== "") return draft;
   }
 
-  return TASK_DRAFT_TEMPLATE;
+  return taskDraftTemplate(specUrl);
 }
 
 function parseTask(
@@ -148,8 +154,8 @@ function parseTask(
     errors.push(`a Task "${title}" precisa de ao menos um critério de aceite.`);
   }
   const links = validateMarkdownLinks(body, title, errors);
-  if (CONTEXTUAL_REFERENCE.test(body) && !links.includes(specUrl)) {
-    errors.push(`a Task "${title}" cita "conforme discutido" sem link para a Spec da US.`);
+  if (!links.includes(specUrl)) {
+    errors.push(`a Task "${title}" precisa conter um link Markdown para a Spec atual (${specUrl}).`);
   }
 
   const blockers = sectionBody(body, BLOCKERS_HEADING);
@@ -189,7 +195,8 @@ function validateMarkdownLinks(markdown: string, title: string, errors: string[]
       const url = new URL(target);
       if (url.protocol === "http:" || url.protocol === "https:") return [target];
     } catch {
-      // A mensagem única abaixo cobre URL relativa e URL absoluta malformada.
+      errors.push(`a Task "${title}" tem um link Markdown inválido; use uma URL absoluta http(s).`);
+      return [];
     }
     errors.push(`a Task "${title}" tem um link Markdown inválido; use uma URL absoluta http(s).`);
     return [];

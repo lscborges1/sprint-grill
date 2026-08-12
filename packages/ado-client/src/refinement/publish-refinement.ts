@@ -53,7 +53,6 @@ export interface ChildTaskToPublish {
 export interface ChildTasksToPublish {
   readonly storyId: number;
   readonly dumpId: string;
-  readonly specUrl: string;
   readonly tasks: readonly ChildTaskToPublish[];
 }
 
@@ -351,7 +350,7 @@ export async function publishChildTasks(
           {
             op: "add",
             path: "/fields/System.Description",
-            value: renderChildTaskDescription(task, input.specUrl, dumpMarker(input.dumpId, `task:${taskNumber}`)),
+            value: renderChildTaskDescription(task, dumpMarker(input.dumpId, `task:${taskNumber}`)),
           },
           {
             op: "add",
@@ -414,17 +413,8 @@ function workItemIdFromUrl(url: string): number | undefined {
   return Number.isSafeInteger(id) && id > 0 ? id : undefined;
 }
 
-function renderChildTaskDescription(task: ChildTaskToPublish, specUrl: string, marker: string): string {
-  const markdown = [
-    task.bodyMarkdown.trim(),
-    ...(hasMarkdownLinkTarget(task.bodyMarkdown, specUrl) ? [] : [`[Spec da US](${specUrl})`]),
-  ].filter((part) => part !== "").join("\n\n");
-  return `${marker}\n${markdownToAdoHtml(markdown)}`;
-}
-
-function hasMarkdownLinkTarget(markdown: string, target: string): boolean {
-  return [...markdown.matchAll(/\[[^\]\n]+\]\(([^()\s]+)\)/g)]
-    .some((match) => match[1] === target);
+function renderChildTaskDescription(task: ChildTaskToPublish, marker: string): string {
+  return `${marker}\n${markdownToAdoHtml(task.bodyMarkdown.trim())}`;
 }
 
 /** Exportado para cobrir o contrato de preservação do texto já escrito na US. */
@@ -526,12 +516,26 @@ function consumeMarkdownList(
 }
 
 function renderInlineMarkdown(text: string): string {
-  const escaped = escapeHtml(text);
-  return escaped
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, href: string) => {
-      const safeHref = sanitizeMarkdownHref(href);
-      return safeHref === undefined ? label : `<a href="${safeHref}">${label}</a>`;
-    })
+  const parts: string[] = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)) {
+    if (match.index === undefined) continue;
+    parts.push(renderInlineText(text.slice(lastIndex, match.index)));
+    const label = renderInlineText(match[1] ?? "");
+    const safeHref = sanitizeMarkdownHref(match[2] ?? "");
+    parts.push(
+      safeHref === undefined
+        ? label
+        : `<a href="${escapeHtml(safeHref)}">${label}</a>`,
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  parts.push(renderInlineText(text.slice(lastIndex)));
+  return parts.join("");
+}
+
+function renderInlineText(text: string): string {
+  return escapeHtml(text)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/_([^_]+)_/g, "<em>$1</em>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");

@@ -63,7 +63,7 @@ function validSpec(note: string): string {
 
 const DUMP_DETAILS = {
   markdown: validSpec("Spec assinada"),
-  tasksMarkdown: "## Task\n\nEntrega um slice vertical.\n\n### Critérios de aceite\n\n- Critério.",
+  tasksMarkdown: "## Task\n\nEntrega um slice vertical.\n\n[Spec da US](https://dev.azure.com/org/proj/_workitems/edit/4242)\n\n### Critérios de aceite\n\n- Critério.",
   estimate: 5,
 } as const;
 

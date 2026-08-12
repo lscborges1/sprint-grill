@@ -119,6 +119,8 @@ const TASKS_MARKDOWN = `## Implementar exportação
 
 Entrega a exportação de comissões de ponta a ponta.
 
+[Spec da US](${STORY.url})
+
 ### Critérios de aceite
 
 - A exportação segue a decisão registrada pela sala.`;
@@ -1059,6 +1061,8 @@ Entrega outro slice vertical.
         tasks: [{
           title: "Implementar exportação",
           bodyMarkdown: `Entrega a exportação de comissões de ponta a ponta.
+
+[Spec da US](${STORY.url})
 
 ### Critérios de aceite
 

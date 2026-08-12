@@ -55,7 +55,7 @@ describe("ceremonyInstructions", () => {
   it("should require a task preview when the agent closes the ceremony", () => {
     expect(ceremonyInstructions(repos)).toContain(TASK_DRAFT_START);
     expect(ceremonyInstructions(repos)).toContain("Critérios de aceite");
-    expect(ceremonyInstructions(repos)).toContain("conforme discutido");
+    expect(ceremonyInstructions(repos)).toMatch(/exatamente a URL/i);
   });
 });
 
@@ -68,6 +68,7 @@ describe("ceremonyOpeningPrompt", () => {
     expect(prompt).toContain("Sem regra de arredondamento.");
     expect(prompt).toContain("O gerente precisa baixar o CSV.");
     expect(prompt).toContain(story.url);
+    expect(prompt).toContain(`[Spec da US](${story.url})`);
   });
 
   it("should say the story has no description when the PO left it empty", () => {

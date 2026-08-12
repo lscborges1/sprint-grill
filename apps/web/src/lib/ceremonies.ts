@@ -377,7 +377,6 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
   await publishChildTasks(ado, {
     storyId: dossieWithRecords.story.id,
     dumpId,
-    specUrl: dossieWithRecords.story.url,
     tasks,
   });
 

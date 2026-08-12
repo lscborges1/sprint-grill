@@ -262,3 +262,16 @@ sumir porque a sala acabou de decidir. Em troca, quando o documento anda por
 baixo da edição, a tela avisa e oferece **regenerar** (que descarta a edição):
 despejar uma Spec sem a última decisão é o erro que esta aba existe para não
 deixar passar calado.
+
+Cada Task precisa conter, antes da assinatura, um link Markdown para a URL exata
+da Spec da US atual. O Markdown assinado é a fonte do corpo publicado: o
+despejo não acrescenta nem corrige links ou texto. A fronteira estreita depois
+da assinatura admite somente metadados que ainda não existem ou que o ADO exige:
+
+- marcadores determinísticos de armazenamento e reconciliação;
+- conversão do Markdown assinado para o HTML dos campos de work item;
+- links dos Registros de decisão anexados à rastreabilidade da Spec, porque as
+  URLs desses comments só existem depois que o ADO os publica.
+
+Relações nativas de pai e dependência e a estimativa são campos estruturados do
+work item; não alteram o corpo assinado da Task.

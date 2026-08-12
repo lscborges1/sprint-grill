@@ -21,7 +21,12 @@ export {
   stripDecisionRecordLinks,
 } from "./spec";
 export { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
-export { parseTaskDraft, taskPreviewFromTranscript, validateTaskDraft } from "./task-draft";
+export {
+  parseTaskDraft,
+  taskDraftTemplate,
+  taskPreviewFromTranscript,
+  validateTaskDraft,
+} from "./task-draft";
 export type { TaskDraft, TaskDraftValidation } from "./task-draft";
 export { openCeremonyStore } from "./store";
 export type {

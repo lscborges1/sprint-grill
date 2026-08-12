@@ -211,7 +211,7 @@ function findDecisionTraceability(
   let searchFrom = 0;
   const matches = decisions.map((decision) => {
     const reviewed = traceabilityEntry({ ...decision, recordId: undefined, recordUrl: undefined });
-    const reviewedStart = traceability.indexOf(reviewed, searchFrom);
+    const reviewedStart = findExactTraceabilityEntry(traceability, reviewed, searchFrom);
     if (reviewedStart === -1) {
       throw new CeremonyError(
         `a rastreabilidade assinada não contém a pergunta e a resposta da decisão ${decision.questionSeq}.`,
@@ -226,6 +226,26 @@ function findDecisionTraceability(
   });
 
   return { appendix, matches };
+}
+
+function findExactTraceabilityEntry(
+  traceability: string,
+  reviewed: string,
+  searchFrom: number,
+): number {
+  let reviewedStart = traceability.indexOf(reviewed, searchFrom);
+  while (reviewedStart !== -1) {
+    const reviewedEnd = reviewedStart + reviewed.length;
+    if (
+      reviewedEnd === traceability.length ||
+      traceability[reviewedEnd] === "\n" ||
+      traceability.startsWith("\r\n", reviewedEnd)
+    ) {
+      return reviewedStart;
+    }
+    reviewedStart = traceability.indexOf(reviewed, reviewedEnd);
+  }
+  return -1;
 }
 
 function findNextLevelTwoHeading(markdown: string, bodyStart: number): number {

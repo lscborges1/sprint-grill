@@ -214,6 +214,16 @@ describe("assertValidSpecMarkdown", () => {
     expect(() => assertValidSpecMarkdown(markdown, decisions)).toThrow(/decisão 2/i);
   });
 
+  it("should reject a reviewed answer extended with an unsigned exception", () => {
+    const decision = { ...REFINED.decisions[0]!, answer: "Sim" };
+    const markdown = renderSpecMarkdown({ ...REFINED, decisions: [decision] }).replace(
+      /(## Rastreabilidade de decisões[\s\S]*?)- \*\*O TTL vira configurável por cliente ou global\?\*\* — Sim/,
+      "$1- **O TTL vira configurável por cliente ou global?** — Sim, mas com exceção",
+    );
+
+    expect(() => assertValidSpecMarkdown(markdown, [decision])).toThrow(/decisão 1/i);
+  });
+
   it("should ignore a traceability heading inside fenced code", () => {
     const markdown = renderSpecMarkdown(REFINED)
       .replace(/\n\n## Rastreabilidade de decisões[\s\S]*$/, "\n")

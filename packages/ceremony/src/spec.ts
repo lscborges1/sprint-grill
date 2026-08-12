@@ -144,7 +144,7 @@ export function appendDecisionTraceability(
       throw new CeremonyError(`a decisão ${decision.questionSeq} ainda não tem Registro no Azure DevOps.`);
     }
     const recordUrl = `${decision.recordUrl.replace(/#.*$/, "")}#discussion_${decision.recordId}`;
-    return `- **${decision.question}** — [Registro #${decision.recordId}](${recordUrl})`;
+    return `- **${decision.question}** — ${decision.answer} — [Registro #${decision.recordId}](${recordUrl})`;
   });
 
   return `${markdown}\n\n## Rastreabilidade de decisões\n\n${records.join("\n")}\n`;

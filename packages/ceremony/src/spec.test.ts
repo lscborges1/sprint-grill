@@ -193,7 +193,7 @@ describe("assertValidSpecMarkdown", () => {
 });
 
 describe("appendDecisionTraceability", () => {
-  it("should preserve the signed Markdown and append one ADO link per decision", () => {
+  it("should append every question and answer with one deep link to an Operator-edited signed Spec", () => {
     const markdown = appendDecisionTraceability("# Texto editado", [
       {
         ...REFINED.decisions[0]!,
@@ -204,9 +204,11 @@ describe("appendDecisionTraceability", () => {
 
     expect(markdown).toContain("# Texto editado");
     expect(markdown).toContain("## Rastreabilidade de decisões");
+    expect(markdown).toContain("**O TTL vira configurável por cliente ou global?** — Global");
     expect(markdown).toContain(
       "[Registro #99](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211#discussion_99)",
     );
+    expect(markdown.match(/\[Registro #99\]\([^)]*\)/g)).toHaveLength(1);
   });
 });
 

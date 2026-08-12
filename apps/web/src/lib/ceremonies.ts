@@ -303,7 +303,13 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
     throw new CeremonyError("a estimativa deve usar a escala Fibonacci da squad.");
   }
   const tasks = parseTaskDraft(input.tasksMarkdown, initial.story.url);
-  const dumpId = dumpFingerprint(initial.story.id, signed, tasks, input.estimate);
+  const dumpId = frozenInputs?.dumpId ?? dumpFingerprint(
+    initial.sessionId,
+    initial.story.id,
+    signed,
+    tasks,
+    input.estimate,
+  );
 
   const { azureDevOps } = getSquadConfig();
   const ado = { azureDevOps, credentials: loadAdoCredentials(), logger };
@@ -430,13 +436,14 @@ function isCompletedDump(dump: CeremonyDumpState): boolean {
 }
 
 function dumpFingerprint(
+  sessionId: string,
   storyId: number,
   markdown: string,
   tasks: readonly ReturnType<typeof parseTaskDraft>[number][],
   estimate: number,
 ): string {
   return createHash("sha256")
-    .update(JSON.stringify({ storyId, markdown, tasks, estimate }))
+    .update(JSON.stringify({ sessionId, storyId, markdown, tasks, estimate }))
     .digest("hex");
 }
 

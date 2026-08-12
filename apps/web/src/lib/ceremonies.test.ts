@@ -978,12 +978,82 @@ Entrega outro slice vertical.
     expect(getDossie(session.id)?.dump.status).toBe("completed");
   });
 
+  it("should publish identical output from separate sessions with distinct dump ids and keep a retry idempotent", async () => {
+    let starts = 0;
+    createAgentRuntime.mockResolvedValue({
+      startSession: async () => fakeSession(`thread-${nextSessionId}-${++starts}`),
+      resumeSession: async (id: string) => fakeSession(id),
+      close: async () => undefined,
+    });
+    const ceremonyRegistry = (globalThis as { __sprintGrillerCeremonies?: CeremonyRegistryForTest })
+      .__sprintGrillerCeremonies;
+    if (ceremonyRegistry) {
+      ceremonyRegistry.ceremony = undefined;
+      ceremonyRegistry.starting = undefined;
+    }
+
+    try {
+      const first = await startCeremony(nextStoryId);
+      await vi.waitFor(() => expect(getPalco(first.id)?.current.phase).toBe("perguntando"));
+      await submitDecision({
+        sessionId: first.id,
+        questionId: "q1",
+        answer: "Regra bancária",
+        decidedBy: "PO",
+      });
+      const firstDossie = getDossie(first.id)!;
+      await finishCeremony(first.id);
+      const firstInput = {
+        sessionId: first.id,
+        markdown: firstDossie.spec.generated,
+        base: firstDossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      };
+
+      await dumpCeremony(firstInput);
+      await dumpCeremony(firstInput);
+
+      const second = await startCeremony(nextStoryId);
+      await vi.waitFor(() => expect(getPalco(second.id)?.current.phase).toBe("perguntando"));
+      await submitDecision({
+        sessionId: second.id,
+        questionId: "q1",
+        answer: "Regra bancária",
+        decidedBy: "PO",
+      });
+      const secondDossie = getDossie(second.id)!;
+      await finishCeremony(second.id);
+      const secondInput = {
+        sessionId: second.id,
+        markdown: secondDossie.spec.generated,
+        base: secondDossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      };
+
+      expect(secondInput.markdown).toBe(firstInput.markdown);
+      await dumpCeremony(secondInput);
+
+      const dumpIds = publishStorySpec.mock.calls.map(([, input]) => input.dumpId);
+      expect(dumpIds).toHaveLength(2);
+      expect(dumpIds[1]).not.toBe(dumpIds[0]);
+      expect(publishChildTasks).toHaveBeenCalledTimes(2);
+    } finally {
+      if (ceremonyRegistry) {
+        ceremonyRegistry.ceremony = undefined;
+        ceremonyRegistry.starting = undefined;
+      }
+    }
+  });
+
   it("should accept ADO's completion marker without repeating any artifact writes", async () => {
     const session = await startCeremony(nextStoryId);
     const dossie = getDossie(session.id)!;
     await finishCeremony(session.id);
     const dumpId = createHash("sha256")
       .update(JSON.stringify({
+        sessionId: session.id,
         storyId: dossie.story.id,
         markdown: dossie.spec.generated,
         tasks: [{

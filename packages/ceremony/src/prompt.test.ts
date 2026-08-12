@@ -56,6 +56,8 @@ describe("ceremonyInstructions", () => {
     expect(ceremonyInstructions(repos)).toContain(TASK_DRAFT_START);
     expect(ceremonyInstructions(repos)).toContain("Critérios de aceite");
     expect(ceremonyInstructions(repos)).toMatch(/exatamente a URL/i);
+    expect(ceremonyInstructions(repos)).toMatch(/autocontida/i);
+    expect(ceremonyInstructions(repos)).toMatch(/uma sessão de agente/i);
   });
 });
 

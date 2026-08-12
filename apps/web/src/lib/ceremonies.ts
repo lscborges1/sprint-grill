@@ -12,6 +12,7 @@ import {
 } from "@sprint-griller/ceremony";
 import type {
   Ceremony,
+  CeremonyDumpState,
   CeremonySession,
   CeremonyStore,
   DossieState,
@@ -164,7 +165,7 @@ export async function startCeremony(storyId: number): Promise<CeremonySession> {
   if (open) return open;
 
   const incompleteLocal = getStore().findIncompleteDumpByStory(storyId);
-  if (incompleteLocal) {
+  if (incompleteLocal && isIncompleteDump(incompleteLocal.dump)) {
     throw new CeremonyError(
       `A US #${storyId} tem um despejo incompleto na cerimônia anterior. ` +
         `Abra o Dossiê dessa cerimônia e conclua o retry antes de grelhar de novo.`,
@@ -263,12 +264,12 @@ export function dumpCeremony(input: z.infer<typeof dumpCeremonySchema>): Promise
 async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promise<void> {
   const initial = getDossie(input.sessionId);
   if (!initial) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
-  if (initial.dumpedAt !== undefined) return;
+  if (isCompletedDump(initial.dump)) return;
   if (getStore().getSession(input.sessionId)?.status !== "encerrada") {
     throw new CeremonyError("encerre a cerimônia antes de despejar.");
   }
 
-  const frozen = initial.dumpInputs?.markdown;
+  const frozen = signedDumpMarkdown(initial.dump);
   const signed = frozen ?? initial.spec.draft?.markdown ?? initial.spec.generated;
   if (input.markdown !== signed) {
     throw new CeremonyError(
@@ -348,25 +349,30 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
     }
   }
 
-  const completed = getDossie(input.sessionId);
-  if (!completed) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
+  const dossieWithRecords = getDossie(input.sessionId);
+  if (!dossieWithRecords) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
   await publishStorySpec(ado, {
-    storyId: completed.story.id,
+    storyId: dossieWithRecords.story.id,
     dumpId,
-    markdown: appendDecisionTraceability(signed, completed.decisions),
+    markdown: appendDecisionTraceability(signed, dossieWithRecords.decisions),
     estimate: input.estimate,
   });
-  await publishChildTasks(ado, { storyId: completed.story.id, dumpId, specUrl: completed.story.url, tasks });
+  await publishChildTasks(ado, {
+    storyId: dossieWithRecords.story.id,
+    dumpId,
+    specUrl: dossieWithRecords.story.url,
+    tasks,
+  });
 
-  await publishDumpCompletion(ado, { storyId: completed.story.id, dumpId });
+  await publishDumpCompletion(ado, { storyId: dossieWithRecords.story.id, dumpId });
 
   store.markDumpCompleted(input.sessionId, initial.decisions.length);
   publish(input.sessionId);
   logger.info(
     {
       sessionId: input.sessionId,
-      storyId: completed.story.id,
-      decisions: completed.decisions.length,
+      storyId: dossieWithRecords.story.id,
+      decisions: dossieWithRecords.decisions.length,
       tasks: tasks.length,
       estimate: input.estimate,
     },
@@ -376,6 +382,39 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
     store.abortDump(input.sessionId);
     publish(input.sessionId);
     throw error;
+  }
+}
+
+function signedDumpMarkdown(dump: CeremonyDumpState): string | undefined {
+  switch (dump.status) {
+    case "not-started":
+      return undefined;
+    case "publishing":
+    case "retryable":
+    case "completed":
+      return dump.inputs.markdown;
+  }
+}
+
+function isIncompleteDump(dump: CeremonyDumpState): boolean {
+  switch (dump.status) {
+    case "publishing":
+    case "retryable":
+      return true;
+    case "not-started":
+    case "completed":
+      return false;
+  }
+}
+
+function isCompletedDump(dump: CeremonyDumpState): boolean {
+  switch (dump.status) {
+    case "completed":
+      return true;
+    case "not-started":
+    case "publishing":
+    case "retryable":
+      return false;
   }
 }
 

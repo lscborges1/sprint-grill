@@ -63,7 +63,7 @@ function validSpec(note: string): string {
 
 const DUMP_DETAILS = {
   markdown: validSpec("Spec assinada"),
-  tasksMarkdown: "## Task\n\n### Critérios de aceite\n\n- Critério.",
+  tasksMarkdown: "## Task\n\nEntrega um slice vertical.\n\n### Critérios de aceite\n\n- Critério.",
   estimate: 5,
 } as const;
 
@@ -76,6 +76,56 @@ function beginDump(
 }
 
 describe("openCeremonyStore", () => {
+  it("should expose only valid dump states through the full lifecycle", () => {
+    const store = open(dbPath());
+
+    expect(newSession(store).dump).toEqual({ status: "not-started" });
+
+    beginDump(store);
+    expect(store.getSession("thread-1")?.dump).toMatchObject({
+      status: "publishing",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+      startedAt: expect.any(Number),
+    });
+
+    store.abortDump("thread-1");
+    expect(store.getSession("thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+    });
+
+    beginDump(store);
+    store.markDumpCompleted("thread-1");
+    expect(store.getSession("thread-1")?.dump).toMatchObject({
+      status: "completed",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+      completedAt: expect.any(Number),
+    });
+  });
+
+  it("should reject an impossible persisted dump state with an actionable error", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    newSession(store, "thread-2");
+    store.close();
+    opened.pop();
+
+    const database = new Database(file);
+    database.prepare("UPDATE sessions SET dump_id = ? WHERE id = ?").run("partial", "thread-1");
+    database.prepare("UPDATE sessions SET dump_started_at = ? WHERE id = ?").run(1, "thread-2");
+    database.close();
+
+    const reopened = open(file);
+
+    expect(() => reopened.getSession("thread-1")).toThrow(
+      /thread-1.*estado de despejo inconsistente.*Apague o banco/s,
+    );
+    expect(() => reopened.getSession("thread-2")).toThrow(
+      /thread-2.*estado de despejo inconsistente.*Apague o banco/s,
+    );
+  });
+
   it("should return the same ceremony when the store is reopened on the same file", () => {
     const file = dbPath();
 
@@ -103,13 +153,17 @@ describe("openCeremonyStore", () => {
     const file = dbPath();
     const first = open(file);
     newSession(first);
+    beginDump(first);
     first.markDumpCompleted("thread-1");
     first.close();
     opened.pop();
 
     const reopened = open(file);
 
-    expect(reopened.getSession("thread-1")?.dumpedAt).toEqual(expect.any(Number));
+    expect(reopened.getSession("thread-1")?.dump).toMatchObject({
+      status: "completed",
+      completedAt: expect.any(Number),
+    });
   });
 
   it("should release a dump interrupted by a process restart", () => {
@@ -124,10 +178,10 @@ describe("openCeremonyStore", () => {
     reopened.askQuestions("thread-1", [question()]);
 
     expect(reopened.currentQuestion("thread-1")?.id).toBe("q1");
-    expect(reopened.getSession("thread-1")?.dumpId).toBe("dump-fingerprint");
-    expect(reopened.getSession("thread-1")?.dumpMarkdown).toBe(DUMP_DETAILS.markdown);
-    expect(reopened.getSession("thread-1")?.dumpTasksMarkdown).toBe(DUMP_DETAILS.tasksMarkdown);
-    expect(reopened.getSession("thread-1")?.dumpEstimate).toBe(DUMP_DETAILS.estimate);
+    expect(reopened.getSession("thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+    });
   });
 
   it("should keep the dump fingerprint and signed inputs after abort so a retry can reconcile", () => {
@@ -136,16 +190,16 @@ describe("openCeremonyStore", () => {
     beginDump(store);
     store.abortDump("thread-1");
 
-    expect(store.getSession("thread-1")).toMatchObject({
-      dumpStartedAt: null,
-      dumpId: "dump-fingerprint",
-      dumpMarkdown: DUMP_DETAILS.markdown,
-      dumpTasksMarkdown: DUMP_DETAILS.tasksMarkdown,
-      dumpEstimate: DUMP_DETAILS.estimate,
+    expect(store.getSession("thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
     });
 
     beginDump(store);
-    expect(store.getSession("thread-1")?.dumpStartedAt).toEqual(expect.any(Number));
+    expect(store.getSession("thread-1")?.dump).toMatchObject({
+      status: "publishing",
+      startedAt: expect.any(Number),
+    });
   });
 
   it("should refuse a retry that changes the dump fingerprint", () => {
@@ -155,7 +209,10 @@ describe("openCeremonyStore", () => {
     store.abortDump("thread-1");
 
     expect(() => beginDump(store, "thread-1", "outro-fingerprint")).toThrow(/Spec|Tasks|estimativa/i);
-    expect(store.getSession("thread-1")?.dumpId).toBe("dump-fingerprint");
+    expect(store.getSession("thread-1")?.dump).toMatchObject({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint" },
+    });
   });
 
   it("should refuse Spec edits after a partial dump freezes the signed inputs", () => {
@@ -801,7 +858,7 @@ describe("dump freeze", () => {
         markdown: "# Nota",
       }),
     ).toThrow(/Decisões.*Fora de escopo/s);
-    expect(store.getSession("thread-1")?.dumpId).toBeNull();
+    expect(store.getSession("thread-1")?.dump).toEqual({ status: "not-started" });
   });
 
   it("should reject a decision after the dump has started", () => {
@@ -835,7 +892,7 @@ describe("dump freeze", () => {
     store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
 
     expect(() => store.markDumpCompleted("thread-1", 1)).toThrow(/conclusão/i);
-    expect(store.getSession("thread-1")?.dumpedAt).toBeNull();
+    expect(store.getSession("thread-1")?.dump).toMatchObject({ status: "publishing" });
   });
 });
 

@@ -133,10 +133,14 @@ describe("readDossie", () => {
     });
     store.abortDump("thread-1");
 
-    expect(readDossie(store, "thread-1")?.dumpInputs).toEqual({
-      markdown,
-      tasksMarkdown: "## Task assinada\n\n### Critérios de aceite\n\n- Critério.",
-      estimate: 8,
+    expect(readDossie(store, "thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: {
+        dumpId: "dump-fingerprint",
+        markdown,
+        tasksMarkdown: "## Task assinada\n\n### Critérios de aceite\n\n- Critério.",
+        estimate: 8,
+      },
     });
   });
 

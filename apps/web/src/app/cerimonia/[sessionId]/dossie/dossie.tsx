@@ -4,16 +4,18 @@
 // SQLite não existe no bundle do cliente.
 import { SPEC_SECTIONS, dossieStateSchema } from "@sprint-griller/ceremony/session-state";
 import { formatDecisionWhen, readSpecSection } from "@sprint-griller/ceremony/spec";
-import { validateTaskDraft } from "@sprint-griller/ceremony/task-draft";
-import type { CeremonyDecision, DossieState } from "@sprint-griller/ceremony";
+import type {
+  CeremonyDecision,
+  CeremonyDumpState,
+  DossieState,
+  SignedDumpInputs,
+} from "@sprint-griller/ceremony";
 import Link from "next/link";
-import { useActionState, useState } from "react";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
+import { DumpGate } from "./dump-gate";
 import { dumpGateResetKey, isDumpGateBlocked } from "./spec-editor-state";
 import { useSpecEditor } from "./use-spec-editor";
-import { dumpCeremonyAction } from "../../actions";
-import { DUMP_INITIAL_STATE } from "../../spec-draft-action-state";
 
 /**
  * Modo Dossiê: a aba do Operador. A Spec da US se forma aqui ao vivo enquanto a
@@ -127,8 +129,7 @@ export function Dossie({ initial }: { initial: DossieState }) {
         spec={state.spec}
         pending={state.pending}
         taskPreview={state.taskPreview}
-        dumpInputs={state.dumpInputs}
-        dumpedAt={state.dumpedAt}
+        dump={state.dump}
         ceremonyStatus={state.status}
       />
     </main>
@@ -255,8 +256,7 @@ function SpecEditor({
   spec,
   pending,
   taskPreview,
-  dumpInputs,
-  dumpedAt,
+  dump,
   ceremonyStatus,
 }: {
   sessionId: string;
@@ -264,8 +264,7 @@ function SpecEditor({
   spec: DossieState["spec"];
   pending: DossieState["pending"];
   taskPreview: string;
-  dumpInputs: DossieState["dumpInputs"];
-  dumpedAt: number | undefined;
+  dump: DossieState["dump"];
   ceremonyStatus: DossieState["status"];
 }) {
   const {
@@ -282,8 +281,9 @@ function SpecEditor({
     stale,
     updateMarkdown,
   } = useSpecEditor(spec);
-  const dumpLocked = dumpInputs !== undefined;
-  const dumpMarkdown = dumpInputs?.markdown ?? markdown;
+  const signedInputs = signedDumpInputs(dump);
+  const dumpLocked = signedInputs !== undefined;
+  const dumpMarkdown = signedInputs?.markdown ?? markdown;
 
   return (
     <Section id="despejo" heading="Preview do despejo">
@@ -401,15 +401,14 @@ function SpecEditor({
       )}
 
       <DumpGate
-        key={dumpGateResetKey(dumpInputs?.tasksMarkdown ?? taskPreview, dumpLocked)}
+        key={dumpGateResetKey(signedInputs?.tasksMarkdown ?? taskPreview, dumpLocked)}
         sessionId={sessionId}
         storyUrl={storyUrl}
         markdown={dumpMarkdown}
         base={base}
         pending={pending}
         taskPreview={taskPreview}
-        dumpInputs={dumpInputs}
-        dumpedAt={dumpedAt}
+        dump={dump}
         ceremonyStatus={ceremonyStatus}
         blocked={isDumpGateBlocked({ busy, conflict, stale, dumpLocked })}
       />
@@ -417,166 +416,15 @@ function SpecEditor({
   );
 }
 
-/** Última porta antes de qualquer escrita no tracker: a pendência não some nem bloqueia em silêncio. */
-function DumpGate({
-  sessionId,
-  storyUrl,
-  markdown,
-  base,
-  pending,
-  taskPreview,
-  dumpInputs,
-  dumpedAt,
-  ceremonyStatus,
-  blocked,
-}: {
-  sessionId: string;
-  storyUrl: string;
-  markdown: string;
-  base: string;
-  pending: DossieState["pending"];
-  taskPreview: string;
-  dumpInputs: DossieState["dumpInputs"];
-  dumpedAt: number | undefined;
-  ceremonyStatus: DossieState["status"];
-  blocked: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [result, dump, dumping] = useActionState(dumpCeremonyAction, DUMP_INITIAL_STATE);
-  const hasPending = pending.length > 0;
-  const ceremonyClosed = ceremonyStatus === "encerrada";
-  const initialTasksMarkdown = dumpInputs?.tasksMarkdown ?? taskPreview;
-  const estimateDefault = dumpInputs?.estimate;
-  const dumpLocked = dumpInputs !== undefined;
-  const [tasksMarkdown, setTasksMarkdown] = useState(initialTasksMarkdown);
-  const taskValidation = validateTaskDraft(tasksMarkdown, storyUrl);
-  const taskErrors = taskValidation.valid ? [] : taskValidation.errors;
-
-  if (dumpedAt !== undefined || result.status === "success") {
-    return (
-      <p role="status" className="rounded-lg border border-line px-5 py-4 text-sm text-muted">
-        Despejo concluído: a Spec, as Tasks, a estimativa e os Registros estão na US.
-      </p>
-    );
+function signedDumpInputs(dump: CeremonyDumpState): SignedDumpInputs | undefined {
+  switch (dump.status) {
+    case "not-started":
+      return undefined;
+    case "publishing":
+    case "retryable":
+    case "completed":
+      return dump.inputs;
   }
-
-  if (!open) {
-    return (
-      <div className="flex flex-col gap-2">
-        {!ceremonyClosed && (
-          <p role="status" className="text-sm text-muted">
-            O despejo fica disponível quando a cerimônia for encerrada.
-          </p>
-        )}
-        <button
-          type="button"
-          disabled={blocked || !ceremonyClosed}
-          onClick={() => setOpen(true)}
-          className="self-start rounded-xl border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background disabled:opacity-50"
-        >
-          Revisar despejo
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <section aria-labelledby="gate-despejo" className="flex flex-col gap-4 rounded-lg border border-line px-5 py-4">
-      <div>
-        <h3 id="gate-despejo" className="text-base font-medium">Gate de maturidade</h3>
-        <p className="mt-1 text-sm text-muted">
-          {hasPending
-            ? `${pending.length} ${pending.length === 1 ? "dúvida segue" : "dúvidas seguem"} sem resposta.`
-            : "Nenhuma dúvida ficou aberta."}
-        </p>
-        {dumpLocked && (
-          <p role="status" className="mt-2 text-sm text-muted">
-            Um despejo parcial já congelou Spec, Tasks e estimativa — o retry precisa dos mesmos valores.
-          </p>
-        )}
-      </div>
-      {hasPending && (
-        <ul className="flex flex-col gap-2 text-sm">
-          {pending.map((question) => <li key={question.id}>{question.question}</li>)}
-        </ul>
-      )}
-      {taskErrors.length > 0 && (
-        <div role="alert" className="flex flex-col gap-2 text-sm text-red-600">
-          <p>Corrija as falhas estruturais das Tasks antes de despejar:</p>
-          <ul className="list-disc pl-5">
-            {taskErrors.map((error) => <li key={error}>{error}</li>)}
-          </ul>
-        </div>
-      )}
-      <form action={dump} className="flex flex-col gap-3">
-        <input type="hidden" name="sessionId" value={sessionId} />
-        <input type="hidden" name="markdown" value={markdown} />
-        <input type="hidden" name="base" value={base} />
-        <label className="flex flex-col gap-2 text-sm" htmlFor="tasks-markdown">
-          Tasks agent-ready (Markdown)
-          <span className="text-muted">
-            Uma Task por <code>## título</code>, com <code>### Critérios de aceite</code>.
-            Use <code>### Bloqueada por</code> para referenciar o título de outra Task. Se usar
-            <code> conforme discutido</code>, inclua um link Markdown para a Spec desta US.
-          </span>
-          <textarea
-            id="tasks-markdown"
-            name="tasksMarkdown"
-            required
-            disabled={dumping}
-            readOnly={dumpLocked}
-            value={tasksMarkdown}
-            onChange={(event) => setTasksMarkdown(event.target.value)}
-            rows={16}
-            spellCheck={false}
-            className="w-full rounded-lg border border-line bg-transparent px-4 py-3 font-mono text-sm leading-relaxed"
-          />
-        </label>
-        <label className="flex max-w-xs flex-col gap-2 text-sm" htmlFor="estimate">
-          Estimativa da squad
-          <input
-            id="estimate"
-            name="estimate"
-            type="number"
-            min="0.1"
-            step="0.5"
-            required
-            disabled={dumping}
-            readOnly={dumpLocked}
-            key={`estimate:${estimateDefault ?? "new"}`}
-            defaultValue={estimateDefault ?? ""}
-            className="rounded-lg border border-line bg-transparent px-4 py-3 text-base"
-          />
-        </label>
-        {hasPending ? (
-          <label className="flex items-start gap-3 text-sm">
-            <input type="checkbox" name="confirmPending" value="true" required disabled={dumping} />
-            Entendo que estas dúvidas continuarão explícitas na Spec publicada.
-          </label>
-        ) : (
-          <input type="hidden" name="confirmPending" value="true" />
-        )}
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="submit"
-            disabled={dumping || blocked || !ceremonyClosed || taskErrors.length > 0}
-            className="self-start rounded-xl border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background disabled:opacity-50"
-          >
-            {dumping ? "Despejando…" : "Confirmar despejo"}
-          </button>
-          <button
-            type="button"
-            disabled={dumping}
-            onClick={() => setOpen(false)}
-            className="self-start rounded-xl border border-line px-5 py-3 text-base font-medium disabled:opacity-50"
-          >
-            Voltar à revisão
-          </button>
-        </div>
-        {result.status === "error" && <p role="alert" className="text-sm text-red-600">{result.message}</p>}
-      </form>
-    </section>
-  );
 }
 
 /** Joga a edição fora e volta ao documento que a cerimônia gerou. */

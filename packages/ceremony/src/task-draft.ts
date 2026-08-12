@@ -18,7 +18,8 @@ Explique o slice vertical que um agente consegue concluir em uma sessão.
 
 export interface TaskDraft {
   readonly title: string;
-  readonly description: string;
+  /** Corpo completo que o Operador assinou, sem o heading usado como título no ADO. */
+  readonly bodyMarkdown: string;
   readonly acceptanceCriteria: readonly string[];
   readonly blockedBy: readonly string[];
 }
@@ -30,6 +31,7 @@ export type TaskDraftValidation =
 const ACCEPTANCE_HEADING = "### Critérios de aceite";
 const BLOCKERS_HEADING = "### Bloqueada por";
 const CONTEXTUAL_REFERENCE = /\bconforme discutido\b/i;
+const MARKDOWN_LINK = /\[([^\u005b\u005d\n]+)\]\(([^()\u005b\u005d\s]+)\)/g;
 
 /**
  * Contrato pequeno do preview de tasks: cabe no Markdown assinado e dá ao gate
@@ -135,6 +137,9 @@ function parseTask(
   const body = bodyLines.join("\n").trim();
   const acceptance = sectionBody(body, ACCEPTANCE_HEADING);
   const errors: string[] = [];
+  if (bodyBeforeFirstHeading(body) === "") {
+    errors.push(`a Task "${title}" precisa descrever o slice vertical antes das seções estruturais.`);
+  }
   if (acceptance === undefined) {
     errors.push(`a Task "${title}" não tem critérios de aceite (${ACCEPTANCE_HEADING}).`);
   }
@@ -142,7 +147,8 @@ function parseTask(
   if (acceptance !== undefined && acceptanceCriteria.length === 0) {
     errors.push(`a Task "${title}" precisa de ao menos um critério de aceite.`);
   }
-  if (CONTEXTUAL_REFERENCE.test(body) && !hasSpecLink(body, specUrl)) {
+  const links = validateMarkdownLinks(body, title, errors);
+  if (CONTEXTUAL_REFERENCE.test(body) && !links.includes(specUrl)) {
     errors.push(`a Task "${title}" cita "conforme discutido" sem link para a Spec da US.`);
   }
 
@@ -150,7 +156,7 @@ function parseTask(
   return {
     task: {
       title,
-      description: bodyBeforeFirstHeading(body),
+      bodyMarkdown: body,
       acceptanceCriteria,
       blockedBy: blockers === undefined ? [] : listItems(blockers),
     },
@@ -158,9 +164,36 @@ function parseTask(
   };
 }
 
-function hasSpecLink(markdown: string, specUrl: string): boolean {
-  return [...markdown.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
-    .some((match) => match[1]?.trim() === specUrl);
+function validateMarkdownLinks(markdown: string, title: string, errors: string[]): readonly string[] {
+  const matches = [...markdown.matchAll(MARKDOWN_LINK)];
+  const validOpenings = new Set(matches.flatMap((match) => {
+    if (match.index === undefined) return [];
+    return [match.index + match[0].indexOf("](")];
+  }));
+  const hasMalformedLink = [...markdown.matchAll(/\]\(/g)]
+    .some((opening) => {
+      if (opening.index === undefined || !validOpenings.has(opening.index)) return true;
+      const lineStart = markdown.lastIndexOf("\n", opening.index) + 1;
+      const prefix = markdown.slice(lineStart, opening.index);
+      return [...prefix].filter((character) => character === "[").length
+        - [...prefix].filter((character) => character === "]").length !== 1;
+    });
+  if (hasMalformedLink) {
+    errors.push(`a Task "${title}" tem um link Markdown inválido.`);
+  }
+
+  return matches.flatMap((match) => {
+    const target = match[2];
+    if (target === undefined) return [];
+    try {
+      const url = new URL(target);
+      if (url.protocol === "http:" || url.protocol === "https:") return [target];
+    } catch {
+      // A mensagem única abaixo cobre URL relativa e URL absoluta malformada.
+    }
+    errors.push(`a Task "${title}" tem um link Markdown inválido; use uma URL absoluta http(s).`);
+    return [];
+  });
 }
 
 function sectionBody(markdown: string, heading: string): string | undefined {

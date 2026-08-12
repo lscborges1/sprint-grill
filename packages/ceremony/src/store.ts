@@ -32,6 +32,8 @@ import type {
   VerifiedConsultation,
 } from "./types";
 
+type SessionRow = typeof sessions.$inferSelect;
+
 export interface OpenCeremonyStoreOptions {
   readonly logger?: Logger;
 }
@@ -220,7 +222,12 @@ export function openCeremonyStore(
     .prepare(
       `UPDATE sessions
        SET dump_started_at = NULL
-       WHERE dump_started_at IS NOT NULL AND dumped_at IS NULL`,
+       WHERE dump_started_at IS NOT NULL
+         AND dump_id IS NOT NULL
+         AND dump_markdown IS NOT NULL
+         AND dump_tasks_markdown IS NOT NULL
+         AND dump_estimate IS NOT NULL
+         AND dumped_at IS NULL`,
     )
     .run();
   if (recoveredDumps.changes > 0) {
@@ -240,25 +247,36 @@ export function openCeremonyStore(
 
   function assertDumpUnlocked(sessionId: string): void {
     const session = requireSession(sessionId);
-    if (session.dumpStartedAt !== null) {
-      throw new CeremonyError("a cerimônia está em despejo e não aceita novas alterações.");
+    switch (session.dump.status) {
+      case "publishing":
+        throw new CeremonyError("a cerimônia está em despejo e não aceita novas alterações.");
+      case "not-started":
+      case "retryable":
+      case "completed":
+        return;
     }
   }
 
   /** Spec e demais inputs do fingerprint ficam congelados até o despejo concluir. */
   function assertDumpInputsUnlocked(sessionId: string): void {
-    assertDumpUnlocked(sessionId);
     const session = requireSession(sessionId);
-    if (session.dumpId !== null && session.dumpedAt === null) {
-      throw new CeremonyError(
-        "um despejo parcial já assinou a Spec — use a mesma no retry; editar agora mudaria o fingerprint.",
-      );
+    switch (session.dump.status) {
+      case "not-started":
+        return;
+      case "publishing":
+        throw new CeremonyError("a cerimônia está em despejo e não aceita novas alterações.");
+      case "retryable":
+        throw new CeremonyError(
+          "um despejo parcial já assinou a Spec — use a mesma no retry; editar agora mudaria o fingerprint.",
+        );
+      case "completed":
+        throw new CeremonyError("a cerimônia já foi despejada e não aceita novas edições.");
     }
   }
 
   const store: CeremonyStore = {
     createSession(input) {
-      const session: CeremonySession = {
+      const session: SessionRow = {
         ...input,
         createdAt: Date.now(),
         status: "ativa",
@@ -271,24 +289,26 @@ export function openCeremonyStore(
         dumpedAt: null,
       };
       db.insert(sessions).values(session).run();
-      return session;
+      return toCeremonySession(session);
     },
 
     getSession(sessionId) {
-      return db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
+      const row = db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
+      return row && toCeremonySession(row);
     },
 
     findOpenSessionByStory(storyId) {
-      return db
+      const row = db
         .select()
         .from(sessions)
         .where(and(eq(sessions.storyId, storyId), eq(sessions.status, "ativa")))
         .orderBy(desc(sessions.createdAt))
         .get();
+      return row && toCeremonySession(row);
     },
 
     findIncompleteDumpByStory(storyId) {
-      return db
+      const row = db
         .select()
         .from(sessions)
         .where(and(
@@ -298,6 +318,7 @@ export function openCeremonyStore(
         ))
         .orderBy(desc(sessions.createdAt))
         .get();
+      return row && toCeremonySession(row);
     },
 
     finishSession(sessionId, outcome) {
@@ -581,6 +602,11 @@ export function openCeremonyStore(
         .where(and(
           eq(sessions.id, sessionId),
           ...(expectedDecisions === undefined ? [] : [expectedDecisions]),
+          sql`${sessions.dumpStartedAt} IS NOT NULL`,
+          sql`${sessions.dumpId} IS NOT NULL`,
+          sql`${sessions.dumpMarkdown} IS NOT NULL`,
+          sql`${sessions.dumpTasksMarkdown} IS NOT NULL`,
+          sql`${sessions.dumpEstimate} IS NOT NULL`,
           sql`${sessions.dumpedAt} IS NULL`,
         ))
         .run();
@@ -907,6 +933,65 @@ export function openCeremonyStore(
   };
 
   return store;
+}
+
+function toCeremonySession(row: SessionRow): CeremonySession {
+  const {
+    dumpStartedAt,
+    dumpId,
+    dumpMarkdown,
+    dumpTasksMarkdown,
+    dumpEstimate,
+    dumpedAt,
+    ...session
+  } = row;
+  return {
+    ...session,
+    dump: toDumpState(row.id, {
+      dumpStartedAt,
+      dumpId,
+      dumpMarkdown,
+      dumpTasksMarkdown,
+      dumpEstimate,
+      dumpedAt,
+    }),
+  };
+}
+
+function toDumpState(
+  sessionId: string,
+  columns: Pick<
+    SessionRow,
+    "dumpStartedAt" | "dumpId" | "dumpMarkdown" | "dumpTasksMarkdown" | "dumpEstimate" | "dumpedAt"
+  >,
+): CeremonySession["dump"] {
+  const { dumpStartedAt, dumpId, dumpMarkdown, dumpTasksMarkdown, dumpEstimate, dumpedAt } = columns;
+  const hasNoInputs = dumpId === null
+    && dumpMarkdown === null
+    && dumpTasksMarkdown === null
+    && dumpEstimate === null;
+  if (hasNoInputs && dumpStartedAt === null && dumpedAt === null) return { status: "not-started" };
+
+  const hasAllInputs = dumpId !== null
+    && dumpMarkdown !== null
+    && dumpTasksMarkdown !== null
+    && dumpEstimate !== null;
+  if (!hasAllInputs || (dumpedAt !== null && dumpStartedAt !== null)) {
+    throw new CeremonyError(
+      `a cerimônia ${sessionId} tem estado de despejo inconsistente no banco local. ` +
+        "Apague o banco de cerimônias antes de continuar.",
+    );
+  }
+
+  const inputs = {
+    dumpId,
+    markdown: dumpMarkdown,
+    tasksMarkdown: dumpTasksMarkdown,
+    estimate: dumpEstimate,
+  };
+  if (dumpedAt !== null) return { status: "completed", inputs, completedAt: dumpedAt };
+  if (dumpStartedAt !== null) return { status: "publishing", inputs, startedAt: dumpStartedAt };
+  return { status: "retryable", inputs };
 }
 
 /**

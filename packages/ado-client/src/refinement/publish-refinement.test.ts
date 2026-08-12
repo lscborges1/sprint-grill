@@ -342,11 +342,51 @@ describe("publishChildTasks", () => {
     specUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
     tasks: [{
       title: "Criar endpoint",
-      description: "Entrega o CSV.",
+      bodyMarkdown: "Entrega o CSV.\n\n### Critérios de aceite\n\n- Retorna o CSV.",
       acceptanceCriteria: ["Retorna o CSV."],
       blockedBy: [],
     }],
   } as const;
+
+  it("should preserve the signed Task body and append the Spec link only when absent", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
+        return json({ workItemTypes: [{ name: "Task" }] });
+      }
+      if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
+      return json({ id: 900 });
+    });
+    const specUrl = "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211";
+
+    await publishChildTasks(options(ado.fetch), {
+      storyId: 4211,
+      dumpId: "dump-4211",
+      specUrl,
+      tasks: [{
+        title: "Criar endpoint",
+        bodyMarkdown: `Entrega o CSV.
+
+### Contexto técnico
+
+Preservar clientes antigos.
+
+### Critérios de aceite
+
+- Retorna o CSV.
+
+[Spec da US](${specUrl})`,
+        acceptanceCriteria: ["Retorna o CSV."],
+        blockedBy: [],
+      }],
+    });
+
+    const taskBody = String(
+      ado.calls.find((call) => call.url.includes("/_apis/wit/workitems/$Task"))?.init?.body,
+    );
+    expect(taskBody).toContain("<h3>Contexto técnico</h3>");
+    expect(taskBody).toContain("Preservar clientes antigos.");
+    expect(taskBody.match(/Spec da US/g)).toHaveLength(1);
+  });
 
   it("should create child Tasks with acceptance criteria, a Spec link, and native blockers", async () => {
     let nextId = 900;
@@ -368,13 +408,13 @@ describe("publishChildTasks", () => {
       tasks: [
         {
           title: "Criar endpoint",
-          description: "Entrega o CSV.",
+          bodyMarkdown: "Entrega o CSV.\n\n### Critérios de aceite\n\n- Retorna o CSV.",
           acceptanceCriteria: ["Retorna o CSV."],
           blockedBy: [],
         },
         {
           title: "Mostrar link",
-          description: "",
+          bodyMarkdown: "Mostra o link no portal.\n\n### Critérios de aceite\n\n- Exibe o link.\n\n### Bloqueada por\n\n- Criar endpoint",
           acceptanceCriteria: ["Exibe o link."],
           blockedBy: ["Criar endpoint"],
         },
@@ -383,7 +423,7 @@ describe("publishChildTasks", () => {
 
     const bodies = ado.calls.map((call) => String(call.init?.body));
     expect(bodies.join("\n")).toContain("System.LinkTypes.Hierarchy-Reverse");
-    expect(bodies.join("\n")).toContain("<h2>Critérios de aceite</h2>");
+    expect(bodies.join("\n")).toContain("<h3>Critérios de aceite</h3>");
     expect(bodies.join("\n")).toContain("Spec da US");
     expect(bodies.join("\n")).toContain("System.LinkTypes.Dependency-Reverse");
     expect(bodies.join("\n")).not.toContain("## Critérios de aceite");
@@ -415,7 +455,7 @@ describe("publishChildTasks", () => {
       specUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
       tasks: [{
         title: "Transferir dados pessoais de Maria",
-        description: "",
+        bodyMarkdown: "Transfere os dados solicitados.\n\n### Critérios de aceite\n\n- Concluído.",
         acceptanceCriteria: ["Concluído."],
         blockedBy: [],
       }],
@@ -480,7 +520,7 @@ describe("publishChildTasks", () => {
               },
               relations: [{
                 rel: "System.LinkTypes.Dependency-Reverse",
-                url: "https://dev.azure.com/acme/Plataforma/_apis/wit/workitems/900",
+                url: "https://dev.azure.com/acme/_apis/wit/workitems/900",
               }],
             },
           ],
@@ -495,7 +535,7 @@ describe("publishChildTasks", () => {
         ...childTasks.tasks,
         {
           title: "Mostrar link",
-          description: "",
+          bodyMarkdown: "Mostra o link no portal.\n\n### Critérios de aceite\n\n- Exibe o link.\n\n### Bloqueada por\n\n- Criar endpoint",
           acceptanceCriteria: ["Exibe o link."],
           blockedBy: ["Criar endpoint"],
         },
@@ -548,7 +588,7 @@ describe("publishChildTasks", () => {
         ...childTasks.tasks,
         {
           title: "Mostrar link",
-          description: "",
+          bodyMarkdown: "Mostra o link no portal.\n\n### Critérios de aceite\n\n- Exibe o link.",
           acceptanceCriteria: ["Exibe o link."],
           blockedBy: [],
         },

@@ -103,6 +103,8 @@ const SECOND_QUESTION: AgentQuestion = {
 
 const TASKS_MARKDOWN = `## Implementar exportação
 
+Entrega a exportação de comissões de ponta a ponta.
+
 ### Critérios de aceite
 
 - A exportação segue a decisão registrada pela sala.`;
@@ -196,6 +198,37 @@ async function finishCeremony(sessionId: string): Promise<void> {
   await vi.waitFor(() => {
     expect(getDossie(sessionId)?.status).toBe("encerrada");
   });
+}
+
+async function prepareSignedDecisionDump() {
+  const session = await startCeremony(nextStoryId);
+  await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+  await submitDecision({
+    sessionId: session.id,
+    questionId: "q1",
+    answer: "Regra bancária",
+    decidedBy: "PO + squad",
+  });
+  const generated = getDossie(session.id)!.spec.generated;
+  const revised = generated.replace(/^# .+$/m, "# Spec revisada pelo Operador");
+  saveSpecDraft({
+    sessionId: session.id,
+    markdown: revised,
+    base: generated,
+    expectedSavedAt: null,
+  });
+  const draft = getDossie(session.id)!.spec.draft!;
+  await finishCeremony(session.id);
+  return {
+    session,
+    input: {
+      sessionId: session.id,
+      markdown: draft.markdown,
+      base: draft.base,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    },
+  } as const;
 }
 
 beforeEach(() => {
@@ -485,49 +518,30 @@ describe("dumpCeremony", () => {
     expect(publishChildTasks).not.toHaveBeenCalled();
   });
 
-  it("should publish the saved draft, link its decision record, and skip it on a retry", async () => {
-    const session = await startCeremony(nextStoryId);
-    await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
-    await submitDecision({
-      sessionId: session.id,
-      questionId: "q1",
-      answer: "Regra bancária",
-      decidedBy: "PO + squad",
-    });
-    const generated = getDossie(session.id)!.spec.generated;
-    const revised = generated.replace(/^# .+$/m, "# Spec revisada pelo Operador");
-    saveSpecDraft({
-      sessionId: session.id,
-      markdown: revised,
-      base: generated,
-      expectedSavedAt: null,
-    });
-    const signed = getDossie(session.id)!;
-    await finishCeremony(session.id);
-
+  it("should persist a published decision record before a later write fails", async () => {
+    const { session, input } = await prepareSignedDecisionDump();
     publishStorySpec.mockRejectedValueOnce(new AdoError("unexpected", "nada foi gravado"));
-    await expect(
-      dumpCeremony({
-        sessionId: session.id,
-        markdown: signed.spec.draft!.markdown,
-        base: signed.spec.draft!.base,
-        confirmPending: true,
-        ...DUMP_DETAILS,
-      }),
-    ).rejects.toThrow(/nada foi gravado/i);
+    await expect(dumpCeremony(input)).rejects.toThrow(/nada foi gravado/i);
 
     expect(publishDecisionRecord).toHaveBeenCalledTimes(1);
     expect(getDossie(session.id)?.decisions[0]).toMatchObject({ recordId: 91 });
+  });
 
-    await dumpCeremony({
-      sessionId: session.id,
-      markdown: signed.spec.draft!.markdown,
-      base: signed.spec.draft!.base,
-      confirmPending: true,
-      ...DUMP_DETAILS,
-    });
+  it("should reuse the persisted decision record on retry", async () => {
+    const { input } = await prepareSignedDecisionDump();
+    publishStorySpec.mockRejectedValueOnce(new AdoError("unexpected", "nada foi gravado"));
+    await expect(dumpCeremony(input)).rejects.toThrow(/nada foi gravado/i);
+
+    await dumpCeremony(input);
 
     expect(publishDecisionRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("should publish the signed Spec, estimate, and decision traceability", async () => {
+    const { input } = await prepareSignedDecisionDump();
+
+    await dumpCeremony(input);
+
     expect(publishStorySpec).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -541,9 +555,21 @@ describe("dumpCeremony", () => {
       expect.anything(),
       expect.objectContaining({ estimate: 5 }),
     );
+  });
+
+  it("should publish parsed child Tasks from the signed draft", async () => {
+    const { input } = await prepareSignedDecisionDump();
+
+    await dumpCeremony(input);
+
     expect(publishChildTasks).toHaveBeenLastCalledWith(
       expect.anything(),
-      expect.objectContaining({ tasks: [expect.objectContaining({ title: "Implementar exportação" })] }),
+      expect.objectContaining({
+        tasks: [expect.objectContaining({
+          title: "Implementar exportação",
+          bodyMarkdown: expect.stringContaining("Entrega a exportação"),
+        })],
+      }),
     );
   });
 
@@ -673,6 +699,8 @@ describe("dumpCeremony", () => {
         estimate: 8,
         tasksMarkdown: `## Outra Task
 
+Entrega outro slice vertical.
+
 ### Critérios de aceite
 
 - Critério diferente.`,
@@ -725,7 +753,10 @@ describe("dumpCeremony", () => {
 
     expect(publishStorySpec).toHaveBeenCalledOnce();
     expect(publishChildTasks).toHaveBeenCalledOnce();
-    expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
+    expect(getDossie(session.id)?.dump).toMatchObject({
+      status: "completed",
+      completedAt: expect.any(Number),
+    });
   });
 
   it("should restore signed inputs and ignore stale editor state when a partial dump retries", async () => {
@@ -746,20 +777,26 @@ describe("dumpCeremony", () => {
       }),
     ).rejects.toThrow("conexão caiu");
 
-    expect(getDossie(session.id)?.dumpInputs).toEqual({
-      markdown: dossie.spec.generated,
-      tasksMarkdown: DUMP_DETAILS.tasksMarkdown,
-      estimate: DUMP_DETAILS.estimate,
+    expect(getDossie(session.id)?.dump).toMatchObject({
+      status: "retryable",
+      inputs: {
+        markdown: dossie.spec.generated,
+        tasksMarkdown: DUMP_DETAILS.tasksMarkdown,
+        estimate: DUMP_DETAILS.estimate,
+      },
     });
+
+    const retryable = getDossie(session.id)!.dump;
+    if (retryable.status !== "retryable") throw new Error("expected retryable dump");
 
     await expect(
       dumpCeremony({
         sessionId: session.id,
-        markdown: getDossie(session.id)!.dumpInputs!.markdown,
+        markdown: retryable.inputs.markdown,
         base: "# base stale de outra aba",
         confirmPending: true,
-        tasksMarkdown: getDossie(session.id)!.dumpInputs!.tasksMarkdown,
-        estimate: getDossie(session.id)!.dumpInputs!.estimate,
+        tasksMarkdown: retryable.inputs.tasksMarkdown,
+        estimate: retryable.inputs.estimate,
       }),
     ).resolves.toBeUndefined();
   });
@@ -843,7 +880,7 @@ describe("dumpCeremony", () => {
     await dumpCeremony(input);
 
     expect(publishChildTasks).toHaveBeenCalledTimes(1);
-    expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
+    expect(getDossie(session.id)?.dump.status).toBe("completed");
   });
 
   it("should accept ADO's completion marker without repeating any artifact writes", async () => {
@@ -856,7 +893,11 @@ describe("dumpCeremony", () => {
         markdown: dossie.spec.generated,
         tasks: [{
           title: "Implementar exportação",
-          description: "",
+          bodyMarkdown: `Entrega a exportação de comissões de ponta a ponta.
+
+### Critérios de aceite
+
+- A exportação segue a decisão registrada pela sala.`,
           acceptanceCriteria: ["A exportação segue a decisão registrada pela sala."],
           blockedBy: [],
         }],
@@ -875,7 +916,7 @@ describe("dumpCeremony", () => {
 
     expect(publishStorySpec).not.toHaveBeenCalled();
     expect(publishChildTasks).not.toHaveBeenCalled();
-    expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
+    expect(getDossie(session.id)?.dump.status).toBe("completed");
   });
 
   it("should freeze decisions while a dump is publishing", async () => {
@@ -908,7 +949,7 @@ describe("dumpCeremony", () => {
     releaseSpec();
     await dump;
     expect(getDossie(session.id)?.decisions).toHaveLength(0);
-    expect(getDossie(session.id)?.dumpedAt).toEqual(expect.any(Number));
+    expect(getDossie(session.id)?.dump.status).toBe("completed");
   });
 
   it("should retry when the completion marker fails after child Tasks were published", async () => {

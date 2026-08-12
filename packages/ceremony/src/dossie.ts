@@ -60,18 +60,7 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
     status: session.status,
     timeZone: session.timeZone,
     taskPreview: taskPreviewFromTranscript(store.listTranscript(sessionId)),
-    ...(session.dumpMarkdown === null
-      || session.dumpTasksMarkdown === null
-      || session.dumpEstimate === null
-      ? {}
-      : {
-          dumpInputs: {
-            markdown: session.dumpMarkdown,
-            tasksMarkdown: session.dumpTasksMarkdown,
-            estimate: session.dumpEstimate,
-          },
-        }),
-    ...(session.dumpedAt === null ? {} : { dumpedAt: session.dumpedAt }),
+    dump: session.dump,
     spec: {
       generated: renderSpecMarkdown(document, session.timeZone),
       draft: store.getSpecDraft(sessionId) ?? null,

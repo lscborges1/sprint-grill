@@ -18,6 +18,8 @@ Entrega o CSV de comissões para o Operador.
 
 ## Mostrar link no portal
 
+Mostra o resultado da exportação no fluxo existente do portal.
+
 ### Critérios de aceite
 
 - Exibe o link somente quando a exportação estiver pronta.
@@ -27,17 +29,74 @@ Entrega o CSV de comissões para o Operador.
 - Criar endpoint de exportação`;
 
 describe("parseTaskDraft", () => {
+  it("should preserve every signed Task section while extracting publication metadata", () => {
+    const markdown = `## Criar endpoint
+
+Entrega o CSV ao Operador.
+
+### Contexto técnico
+
+Preservar compatibilidade com clientes antigos.
+
+### Critérios de aceite
+
+- Retorna CSV em UTF-8.
+
+### Bloqueada por
+
+- Preparar contrato
+
+## Preparar contrato
+
+Documenta o contrato público.
+
+### Critérios de aceite
+
+- Publica o schema.`;
+
+    expect(parseTaskDraft(markdown, SPEC_URL)[0]).toEqual({
+      title: "Criar endpoint",
+      bodyMarkdown: `Entrega o CSV ao Operador.
+
+### Contexto técnico
+
+Preservar compatibilidade com clientes antigos.
+
+### Critérios de aceite
+
+- Retorna CSV em UTF-8.
+
+### Bloqueada por
+
+- Preparar contrato`,
+      acceptanceCriteria: ["Retorna CSV em UTF-8."],
+      blockedBy: ["Preparar contrato"],
+    });
+  });
+
   it("should parse agent-ready child tasks and their native blockers", () => {
     expect(parseTaskDraft(VALID, SPEC_URL)).toEqual([
       {
         title: "Criar endpoint de exportação",
-        description: "Entrega o CSV de comissões para o Operador.",
+        bodyMarkdown: `Entrega o CSV de comissões para o Operador.
+
+### Critérios de aceite
+
+- Retorna um CSV com a comissão arredondada pela regra bancária.`,
         acceptanceCriteria: ["Retorna um CSV com a comissão arredondada pela regra bancária."],
         blockedBy: [],
       },
       {
         title: "Mostrar link no portal",
-        description: "",
+        bodyMarkdown: `Mostra o resultado da exportação no fluxo existente do portal.
+
+### Critérios de aceite
+
+- Exibe o link somente quando a exportação estiver pronta.
+
+### Bloqueada por
+
+- Criar endpoint de exportação`,
         acceptanceCriteria: ["Exibe o link somente quando a exportação estiver pronta."],
         blockedBy: ["Criar endpoint de exportação"],
       },
@@ -46,6 +105,14 @@ describe("parseTaskDraft", () => {
 
   it("should reject a task without acceptance criteria before dumping", () => {
     expect(() => parseTaskDraft("## Sem aceite\n\nDescrição", SPEC_URL)).toThrow(/critérios de aceite/i);
+  });
+
+  it("should reject a Task without a self-contained description", () => {
+    expect(() => parseTaskDraft(`## Sem descrição
+
+### Critérios de aceite
+
+- Entrega observável.`, SPEC_URL)).toThrow(/descrever o slice vertical/i);
   });
 
   it("should reject a blocker that does not name another task", () => {
@@ -110,15 +177,41 @@ Descrição`, SPEC_URL);
   it("should require the current Spec link for contextual task wording", () => {
     expect(validateTaskDraft(`## Implementar
 
+Implementa o comportamento refinado pela sala.
+
 ### Critérios de aceite
 
 - Funciona conforme discutido na [Spec](https://exemplo.test/spec).`, SPEC_URL)).toMatchObject({ valid: false });
 
     expect(validateTaskDraft(`## Implementar
 
+Implementa o comportamento refinado pela sala.
+
 ### Critérios de aceite
 
 - Funciona conforme discutido na [Spec da US](${SPEC_URL}).`, SPEC_URL)).toMatchObject({ valid: true });
+  });
+
+  it.each([
+    "[contrato](htps://example.test/contrato)",
+    "[script](javascript:alert)",
+    "[relativo](/contrato)",
+    "[incompleto](https://example.test/contrato",
+    "[com espaço](https://example.test/contrato inválido)",
+    "[con[trato](https://example.test/contrato)",
+    "[contrato](https://example.test/contra]to)",
+  ])("should reject the structurally broken link %s", (link) => {
+    const result = validateTaskDraft(`## Implementar
+
+Entrega o contrato público.
+
+### Critérios de aceite
+
+- Documenta ${link}.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava um link inválido");
+    expect(result.errors).toEqual(expect.arrayContaining([expect.stringMatching(/link Markdown inválido/i)]));
   });
 
   it("should fall back to the template when no transcript message contains a draft", () => {

@@ -43,7 +43,8 @@ export interface StorySpecToPublish {
 
 export interface ChildTaskToPublish {
   readonly title: string;
-  readonly description: string;
+  /** Corpo Markdown completo assinado pelo Operador, sem o heading do título. */
+  readonly bodyMarkdown: string;
   readonly acceptanceCriteria: readonly string[];
   /** Títulos de outras tasks deste mesmo despejo que precisam terminar antes. */
   readonly blockedBy: readonly string[];
@@ -81,6 +82,13 @@ const taskTypeCategorySchema = z.object({
   workItemTypes: z.array(z.object({ name: z.string().min(1) })),
 });
 const wiqlIdsSchema = z.object({ workItems: z.array(z.object({ id: z.number().int().positive() })) });
+const workItemRelationSchema = z.object({
+  rel: z.string(),
+  url: z.url(),
+}).transform((relation) => ({
+  rel: relation.rel,
+  targetWorkItemId: workItemIdFromUrl(relation.url),
+}));
 const taskBatchSchema = z.object({
   value: z.array(z.object({
     id: z.number().int().positive(),
@@ -88,7 +96,7 @@ const taskBatchSchema = z.object({
       "System.Title": z.string(),
       "System.Description": z.string().optional(),
     }),
-    relations: z.array(z.object({ rel: z.string(), url: z.string() })).default([]),
+    relations: z.array(workItemRelationSchema).default([]),
   })),
 });
 
@@ -372,7 +380,7 @@ export async function publishChildTasks(
         const existingRelation = existing.get(taskNumber)?.relations.some(
           (relation) =>
             relation.rel === "System.LinkTypes.Dependency-Reverse" &&
-            relation.url === rest.workItemApiUrl(blockerId),
+            relation.targetWorkItemId === blockerId,
         );
         if (existingRelation) continue;
         await rest.request({
@@ -399,14 +407,24 @@ export async function publishChildTasks(
   }
 }
 
+function workItemIdFromUrl(url: string): number | undefined {
+  const match = /\/_apis\/wit\/workitems\/(\d+)\/?$/i.exec(new URL(url).pathname);
+  if (!match?.[1]) return undefined;
+  const id = Number(match[1]);
+  return Number.isSafeInteger(id) && id > 0 ? id : undefined;
+}
+
 function renderChildTaskDescription(task: ChildTaskToPublish, specUrl: string, marker: string): string {
   const markdown = [
-    task.description.trim(),
-    "## Critérios de aceite",
-    ...task.acceptanceCriteria.map((criterion) => `- ${criterion}`),
-    `[Spec da US](${specUrl})`,
+    task.bodyMarkdown.trim(),
+    ...(hasMarkdownLinkTarget(task.bodyMarkdown, specUrl) ? [] : [`[Spec da US](${specUrl})`]),
   ].filter((part) => part !== "").join("\n\n");
   return `${marker}\n${markdownToAdoHtml(markdown)}`;
+}
+
+function hasMarkdownLinkTarget(markdown: string, target: string): boolean {
+  return [...markdown.matchAll(/\[[^\]\n]+\]\(([^()\s]+)\)/g)]
+    .some((match) => match[1] === target);
 }
 
 /** Exportado para cobrir o contrato de preservação do texto já escrito na US. */

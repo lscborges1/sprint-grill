@@ -28,6 +28,28 @@ const decisionSchema = z.object({
   recordUrl: z.string().url().optional(),
 });
 
+const signedDumpInputsSchema = z.object({
+  dumpId: z.string(),
+  markdown: z.string(),
+  tasksMarkdown: z.string(),
+  estimate: z.number().finite().positive(),
+});
+
+const dumpStateSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("not-started") }),
+  z.object({
+    status: z.literal("publishing"),
+    inputs: signedDumpInputsSchema,
+    startedAt: z.number().int().nonnegative(),
+  }),
+  z.object({ status: z.literal("retryable"), inputs: signedDumpInputsSchema }),
+  z.object({
+    status: z.literal("completed"),
+    inputs: signedDumpInputsSchema,
+    completedAt: z.number().int().nonnegative(),
+  }),
+]);
+
 /**
  * O Dossiê chega ao browser pelo mesmo caminho do Palco. `generated` e `draft`
  * viajam separados de propósito: é a comparação entre o texto gerado agora e a
@@ -38,14 +60,7 @@ export const dossieStateSchema: z.ZodType<DossieState> = z.object({
   status: z.enum(["ativa", "encerrada", "falhou"]),
   timeZone: z.string(),
   taskPreview: z.string(),
-  dumpInputs: z
-    .object({
-      markdown: z.string(),
-      tasksMarkdown: z.string(),
-      estimate: z.number().finite().positive(),
-    })
-    .optional(),
-  dumpedAt: z.number().int().nonnegative().optional(),
+  dump: dumpStateSchema,
   story: storySchema,
   decisions: z.array(decisionSchema),
   pending: z.array(z.object({ id: z.string(), question: z.string() })),

@@ -3,7 +3,7 @@
 import type { DossieState } from "@sprint-griller/ceremony";
 import { CEREMONY_ESTIMATES } from "@sprint-griller/ceremony/estimate";
 import type { ReactElement } from "react";
-import { useDumpGate, type DumpGateController } from "./use-dump-gate";
+import { useDumpGate, type DumpGateController, type DumpGateView } from "./use-dump-gate";
 
 interface DumpGateProps {
   readonly sessionId: string;
@@ -21,19 +21,25 @@ interface DumpGateProps {
 export function DumpGate(props: DumpGateProps): ReactElement {
   const gate = useDumpGate(props);
 
-  if (gate.dumpCompleted) return <CompletedDump />;
-  if (gate.dumpPublishing) return <PublishingDump />;
-  if (!gate.open) {
-    return (
-      <UnavailableDump
-        blocked={props.blocked}
-        ceremonyClosed={gate.ceremonyClosed}
-        open={gate.openGate}
-      />
-    );
-  }
+  switch (gate.view.status) {
+    case "completed":
+      return <CompletedDump />;
+    case "publishing":
+      return <PublishingDump />;
+    case "editable":
+    case "retryable":
+      if (!gate.open) {
+        return (
+          <UnavailableDump
+            blocked={props.blocked}
+            ceremonyClosed={gate.ceremonyClosed}
+            open={gate.openGate}
+          />
+        );
+      }
 
-  return <DumpReviewForm {...props} gate={gate} />;
+      return <DumpReviewForm {...props} gate={gate} view={gate.view} />;
+  }
 }
 
 function PublishingDump() {
@@ -88,8 +94,13 @@ function DumpReviewForm({
   pending,
   blocked,
   gate,
-}: DumpGateProps & { readonly gate: DumpGateController }) {
+  view,
+}: DumpGateProps & {
+  readonly gate: DumpGateController;
+  readonly view: Extract<DumpGateView, { readonly status: "editable" | "retryable" }>;
+}) {
   const hasPending = pending.length > 0;
+  const retryable = view.status === "retryable";
 
   return (
     <section
@@ -103,7 +114,7 @@ function DumpReviewForm({
             ? `${pending.length} ${pending.length === 1 ? "dúvida segue" : "dúvidas seguem"} sem resposta.`
             : "Nenhuma dúvida ficou aberta."}
         </p>
-        {gate.dumpLocked && (
+        {retryable && (
           <p role="status" className="mt-2 text-sm text-muted">
             Um despejo parcial já congelou Spec, Tasks e estimativa — o retry precisa dos mesmos valores.
           </p>
@@ -138,8 +149,8 @@ function DumpReviewForm({
             name="tasksMarkdown"
             required
             disabled={gate.dumping}
-            readOnly={gate.dumpLocked}
-            value={gate.tasksMarkdown}
+            readOnly={retryable}
+            value={view.tasksMarkdown}
             onChange={(event) => gate.setTasksMarkdown(event.target.value)}
             rows={16}
             spellCheck={false}
@@ -148,14 +159,14 @@ function DumpReviewForm({
         </label>
         <label className="flex max-w-xs flex-col gap-2 text-sm" htmlFor="estimate">
           Estimativa da squad
-          {gate.dumpLocked ? (
+          {retryable ? (
             <>
-              <input type="hidden" name="estimate" value={gate.estimateDefault ?? ""} />
+              <input type="hidden" name="estimate" value={view.estimate} />
               <output
                 id="estimate"
                 className="rounded-lg border border-line px-4 py-3 text-base"
               >
-                {gate.estimateDefault}
+                {view.estimate}
               </output>
             </>
           ) : (

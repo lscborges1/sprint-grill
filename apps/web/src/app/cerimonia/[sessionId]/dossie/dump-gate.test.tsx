@@ -1,29 +1,39 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DumpGate } from "./dump-gate";
+import { dumpGateView, type DumpGateController } from "./use-dump-gate";
+
+const DEFAULT_TASKS = "## Implementar\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/1)\n\n### Critérios de aceite\n\n- Funciona.";
+
+const DEFAULT_CONTROLLER = {
+  action: () => undefined,
+  ceremonyClosed: true,
+  close: () => undefined,
+  dumping: false,
+  open: true,
+  openGate: () => undefined,
+  result: { status: "idle" },
+  setTasksMarkdown: () => undefined,
+  taskErrors: [],
+  view: { status: "editable", tasksMarkdown: DEFAULT_TASKS },
+} as const satisfies DumpGateController;
 
 const controller = vi.hoisted(() => ({
-  current: {
-    action: () => undefined,
-    ceremonyClosed: true,
-    close: () => undefined,
-    dumpCompleted: false,
-    dumpLocked: false,
-    dumpPublishing: false,
-    dumping: false,
-    estimateDefault: undefined as number | undefined,
-    open: true,
-    openGate: () => undefined,
-    result: { status: "idle" as const },
-    setTasksMarkdown: () => undefined,
-    taskErrors: [],
-    tasksMarkdown: "## Implementar\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/1)\n\n### Critérios de aceite\n\n- Funciona.",
-  },
+  current: {} as DumpGateController,
 }));
 
-vi.mock("./use-dump-gate", () => ({
+vi.mock("../../actions", () => ({
+  dumpCeremonyAction: () => Promise.resolve({ status: "idle" }),
+}));
+
+vi.mock("./use-dump-gate", async (importOriginal) => ({
+  ...(await importOriginal()),
   useDumpGate: () => controller.current,
 }));
+
+beforeEach(() => {
+  controller.current = { ...DEFAULT_CONTROLLER };
+});
 
 const props = {
   sessionId: "ceremony-1",
@@ -31,7 +41,7 @@ const props = {
   markdown: "# Spec",
   base: "# Spec",
   pending: [],
-  taskPreview: "## Implementar\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/1)\n\n### Critérios de aceite\n\n- Funciona.",
+  taskPreview: DEFAULT_TASKS,
   dump: { status: "not-started" as const },
   ceremonyStatus: "encerrada" as const,
   blocked: false,
@@ -47,8 +57,6 @@ describe("DumpGate estimate", () => {
   });
 
   it("should render the allowed estimate scale as a select for a new dump", () => {
-    controller.current = { ...controller.current, dumpLocked: false, estimateDefault: undefined };
-
     const html = renderToStaticMarkup(<DumpGate {...props} />);
 
     expect(html).toMatch(/<select id="estimate" name="estimate" required=""/);
@@ -56,7 +64,10 @@ describe("DumpGate estimate", () => {
   });
 
   it("should submit a frozen legacy estimate through a hidden field", () => {
-    controller.current = { ...controller.current, dumpLocked: true, estimateDefault: 4 };
+    controller.current = {
+      ...DEFAULT_CONTROLLER,
+      view: { status: "retryable", tasksMarkdown: DEFAULT_TASKS, estimate: 4 },
+    };
 
     const html = renderToStaticMarkup(<DumpGate {...props} />);
 
@@ -67,9 +78,7 @@ describe("DumpGate estimate", () => {
   it("should render a persisted publishing dump as a non-interactive status", () => {
     controller.current = {
       ...controller.current,
-      dumpCompleted: false,
-      dumpLocked: true,
-      dumpPublishing: true,
+      view: { status: "publishing" },
       open: false,
     };
 
@@ -79,5 +88,40 @@ describe("DumpGate estimate", () => {
     expect(html).toContain("Despejo em andamento");
     expect(html).not.toContain("<button");
     expect(html).not.toContain("<form");
+  });
+
+  it("should render a completed dump as a non-interactive status", () => {
+    controller.current = {
+      ...DEFAULT_CONTROLLER,
+      view: { status: "completed" },
+    };
+
+    const html = renderToStaticMarkup(<DumpGate {...props} />);
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain("Despejo concluído");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<form");
+  });
+});
+
+describe("dumpGateView", () => {
+  it("should project a successful action as completed before the SSE echo", () => {
+    expect(
+      dumpGateView(
+        {
+          status: "publishing",
+          inputs: {
+            dumpId: "dump-1",
+            markdown: "# Spec",
+            tasksMarkdown: DEFAULT_TASKS,
+            estimate: 5,
+          },
+          startedAt: 1,
+        },
+        { status: "success" },
+        DEFAULT_TASKS,
+      ),
+    ).toEqual({ status: "completed" });
   });
 });

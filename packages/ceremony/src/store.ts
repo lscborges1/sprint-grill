@@ -239,14 +239,16 @@ export function openCeremonyStore(
     return session;
   }
 
-  function assertDumpUnlocked(sessionId: string): void {
+  function assertDossieMutable(sessionId: string): void {
     const session = requireSession(sessionId);
     switch (session.dump.status) {
       case "publishing":
-        throw new CeremonyError("a cerimônia está em despejo e não aceita novas alterações.");
-      case "not-started":
       case "retryable":
       case "completed":
+        throw new CeremonyError(
+          "a cerimônia já iniciou o despejo e não aceita novas alterações no Dossiê.",
+        );
+      case "not-started":
         return;
     }
   }
@@ -316,6 +318,7 @@ export function openCeremonyStore(
     },
 
     finishSession(sessionId, outcome) {
+      assertDossieMutable(sessionId);
       db.update(sessions)
         .set({
           status: outcome.status,
@@ -326,7 +329,7 @@ export function openCeremonyStore(
     },
 
     askQuestions(sessionId, asked) {
-      assertDumpUnlocked(sessionId);
+      assertDossieMutable(sessionId);
       if (asked.length === 0) return;
 
       const askedAt = Date.now();
@@ -401,6 +404,7 @@ export function openCeremonyStore(
     },
 
     abandonPendingQuestions(sessionId) {
+      assertDossieMutable(sessionId);
       db.update(questions)
         .set({ status: "abandonada" })
         .where(and(eq(questions.sessionId, sessionId), eq(questions.status, "aberta")))
@@ -408,15 +412,7 @@ export function openCeremonyStore(
     },
 
     recordDecision({ sessionId, questionId, answer, decidedBy, recordId, recordUrl }) {
-      const session = db
-        .select({ dumpStartedAt: sessions.dumpStartedAt, dumpedAt: sessions.dumpedAt })
-        .from(sessions)
-        .where(eq(sessions.id, sessionId))
-        .get();
-      if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
-      if (session.dumpStartedAt !== null || session.dumpedAt !== null) {
-        throw new CeremonyError("a cerimônia está em despejo e não aceita novas decisões.");
-      }
+      assertDossieMutable(sessionId);
 
       const who = decidedBy.trim();
       if (who === "") throw new CeremonyError("registre quem decidiu antes de gravar a decisão.");
@@ -529,44 +525,43 @@ export function openCeremonyStore(
         throw new CeremonyError("o despejo precisa de uma estimativa positiva antes de começar.");
       }
 
-      const session = db
-        .select({
-          dumpStartedAt: sessions.dumpStartedAt,
-          dumpId: sessions.dumpId,
-          dumpedAt: sessions.dumpedAt,
-        })
-        .from(sessions)
-        .where(eq(sessions.id, sessionId))
-        .get();
-      if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
-      if (session.dumpedAt !== null) {
+      const session = requireSession(sessionId);
+      if (session.dump.status === "publishing" || session.dump.status === "completed") {
         throw new CeremonyError("a cerimônia já está em despejo ou já foi despejada.");
       }
-      if (session.dumpStartedAt !== null) {
-        throw new CeremonyError("a cerimônia já está em despejo ou já foi despejada.");
-      }
-      if (session.dumpId !== null && session.dumpId !== fingerprint) {
+      if (
+        session.dump.status === "retryable" &&
+        !sameSignedDumpInputs(session.dump.inputs, input)
+      ) {
         throw new CeremonyError(
-          "o despejo já começou com outra Spec, outras Tasks ou outra estimativa — use os mesmos valores no retry.",
+          "o despejo já começou com outra Spec, outras Tasks ou outra estimativa — use os mesmos valores assinados no retry.",
         );
       }
 
+      const retrying = session.dump.status === "retryable";
       const result = db
         .update(sessions)
-        .set({
-          dumpStartedAt: Date.now(),
-          dumpId: fingerprint,
-          dumpMarkdown: markdown,
-          dumpTasksMarkdown: tasksMarkdown,
-          dumpEstimate: input.estimate,
-        })
+        .set(retrying
+          ? { dumpStartedAt: Date.now() }
+          : {
+              dumpStartedAt: Date.now(),
+              dumpId: fingerprint,
+              dumpMarkdown: markdown,
+              dumpTasksMarkdown: tasksMarkdown,
+              dumpEstimate: input.estimate,
+            })
         .where(and(
           eq(sessions.id, sessionId),
           sql`${sessions.dumpStartedAt} IS NULL`,
           sql`${sessions.dumpedAt} IS NULL`,
-          session.dumpId === null
-            ? sql`${sessions.dumpId} IS NULL`
-            : eq(sessions.dumpId, fingerprint),
+          ...(retrying
+            ? [
+                eq(sessions.dumpId, input.dumpId),
+                eq(sessions.dumpMarkdown, input.markdown),
+                eq(sessions.dumpTasksMarkdown, input.tasksMarkdown),
+                eq(sessions.dumpEstimate, input.estimate),
+              ]
+            : [sql`${sessions.dumpId} IS NULL`]),
         ))
         .run();
       if (result.changes !== 1) {
@@ -639,7 +634,7 @@ export function openCeremonyStore(
     },
 
     openConsultation(sessionId, question) {
-      assertDumpUnlocked(sessionId);
+      assertDossieMutable(sessionId);
 
       const asked = question.trim();
       if (asked === "") throw new CeremonyError("escreva a pergunta de fato para o agente.");
@@ -676,7 +671,7 @@ export function openCeremonyStore(
         .get();
 
       if (!open) throw new CeremonyError(`a consulta ${consultationId} não está aberta.`);
-      assertDumpUnlocked(open.sessionId);
+      assertDossieMutable(open.sessionId);
 
       const answeredAt = Date.now();
       db.transaction((tx) => {
@@ -768,7 +763,7 @@ export function openCeremonyStore(
     },
 
     appendEvent(sessionId, event) {
-      assertDumpUnlocked(sessionId);
+      assertDossieMutable(sessionId);
       db.insert(events)
         .values({ sessionId, at: Date.now(), kind: event.kind, payload: JSON.stringify(event) })
         .run();
@@ -986,6 +981,13 @@ function toDumpState(
   if (dumpedAt !== null) return { status: "completed", inputs, completedAt: dumpedAt };
   if (dumpStartedAt !== null) return { status: "publishing", inputs, startedAt: dumpStartedAt };
   return { status: "retryable", inputs };
+}
+
+function sameSignedDumpInputs(left: SignedDumpInputs, right: SignedDumpInputs): boolean {
+  return left.dumpId === right.dumpId
+    && left.markdown === right.markdown
+    && left.tasksMarkdown === right.tasksMarkdown
+    && left.estimate === right.estimate;
 }
 
 /**

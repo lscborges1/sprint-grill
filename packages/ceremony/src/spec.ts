@@ -2,6 +2,8 @@ import { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
 import { CeremonyError } from "./ceremony-error";
 import type { CeremonyDecision, DossieDocument } from "./types";
 
+const DECISION_TRACEABILITY_HEADING = "Rastreabilidade de decisões";
+
 interface SpecSectionOccurrence {
   readonly heading: string;
   readonly bodyStart: number;
@@ -52,6 +54,9 @@ export function renderSpecMarkdown(document: DossieDocument, timeZone = "UTC"): 
     `## ${SPEC_SECTIONS.outOfScope.heading}`,
     SPEC_SECTIONS.outOfScope.blurb,
     italic(SPEC_SECTIONS.outOfScope.empty),
+
+    `## ${DECISION_TRACEABILITY_HEADING}`,
+    list(decisions, traceabilityEntry) ?? italic("Nenhuma decisão foi registrada."),
   ];
 
   return `${blocks.join("\n\n")}\n`;
@@ -139,20 +144,57 @@ export function appendDecisionTraceability(
   markdown: string,
   decisions: readonly CeremonyDecision[],
 ): string {
-  const records = decisions.map((decision) => {
+  const heading = `## ${DECISION_TRACEABILITY_HEADING}`;
+  const occurrences = markdown.split(heading).length - 1;
+  if (occurrences !== 1) {
+    throw new CeremonyError(
+      "a rastreabilidade assinada precisa aparecer exatamente uma vez antes da publicação.",
+    );
+  }
+
+  const headingStart = markdown.indexOf(heading);
+  const traceStart = headingStart + heading.length;
+  const afterHeading = markdown.slice(traceStart);
+  const nextHeading = afterHeading.search(/\n {0,3}##[ \t]+/);
+  const traceEnd = nextHeading === -1 ? markdown.length : traceStart + nextHeading;
+  let trace = markdown.slice(traceStart, traceEnd);
+  let searchFrom = 0;
+  for (const decision of decisions) {
     if (!decision.recordId || !decision.recordUrl) {
       throw new CeremonyError(`a decisão ${decision.questionSeq} ainda não tem Registro no Azure DevOps.`);
     }
-    const recordUrl = `${decision.recordUrl.replace(/#.*$/, "")}#discussion_${decision.recordId}`;
-    return `- **${decision.question}** — ${decision.answer} — [Registro #${decision.recordId}](${recordUrl})`;
-  });
+    const reviewed = traceabilityEntry({
+      ...decision,
+      recordId: undefined,
+      recordUrl: undefined,
+    });
+    const reviewedAt = trace.indexOf(reviewed, searchFrom);
+    if (reviewedAt === -1) {
+      throw new CeremonyError(
+        `a rastreabilidade assinada não contém a pergunta e a resposta da decisão ${decision.questionSeq}.`,
+      );
+    }
+    const published = traceabilityEntry(decision);
+    trace = `${trace.slice(0, reviewedAt)}${published}${trace.slice(reviewedAt + reviewed.length)}`;
+    searchFrom = reviewedAt + published.length;
+  }
 
-  return `${markdown}\n\n## Rastreabilidade de decisões\n\n${records.join("\n")}\n`;
+  return `${markdown.slice(0, traceStart)}${trace}${markdown.slice(traceEnd)}`;
 }
 
 /** Links despejados não tornam a revisão do Operador semanticamente velha. */
 export function stripDecisionRecordLinks(markdown: string): string {
-  return markdown.replace(/^ {2}- Registro no Azure DevOps: .*(?:\n|$)/gm, "");
+  return markdown
+    .replace(/^ {2}- Registro no Azure DevOps: .*(?:\n|$)/gm, "")
+    .replace(/^ {2}- \[Registro #[^\]]+\]\([^\n]+\)(?:\n|$)/gm, "");
+}
+
+function traceabilityEntry(decision: CeremonyDecision): string {
+  const reviewed = `- **${decision.question}** — ${decision.answer}`;
+  if (!decision.recordId || !decision.recordUrl) return reviewed;
+
+  const recordUrl = `${decision.recordUrl.replace(/#.*$/, "")}#discussion_${decision.recordId}`;
+  return `${reviewed}\n  - [Registro #${decision.recordId}](${recordUrl})`;
 }
 
 function findCanonicalSections(

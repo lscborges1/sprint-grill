@@ -97,7 +97,13 @@ interface CeremonyRegistry {
   /** Evita duas sessões ativas da mesma US quando o clique em "Grelhar" corre em paralelo. */
   startingByStory: Map<number, Promise<CeremonySession>>;
   listeners: Map<string, Set<SessionListener>>;
-  dumpsInFlight: Map<string, Promise<void>>;
+  dumpsInFlightByStory: Map<number, DumpInFlight>;
+}
+
+interface DumpInFlight {
+  readonly sessionId: string;
+  readonly signedInputSignature: string;
+  readonly promise: Promise<void>;
 }
 
 /**
@@ -112,11 +118,11 @@ const registry: CeremonyRegistry = ((
   starting: undefined,
   startingByStory: new Map(),
   listeners: new Map(),
-  dumpsInFlight: new Map(),
+  dumpsInFlightByStory: new Map(),
 });
 // Campo novo: HMR pode reusar um registry antigo sem ele.
 registry.startingByStory ??= new Map();
-registry.dumpsInFlight ??= new Map();
+registry.dumpsInFlightByStory ??= new Map();
 
 /** Abrir o banco é efeito colateral: só acontece quando alguém pergunta de cerimônia. */
 function getStore(): CeremonyStore {
@@ -247,25 +253,49 @@ export function discardSpecDraft(input: DiscardSpecDraftInput): void {
 }
 
 /**
- * O despejo é serial por sessão: cada comment confirmado fica no SQLite antes
- * da próxima escrita, então um retry explícito não duplica Registros já vistos.
- * O fingerprint das Tasks/estimativa também fica gravado no início — mudar
- * esses inputs no retry quebraria a reconciliação das Tasks já criadas no ADO.
+ * O despejo é serial por US: cada comment confirmado fica no SQLite antes da
+ * próxima escrita, então um retry explícito não duplica Registros já vistos e
+ * duas cerimônias da mesma US não publicam em paralelo.
  */
 export function dumpCeremony(input: z.infer<typeof dumpCeremonySchema>): Promise<void> {
-  const inFlight = registry.dumpsInFlight.get(input.sessionId);
-  if (inFlight) return inFlight;
+  const initial = getDossie(input.sessionId);
+  if (!initial) {
+    return Promise.reject(new CeremonyError(`cerimônia ${input.sessionId} não existe.`));
+  }
 
-  const dump = dumpCeremonyNow(input).finally(() => {
-    registry.dumpsInFlight.delete(input.sessionId);
+  const signature = signedInputSignature(input);
+  const inFlight = registry.dumpsInFlightByStory.get(initial.story.id);
+  if (inFlight) {
+    if (inFlight.sessionId !== input.sessionId) {
+      return Promise.reject(new CeremonyError(
+        `a US #${initial.story.id} já tem um despejo em andamento em outra cerimônia.`,
+      ));
+    }
+    if (inFlight.signedInputSignature !== signature) {
+      return Promise.reject(new CeremonyError(
+        "esta cerimônia já está despejando outros valores assinados — aguarde antes de tentar novamente.",
+      ));
+    }
+    return inFlight.promise;
+  }
+
+  const tracked = dumpCeremonyNow(input, initial).finally(() => {
+    if (registry.dumpsInFlightByStory.get(initial.story.id)?.promise === tracked) {
+      registry.dumpsInFlightByStory.delete(initial.story.id);
+    }
   });
-  registry.dumpsInFlight.set(input.sessionId, dump);
-  return dump;
+  registry.dumpsInFlightByStory.set(initial.story.id, {
+    sessionId: input.sessionId,
+    signedInputSignature: signature,
+    promise: tracked,
+  });
+  return tracked;
 }
 
-async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promise<void> {
-  const initial = getDossie(input.sessionId);
-  if (!initial) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
+async function dumpCeremonyNow(
+  input: z.infer<typeof dumpCeremonySchema>,
+  initial: DossieState,
+): Promise<void> {
   if (isCompletedDump(initial.dump)) return;
   if (getStore().getSession(input.sessionId)?.status !== "encerrada") {
     throw new CeremonyError("encerre a cerimônia antes de despejar.");
@@ -302,7 +332,13 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
   if (frozenInputs === undefined && !isCeremonyEstimate(input.estimate)) {
     throw new CeremonyError("a estimativa deve usar a escala Fibonacci da squad.");
   }
-  const tasks = parseTaskDraft(input.tasksMarkdown, initial.story.url);
+  if (frozenInputs !== undefined && input.tasksMarkdown !== frozenInputs.tasksMarkdown) {
+    throw new CeremonyError(
+      "o despejo já começou com outras Tasks assinadas — use as mesmas Tasks no retry.",
+    );
+  }
+  const tasksMarkdown = frozenInputs?.tasksMarkdown ?? input.tasksMarkdown;
+  const tasks = parseTaskDraft(tasksMarkdown, initial.story.url);
   const dumpId = frozenInputs?.dumpId ?? dumpFingerprint(
     initial.sessionId,
     initial.story.id,
@@ -311,13 +347,21 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
     input.estimate,
   );
 
+  const store = getStore();
+  store.beginDump(input.sessionId, {
+    dumpId,
+    markdown: signed,
+    tasksMarkdown,
+    estimate: input.estimate,
+  });
+  publish(input.sessionId);
+
+  try {
   const { azureDevOps } = getSquadConfig();
   const ado = { azureDevOps, credentials: loadAdoCredentials(), logger };
-
   const completions = await readDumpCompletion(ado, initial.story.id);
   // Um despejo já concluído com outro fingerprint não bloqueia: a cerimônia nova
   // é o fluxo explícito para publicar uma Spec revisada sobre a anterior.
-
   const incomplete = await readIncompleteDumps(ado, initial.story.id);
   if (incomplete.some((id) => id !== dumpId)) {
     throw new CeremonyError(
@@ -325,15 +369,6 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
     );
   }
 
-  const store = getStore();
-  store.beginDump(input.sessionId, {
-    dumpId,
-    markdown: signed,
-    tasksMarkdown: input.tasksMarkdown,
-    estimate: input.estimate,
-  });
-
-  try {
   if (completions.includes(dumpId)) {
     store.markDumpCompleted(input.sessionId, initial.decisions.length);
     publish(input.sessionId);
@@ -399,6 +434,16 @@ async function dumpCeremonyNow(input: z.infer<typeof dumpCeremonySchema>): Promi
     publish(input.sessionId);
     throw error;
   }
+}
+
+function signedInputSignature(input: z.infer<typeof dumpCeremonySchema>): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      markdown: input.markdown,
+      tasksMarkdown: input.tasksMarkdown,
+      estimate: input.estimate,
+    }))
+    .digest("hex");
 }
 
 function signedDumpInputs(dump: CeremonyDumpState): SignedDumpInputs | undefined {

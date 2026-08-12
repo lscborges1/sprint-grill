@@ -22,6 +22,7 @@ export function DumpGate(props: DumpGateProps): ReactElement {
   const gate = useDumpGate(props);
 
   if (gate.dumpCompleted) return <CompletedDump />;
+  if (gate.dumpPublishing) return <PublishingDump />;
   if (!gate.open) {
     return (
       <UnavailableDump
@@ -33,6 +34,14 @@ export function DumpGate(props: DumpGateProps): ReactElement {
   }
 
   return <DumpReviewForm {...props} gate={gate} />;
+}
+
+function PublishingDump() {
+  return (
+    <p role="status" className="rounded-lg border border-line px-5 py-4 text-sm text-muted">
+      Despejo em andamento: Spec, Tasks, estimativa e Registros estão sendo publicados.
+    </p>
+  );
 }
 
 function CompletedDump() {

@@ -83,6 +83,14 @@ describe("renderSpecMarkdown", () => {
     );
   });
 
+  it("should include every decision question and answer in traceability before signature", () => {
+    const markdown = renderSpecMarkdown(REFINED);
+    const traceability = markdown.slice(markdown.indexOf("## Rastreabilidade de decisões"));
+
+    expect(traceability).toContain("**O TTL vira configurável por cliente ou global?** — Global");
+    expect(traceability).not.toContain("Registro #");
+  });
+
   it("should link each decision to its Azure DevOps record when one exists", () => {
     const markdown = renderSpecMarkdown({
       ...EMPTY,
@@ -193,22 +201,82 @@ describe("assertValidSpecMarkdown", () => {
 });
 
 describe("appendDecisionTraceability", () => {
-  it("should append every question and answer with one deep link to an Operator-edited signed Spec", () => {
-    const markdown = appendDecisionTraceability("# Texto editado", [
-      {
-        ...REFINED.decisions[0]!,
-        recordId: 99,
-        recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
-      },
-    ]);
+  it("should insert only the generated deep link into an Operator-edited signed trace", () => {
+    const trace = "- **O TTL vira configurável por cliente ou global?** — Global";
+    const signed = [
+      "# Texto editado",
+      "",
+      "## Rastreabilidade de decisões",
+      "",
+      trace,
+      "",
+      "## Nota do Operador",
+      "",
+      "Detalhe assinado.",
+    ].join("\n");
 
-    expect(markdown).toContain("# Texto editado");
-    expect(markdown).toContain("## Rastreabilidade de decisões");
-    expect(markdown).toContain("**O TTL vira configurável por cliente ou global?** — Global");
+    const markdown = appendDecisionTraceability(signed, [{
+      ...REFINED.decisions[0]!,
+      recordId: 99,
+      recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+    }]);
+
+    expect(markdown).toBe(signed.replace(
+      trace,
+      `${trace}\n  - [Registro #99](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211#discussion_99)`,
+    ));
+    expect(markdown.match(/## Rastreabilidade de decisões/g)).toHaveLength(1);
+  });
+
+  it("should reject publication when the signed Spec has no reviewed trace", () => {
+    expect(() => appendDecisionTraceability("# Texto sem rastreabilidade", [{
+      ...REFINED.decisions[0]!,
+      recordId: 99,
+      recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+    }])).toThrow(/rastreabilidade.*assinada/i);
+  });
+
+  it("should not mistake repeated decision prose outside the signed trace for traceability", () => {
+    const repeated = "- **O TTL vira configurável por cliente ou global?** — Global";
+    const signed = [
+      "# Texto editado",
+      "",
+      "## Rastreabilidade de decisões",
+      "",
+      "_Entrada removida pelo Operador._",
+      "",
+      "## Nota do Operador",
+      "",
+      repeated,
+    ].join("\n");
+
+    expect(() => appendDecisionTraceability(signed, [{
+      ...REFINED.decisions[0]!,
+      recordId: 99,
+      recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+    }])).toThrow(/não contém.*decisão 1/i);
+  });
+
+  it("should attach one record link to each repeated signed trace entry", () => {
+    const repeated = "- **A integração fica síncrona?** — Sim";
+    const signed = `# Spec\n\n## Rastreabilidade de decisões\n\n${repeated}\n${repeated}\n`;
+    const decisions = [91, 92].map((recordId, index) => ({
+      questionSeq: index + 1,
+      questionId: `q${index + 1}`,
+      question: "A integração fica síncrona?",
+      recommendation: "Sim",
+      answer: "Sim",
+      decidedBy: "PO",
+      decidedAt: Date.UTC(2026, 7, 6, 14, 30),
+      recordId,
+      recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+    }));
+
+    const markdown = appendDecisionTraceability(signed, decisions);
+
     expect(markdown).toContain(
-      "[Registro #99](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211#discussion_99)",
+      `${repeated}\n  - [Registro #91](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211#discussion_91)\n${repeated}\n  - [Registro #92]`,
     );
-    expect(markdown.match(/\[Registro #99\]\([^)]*\)/g)).toHaveLength(1);
   });
 });
 

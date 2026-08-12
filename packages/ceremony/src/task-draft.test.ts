@@ -222,6 +222,32 @@ Entrega o comportamento refinado pela sala.
     ]);
   });
 
+  it("should validate the exact current Spec link independently for every Task", () => {
+    const result = validateTaskDraft(`## Backend
+
+Entrega a API.
+
+[Spec da US](${SPEC_URL})
+
+### Critérios de aceite
+
+- A API responde.
+
+## Frontend
+
+Entrega a interface.
+
+### Critérios de aceite
+
+- A interface consome a API.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava o link ausente na segunda Task");
+    expect(result.errors).toEqual([
+      expect.stringMatching(/Frontend.*link.*Spec atual/i),
+    ]);
+  });
+
   it("should reject a Task that links a different Spec", () => {
     const result = validateTaskDraft(`## Implementar
 

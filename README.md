@@ -270,8 +270,10 @@ da assinatura admite somente metadados que ainda não existem ou que o ADO exige
 
 - marcadores determinísticos de armazenamento e reconciliação;
 - conversão do Markdown assinado para o HTML dos campos de work item;
-- links dos Registros de decisão anexados à rastreabilidade da Spec, porque as
-  URLs desses comments só existem depois que o ADO os publica.
+- cada link de Registro de decisão inserido na entrada correspondente da
+  rastreabilidade que já foi revisada e assinada. O despejo não acrescenta o
+  heading, a pergunta nem a resposta: só a URL, que passa a existir depois que
+  o ADO publica o comment.
 
 Relações nativas de pai e dependência e a estimativa são campos estruturados do
 work item; não alteram o corpo assinado da Task.

@@ -9,6 +9,7 @@ const controller = vi.hoisted(() => ({
     close: () => undefined,
     dumpCompleted: false,
     dumpLocked: false,
+    dumpPublishing: false,
     dumping: false,
     estimateDefault: undefined as number | undefined,
     open: true,
@@ -61,5 +62,22 @@ describe("DumpGate estimate", () => {
 
     expect(html).toContain('<input type="hidden" name="estimate" value="4"/>');
     expect(html).toContain("4");
+  });
+
+  it("should render a persisted publishing dump as a non-interactive status", () => {
+    controller.current = {
+      ...controller.current,
+      dumpCompleted: false,
+      dumpLocked: true,
+      dumpPublishing: true,
+      open: false,
+    };
+
+    const html = renderToStaticMarkup(<DumpGate {...props} />);
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain("Despejo em andamento");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<form");
   });
 });

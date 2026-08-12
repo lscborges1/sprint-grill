@@ -166,7 +166,7 @@ describe("openCeremonyStore", () => {
     });
   });
 
-  it("should release a dump interrupted by a process restart", () => {
+  it("should keep Dossiê mutations frozen when an interrupted dump is recovered", () => {
     const file = dbPath();
     const first = open(file);
     newSession(first);
@@ -175,9 +175,8 @@ describe("openCeremonyStore", () => {
     opened.pop();
 
     const reopened = open(file);
-    reopened.askQuestions("thread-1", [question()]);
 
-    expect(reopened.currentQuestion("thread-1")?.id).toBe("q1");
+    expect(() => reopened.askQuestions("thread-1", [question()])).toThrow(/despejo/i);
     expect(reopened.getSession("thread-1")?.dump).toEqual({
       status: "retryable",
       inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
@@ -212,6 +211,25 @@ describe("openCeremonyStore", () => {
     expect(store.getSession("thread-1")?.dump).toMatchObject({
       status: "retryable",
       inputs: { dumpId: "dump-fingerprint" },
+    });
+  });
+
+  it("should refuse a retry that changes only the signed Tasks without overwriting them", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(() =>
+      store.beginDump("thread-1", {
+        dumpId: "dump-fingerprint",
+        ...DUMP_DETAILS,
+        tasksMarkdown: `${DUMP_DETAILS.tasksMarkdown}\n\nNota diferente.`,
+      }),
+    ).toThrow(/Tasks assinadas|mesmos valores/i);
+    expect(store.getSession("thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
     });
   });
 
@@ -884,6 +902,57 @@ describe("dump freeze", () => {
 
     expect(() => store.askQuestions("thread-1", [question()])).toThrow(/despejo/i);
     expect(() => store.openConsultation("thread-1", "Qual campo a API aceita?")).toThrow(/despejo/i);
+  });
+
+  it("should reject every Dossiê mutation after an aborted dump", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    const consultation = store.openConsultation("thread-1", "Qual campo a API aceita?");
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(() => store.askQuestions("thread-1", [question({ id: "q2" })])).toThrow(/despejo/i);
+    expect(() => store.abandonPendingQuestions("thread-1")).toThrow(/despejo/i);
+    expect(() => store.finishSession("thread-1", { status: "falhou", message: "tarde demais" }))
+      .toThrow(/despejo/i);
+    expect(() =>
+      store.recordDecision({
+        sessionId: "thread-1",
+        questionId: "q1",
+        answer: "Regra bancária",
+        decidedBy: "PO",
+      }),
+    ).toThrow(/despejo/i);
+    expect(() =>
+      store.answerConsultation(consultation.id, { status: "falhou", message: "o agente caiu" }),
+    ).toThrow(/despejo/i);
+    expect(() => store.appendEvent("thread-1", { kind: "turno-encerrado" })).toThrow(/despejo/i);
+  });
+
+  it("should reject Dossiê mutations after a completed dump while allowing record metadata", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    const decision = store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+    beginDump(store);
+    store.markDumpCompleted("thread-1", 1);
+
+    expect(() => store.askQuestions("thread-1", [question({ id: "q2" })])).toThrow(/despejo/i);
+    expect(() => store.appendEvent("thread-1", { kind: "turno-encerrado" })).toThrow(/despejo/i);
+    expect(() =>
+      store.attachDecisionRecord({
+        sessionId: "thread-1",
+        questionSeq: decision.questionSeq,
+        recordId: 99,
+        recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/4242",
+      }),
+    ).not.toThrow();
   });
 
   it("should refuse completion when the decision revision changed", () => {

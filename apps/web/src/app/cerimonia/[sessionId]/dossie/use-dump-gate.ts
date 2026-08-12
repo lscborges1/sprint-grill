@@ -19,6 +19,7 @@ export interface DumpGateController {
   readonly close: () => void;
   readonly dumpCompleted: boolean;
   readonly dumpLocked: boolean;
+  readonly dumpPublishing: boolean;
   readonly dumping: boolean;
   readonly estimateDefault: number | undefined;
   readonly open: boolean;
@@ -45,6 +46,7 @@ export function useDumpGate(
     close: () => setOpen(false),
     dumpCompleted: dumpState.completed || result.status === "success",
     dumpLocked: dumpState.inputs !== undefined,
+    dumpPublishing: dumpState.publishing,
     dumping,
     estimateDefault: dumpState.inputs?.estimate,
     open,
@@ -59,14 +61,16 @@ export function useDumpGate(
 function dumpGateState(dump: CeremonyDumpState): {
   readonly completed: boolean;
   readonly inputs: SignedDumpInputs | undefined;
+  readonly publishing: boolean;
 } {
   switch (dump.status) {
     case "not-started":
-      return { completed: false, inputs: undefined };
+      return { completed: false, inputs: undefined, publishing: false };
     case "publishing":
+      return { completed: false, inputs: dump.inputs, publishing: true };
     case "retryable":
-      return { completed: false, inputs: dump.inputs };
+      return { completed: false, inputs: dump.inputs, publishing: false };
     case "completed":
-      return { completed: true, inputs: dump.inputs };
+      return { completed: true, inputs: dump.inputs, publishing: false };
   }
 }

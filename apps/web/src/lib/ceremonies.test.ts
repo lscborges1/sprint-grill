@@ -771,6 +771,32 @@ Entrega outro slice vertical.
     expect(publishChildTasks).toHaveBeenCalledTimes(1);
   });
 
+  it("should refuse a retry that changes only the signed Tasks", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+    publishChildTasks.mockRejectedValueOnce(new AdoError("connection", "conexão caiu"));
+
+    await expect(dumpCeremony(input)).rejects.toThrow("conexão caiu");
+    await expect(dumpCeremony({
+      ...input,
+      tasksMarkdown: `${TASKS_MARKDOWN}\n\nNota não assinada.`,
+    })).rejects.toThrow(/Tasks assinadas|mesmos valores/i);
+
+    expect(getDossie(session.id)?.dump).toMatchObject({
+      status: "retryable",
+      inputs: { tasksMarkdown: TASKS_MARKDOWN },
+    });
+    expect(publishChildTasks).toHaveBeenCalledTimes(1);
+  });
+
   it("should retry a frozen legacy non-Fibonacci estimate only with its signed value", async () => {
     const session = await startCeremony(nextStoryId);
     const dossie = getDossie(session.id)!;
@@ -981,6 +1007,7 @@ Entrega outro slice vertical.
   });
 
   it("should publish identical output from separate sessions with distinct dump ids and keep a retry idempotent", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 7, 12, 12));
     let starts = 0;
     createAgentRuntime.mockResolvedValue({
       startSession: async () => fakeSession(`thread-${nextSessionId}-${++starts}`),
@@ -1042,6 +1069,7 @@ Entrega outro slice vertical.
       expect(dumpIds[1]).not.toBe(dumpIds[0]);
       expect(publishChildTasks).toHaveBeenCalledTimes(2);
     } finally {
+      clock.mockRestore();
       if (ceremonyRegistry) {
         ceremonyRegistry.ceremony = undefined;
         ceremonyRegistry.starting = undefined;
@@ -1121,6 +1149,95 @@ Entrega outro slice vertical.
     expect(getDossie(session.id)?.dump.status).toBe("completed");
   });
 
+  it("should reserve the signed snapshot before an asynchronous ADO preflight", async () => {
+    const session = await startCeremony(nextStoryId);
+    await vi.waitFor(() => expect(getPalco(session.id)?.current.phase).toBe("perguntando"));
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    let releasePreflight!: () => void;
+    readDumpCompletion.mockImplementationOnce(
+      () => new Promise<readonly string[]>((resolve) => {
+        releasePreflight = () => resolve([]);
+      }),
+    );
+
+    const dump = dumpCeremony({
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    });
+    await vi.waitFor(() => expect(readDumpCompletion).toHaveBeenCalled());
+
+    await expect(submitDecision({
+      sessionId: session.id,
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    })).rejects.toThrow(/despejo/i);
+
+    releasePreflight();
+    await dump;
+    expect(getDossie(session.id)?.decisions).toHaveLength(0);
+  });
+
+  it("should serialize concurrent dumps from separate sessions of one story", async () => {
+    let starts = 0;
+    createAgentRuntime.mockResolvedValue({
+      startSession: async () => waitingSession(`thread-${nextSessionId}-${++starts}`),
+      resumeSession: async (id: string) => waitingSession(id),
+      close: async () => undefined,
+    });
+    const ceremonyRegistry = (globalThis as { __sprintGrillerCeremonies?: CeremonyRegistryForTest })
+      .__sprintGrillerCeremonies;
+    if (ceremonyRegistry) {
+      ceremonyRegistry.ceremony = undefined;
+      ceremonyRegistry.starting = undefined;
+    }
+
+    try {
+      const first = await startCeremony(nextStoryId);
+      const firstDossie = getDossie(first.id)!;
+      await finishCeremony(first.id);
+      const second = await startCeremony(nextStoryId);
+      const secondDossie = getDossie(second.id)!;
+      await finishCeremony(second.id);
+      let releasePreflight!: () => void;
+      readDumpCompletion.mockImplementationOnce(
+        () => new Promise<readonly string[]>((resolve) => {
+          releasePreflight = () => resolve([]);
+        }),
+      );
+
+      const firstDump = dumpCeremony({
+        sessionId: first.id,
+        markdown: firstDossie.spec.generated,
+        base: firstDossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      });
+      await vi.waitFor(() => expect(readDumpCompletion).toHaveBeenCalled());
+
+      await expect(dumpCeremony({
+        sessionId: second.id,
+        markdown: secondDossie.spec.generated,
+        base: secondDossie.spec.generated,
+        confirmPending: true,
+        ...DUMP_DETAILS,
+      })).rejects.toThrow(/despejo.*(?:andamento|incompleto)/i);
+
+      releasePreflight();
+      await firstDump;
+      expect(publishStorySpec).toHaveBeenCalledTimes(1);
+    } finally {
+      if (ceremonyRegistry) {
+        ceremonyRegistry.ceremony = undefined;
+        ceremonyRegistry.starting = undefined;
+      }
+    }
+  });
+
   it("should retry when the completion marker fails after child Tasks were published", async () => {
     const session = await startCeremony(nextStoryId);
     const dossie = getDossie(session.id)!;
@@ -1175,6 +1292,46 @@ Entrega outro slice vertical.
     await first;
 
     expect(publishDecisionRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("should reject differing signed inputs while the same session dump is in flight", async () => {
+    const session = await startCeremony(nextStoryId);
+    const dossie = getDossie(session.id)!;
+    await finishCeremony(session.id);
+    let releasePreflight!: () => void;
+    readDumpCompletion.mockImplementationOnce(
+      () => new Promise<readonly string[]>((resolve) => {
+        releasePreflight = () => resolve([]);
+      }),
+    );
+    const input = {
+      sessionId: session.id,
+      markdown: dossie.spec.generated,
+      base: dossie.spec.generated,
+      confirmPending: true,
+      ...DUMP_DETAILS,
+    };
+
+    const first = dumpCeremony(input);
+    await vi.waitFor(() => expect(readDumpCompletion).toHaveBeenCalled());
+
+    const differing = dumpCeremony({
+      ...input,
+      tasksMarkdown: `## Implementar outro slice
+
+Entrega outro slice vertical.
+
+[Spec da US](${STORY.url})
+
+### Critérios de aceite
+
+- O outro slice funciona.`,
+    });
+
+    releasePreflight();
+    await expect(differing).rejects.toThrow(/outros valores assinados|outra.*Tasks/i);
+    await first;
+    expect(publishStorySpec).toHaveBeenCalledTimes(1);
   });
 });
 

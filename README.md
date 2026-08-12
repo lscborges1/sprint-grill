@@ -72,7 +72,7 @@ A tela inicial lista as US da iteration atual e mostra em que ponto do fluxo cad
 
 Quem publica a Investigação precisa embutir `INVESTIGATION_MARKER`. O despejo só
 pode chamar `publishDumpCompletion` depois de Spec, Tasks, estimativa, Registros
-e ata existirem no ADO. `SPEC_MARKER` identifica o bloco gerenciado da Spec, mas
+existirem no ADO. `SPEC_MARKER` identifica o bloco gerenciado da Spec, mas
 sozinho não torna a US refinada.
 
 ## Investigação

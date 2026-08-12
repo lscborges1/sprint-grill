@@ -20,7 +20,7 @@ export const INVESTIGATION_MARKER = "<!-- sprint-griller:investigacao -->";
  */
 export const SPEC_MARKER = "<!-- sprint-griller:spec -->";
 
-/** Só é gravado após Spec, Tasks, Registros e ata terminarem no ADO. */
+/** Só é gravado após Spec, Tasks, estimativa e Registros terminarem no ADO. */
 export const DUMP_COMPLETION_MARKER_PREFIX = "<!-- sprint-griller:dump:";
 
 /** Textos da US que podem carregar artefatos da ferramenta. */

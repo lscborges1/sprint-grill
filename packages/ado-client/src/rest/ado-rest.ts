@@ -14,7 +14,7 @@ export interface AdoClientOptions {
   readonly logger?: Logger;
 }
 
-export interface RequestSpec<TSchema extends z.ZodType> {
+interface RequestSpecBase<TSchema extends z.ZodType> {
   /** Nome curto da operação, usado no log e na mensagem de erro. */
   readonly operation: string;
   /** Caminho a partir do projeto, ex.: `_apis/wit/wiql`. */
@@ -23,8 +23,6 @@ export interface RequestSpec<TSchema extends z.ZodType> {
   readonly apiVersion?: string;
   readonly query?: Readonly<Record<string, string>>;
   readonly body?: unknown;
-  /** A rota de work items usa PATCH com JSON Patch; POST continua sendo o padrão de escrita. */
-  readonly method?: "GET" | "POST" | "PATCH" | "PUT";
   /** Conteúdo especial exigido pela rota, por exemplo application/json-patch+json. */
   readonly contentType?: string;
   /** Cabeçalhos de concorrência específicos da rota, como `If-Match`. */
@@ -38,14 +36,28 @@ export interface RequestSpec<TSchema extends z.ZodType> {
    * isto o Operador vai conferir org e projeto por causa de um id errado.
    */
   readonly notFound?: string;
+}
+
+interface ReadRequestSpec<TSchema extends z.ZodType> extends RequestSpecBase<TSchema> {
+  readonly write?: false;
+  readonly method?: "GET" | "POST";
+}
+
+interface WriteRequestSpec<TSchema extends z.ZodType> extends RequestSpecBase<TSchema> {
   /**
    * Marca a operação como escrita (ADR 0002 — esta é a única porta de escrita
    * no ADO). A escrita sai em `info` com metadados de auditoria, sem expor o
    * conteúdo do artefato, e cada falha passa a dizer se o Operador precisa
    * conferir a US antes de tentar de novo.
    */
-  readonly write?: boolean;
+  readonly write: true;
+  /** A rota de work items usa PATCH com JSON Patch; POST continua sendo o padrão de escrita. */
+  readonly method?: "POST" | "PATCH" | "PUT";
 }
+
+export type RequestSpec<TSchema extends z.ZodType> =
+  | ReadRequestSpec<TSchema>
+  | WriteRequestSpec<TSchema>;
 
 const DEFAULT_API_VERSION = "7.1";
 

@@ -73,6 +73,7 @@ function UnavailableDump({
 
 function DumpReviewForm({
   sessionId,
+  storyUrl,
   markdown,
   base,
   pending,
@@ -120,8 +121,8 @@ function DumpReviewForm({
           Tasks agent-ready (Markdown)
           <span className="text-muted">
             Uma Task por <code>## título</code>, com uma descrição e <code>### Critérios de aceite</code>.
-            Use <code>### Bloqueada por</code> para referenciar o título de outra Task. Se usar
-            <code> conforme discutido</code>, inclua um link Markdown para a Spec desta US.
+            Use <code>### Bloqueada por</code> para referenciar o título de outra Task.
+            Toda Task deve conter um link Markdown para a URL exata da Spec desta US: <code>{storyUrl}</code>.
           </span>
           <textarea
             id="tasks-markdown"

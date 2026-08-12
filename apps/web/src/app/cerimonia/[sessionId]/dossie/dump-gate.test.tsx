@@ -37,6 +37,14 @@ const props = {
 };
 
 describe("DumpGate estimate", () => {
+  it("should tell the operator every Task needs the exact current Spec URL", () => {
+    const html = renderToStaticMarkup(<DumpGate {...props} />);
+
+    expect(html).toContain("Toda Task deve conter um link Markdown para a URL exata da Spec desta US:");
+    expect(html).toContain(props.storyUrl);
+    expect(html).not.toContain("Se usar");
+  });
+
   it("should render the allowed estimate scale as a select for a new dump", () => {
     controller.current = { ...controller.current, dumpLocked: false, estimateDefault: undefined };
 

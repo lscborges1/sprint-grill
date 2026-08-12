@@ -8,15 +8,17 @@ Resolve the six accepted review findings without changing the dump contract, the
 
 ### Validate traceability before publication
 
-`assertValidSpecMarkdown` will treat the decision-traceability appendix as part of the signed Spec contract. When decisions exist, the appendix must occur exactly once and contain every reviewed question-and-answer entry before `beginDump` freezes the inputs. Publication remains limited to inserting generated record links into those reviewed entries.
+`assertValidSpecMarkdown(markdown, decisions)` will treat the decision-traceability appendix as part of the signed Spec contract. `CeremonyStore.saveSpecDraft` and `CeremonyStore.beginDump` will pass the session's persisted decisions into that validator.
+
+The appendix must contain exactly one real `## Rastreabilidade de decisões` heading outside fenced code. For each persisted decision, its exact reviewed question-and-answer entry must occur after the preceding decision's entry, preserving decision order. Repeated identical question-and-answer pairs therefore require repeated sequential entries. The Operator may add text before, between, or after entries, but may not remove, reorder, or edit a reviewed entry. With no decisions, the single non-empty appendix and its generated empty-state text remain required. Publication remains limited to inserting generated record links into those reviewed entries.
 
 This validation must run before any Azure DevOps write, so an invalid draft remains editable and cannot become a permanently locked retry.
 
 ### Close the session-start race
 
-`startCeremony` will repeat the local incomplete-dump check after its asynchronous Azure DevOps/runtime preflight and immediately before creating the session. If another tab reserved a dump during an await, the new ceremony will be rejected with the existing recovery guidance.
+Story startup and dumping will share the existing process-local story reservations. `startCeremony` keeps its `startingByStory` reservation until `ceremony.start` has persisted the session. `dumpCeremony` will reject while that story is reserved for startup, and it will also reject an old session's dump while a different session for the story is open. Conversely, the existing initial incomplete-dump check rejects startup when a dump reserved first. Because dump reservation and the initial startup check are synchronous before their first awaits, either operation wins the story and the other rejects; no runtime session is allocated and then abandoned solely for this check.
 
-The existing initial check stays as the fast path. No new lock or persistence mechanism is introduced.
+No new persistence mechanism is introduced. The behavior remains intentionally process-local, matching the existing start and dump registries.
 
 ### Make the component test deterministic
 
@@ -33,7 +35,14 @@ Existing request behavior, logging, error messages, and retry uncertainty remain
 
 ### Preserve dump status as a discriminated state
 
-The dump-gate controller will expose one view state instead of independent `dumpCompleted`, `dumpPublishing`, and `dumpLocked` booleans. Rendering and locked-input selection will switch on that state, so contradictory combinations cannot compile. Unrelated UI state such as form submission progress remains separate.
+The dump-gate controller will expose one `view` union instead of independent `dumpCompleted`, `dumpPublishing`, and `dumpLocked` booleans:
+
+- `{ status: "editable", tasksMarkdown }` for a new dump;
+- `{ status: "retryable", tasksMarkdown, estimate }` for frozen inputs that may be retried;
+- `{ status: "publishing" }` for persisted publication in progress;
+- `{ status: "completed" }` for persisted completion or transient server-action success before SSE catches up.
+
+Rendering, locked-input selection, and estimate output will switch on this union. Only `editable` and `retryable` render the review form. Unrelated UI state such as whether the review panel is open and whether a form submission is pending remains separate.
 
 ### Complete the Task drafting contract
 
@@ -42,7 +51,7 @@ The ceremony prompt will explicitly require every generated Task to be self-cont
 ## Error handling and invariants
 
 - Invalid traceability fails locally before `beginDump` and before ADO credentials are read.
-- A dump that appears during session-start preflight blocks the new session.
+- Story startup and dumping cannot overlap; the operation that reserves the story first proceeds and the other receives a validation error.
 - Mutating ADO methods cannot be represented as read requests.
 - Persisted `publishing`, `retryable`, and `completed` behavior remains unchanged.
 - New estimates remain exactly `1, 2, 3, 5, 8, 13, 21, 34, 55, 89`; frozen legacy estimates remain retryable.
@@ -52,10 +61,10 @@ The ceremony prompt will explicitly require every generated Task to be self-cont
 Each behavior change follows RED/GREEN:
 
 1. A Spec missing or altering reviewed traceability is rejected before any ADO publication.
-2. A controlled concurrent test starts a dump while session startup is held in asynchronous preflight and proves no new session is created.
+2. Controlled concurrency tests cover both orderings: a reserved dump blocks startup, and an in-flight startup blocks a dump from an older closed session.
 3. The component test passes with Vitest shuffling.
 4. Type-level cases prove write methods require `write: true` and reads reject it.
-5. Dump-gate component cases consume only valid discriminated view states.
+5. Dump-gate component cases consume only the four valid discriminated view states, including transient action success.
 6. The prompt test requires the self-contained and one-agent-session wording.
 
 Focused suites run after each fix, followed by `pnpm check` and `git diff --check`.

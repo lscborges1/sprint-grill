@@ -6,6 +6,13 @@ export type {
   CreateCeremonyOptions,
   StartCeremonyInput,
 } from "./ceremony";
+export { createCeremonyDump } from "./despejo";
+export type {
+  AssertCanStartCeremonyInput,
+  CeremonyDump,
+  CeremonyDumpInput,
+  CreateCeremonyDumpOptions,
+} from "./despejo";
 export { readDossie } from "./dossie";
 export { readPalco } from "./palco";
 export { ceremonyInstructions, ceremonyOpeningPrompt, ceremonyResumePrompt } from "./prompt";

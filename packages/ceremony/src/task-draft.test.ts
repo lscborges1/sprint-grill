@@ -227,6 +227,104 @@ Implementa o comportamento refinado pela sala.
 - Funciona conforme discutido na [Spec da US](${SPEC_URL}).`, SPEC_URL)).toMatchObject({ valid: true });
   });
 
+  it("should reject contextual wording without a link in the same paragraph", () => {
+    const result = validateTaskDraft(`## Implementar
+
+Entrega o comportamento definido na [Spec da US](${SPEC_URL}).
+
+### Critérios de aceite
+
+- Funciona conforme discutido.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava a referência contextual ausente");
+    expect(result.errors).toEqual([
+      expect.stringMatching(/conforme discutido.*link/i),
+    ]);
+  });
+
+  it("should reject contextual wording when only another list item links the Spec", () => {
+    const result = validateTaskDraft(`## Implementar
+
+- Funciona conforme discutido.
+- Contexto: [Spec da US](${SPEC_URL})
+
+### Critérios de aceite
+
+- Entrega observável.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava a referência contextual ausente");
+    expect(result.errors).toEqual([
+      expect.stringMatching(/conforme discutido.*link/i),
+    ]);
+  });
+
+  it("should reject contextual prose when a following list item links the Spec", () => {
+    const result = validateTaskDraft(`## Implementar
+
+Entrega conforme discutido.
+- Contexto: [Spec da US](${SPEC_URL})
+
+### Critérios de aceite
+
+- Entrega observável.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava a referência contextual ausente");
+    expect(result.errors).toEqual([
+      expect.stringMatching(/conforme discutido.*link/i),
+    ]);
+  });
+
+  it("should accept a contextual list item whose continuation links the Spec", () => {
+    const result = validateTaskDraft(`## Implementar
+
+- Funciona conforme discutido:
+  [Spec da US](${SPEC_URL})
+
+### Critérios de aceite
+
+- Entrega observável.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: true });
+  });
+
+  it("should reject contextual wording when a later blockquote paragraph links the Spec", () => {
+    const result = validateTaskDraft(`## Implementar
+
+> Funciona conforme discutido.
+>
+> [Spec da US](${SPEC_URL})
+
+### Critérios de aceite
+
+- Entrega observável.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava a referência contextual ausente");
+    expect(result.errors).toEqual([
+      expect.stringMatching(/conforme discutido.*link/i),
+    ]);
+  });
+
+  it("should reject contextual wording when another quoted list item links the Spec", () => {
+    const result = validateTaskDraft(`## Implementar
+
+> - Funciona conforme discutido.
+> - [Spec da US](${SPEC_URL})
+
+### Critérios de aceite
+
+- Entrega observável.`, SPEC_URL);
+
+    expect(result).toMatchObject({ valid: false });
+    if (result.valid) throw new Error("esperava a referência contextual ausente");
+    expect(result.errors).toEqual([
+      expect.stringMatching(/conforme discutido.*link/i),
+    ]);
+  });
+
   it("should reject every Task that omits the current Spec link", () => {
     const result = validateTaskDraft(`## Implementar
 

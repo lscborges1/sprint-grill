@@ -156,6 +156,7 @@ function parseTask(
   if (!links.includes(specUrl)) {
     errors.push(`a Task "${title}" precisa conter um link Markdown para a Spec atual (${specUrl}).`);
   }
+  validateDiscussedContext(body, title, errors);
 
   const blockers = sectionBody(body, BLOCKERS_HEADING);
   return {
@@ -190,16 +191,91 @@ function validateMarkdownLinks(markdown: string, title: string, errors: string[]
   return matches.flatMap((match) => {
     const target = match[2];
     if (target === undefined) return [];
-    try {
-      const url = new URL(target);
-      if (url.protocol === "http:" || url.protocol === "https:") return [target];
-    } catch {
-      errors.push(`a Task "${title}" tem um link Markdown inválido; use uma URL absoluta http(s).`);
-      return [];
-    }
+    if (isHttpUrl(target)) return [target];
     errors.push(`a Task "${title}" tem um link Markdown inválido; use uma URL absoluta http(s).`);
     return [];
   });
+}
+
+/** Referência vaga só é aceita quando ela mesma aponta para o contexto decidido. */
+function validateDiscussedContext(markdown: string, title: string, errors: string[]): void {
+  for (const paragraph of contextualParagraphs(markdown)) {
+    if (!/conforme discutido/i.test(paragraph)) continue;
+
+    const hasLink = [...paragraph.matchAll(MARKDOWN_LINK)].some((match) => {
+      const destination = match[2];
+      return destination !== undefined && isHttpUrl(destination);
+    });
+    if (!hasLink) {
+      errors.push(
+        `a Task "${title}" usa "conforme discutido" sem um link Markdown no mesmo parágrafo.`,
+      );
+    }
+  }
+}
+
+/** Itens de lista são parágrafos próprios: um link no vizinho não explica a referência vaga. */
+function contextualParagraphs(markdown: string): readonly string[] {
+  const paragraphs: string[] = [];
+  let prose: string[] = [];
+  let listItem: string[] = [];
+  let quote: string[] = [];
+  const flush = (lines: readonly string[]): void => {
+    if (lines.length > 0) paragraphs.push(lines.join("\n"));
+  };
+  const flushProse = (): void => {
+    flush(prose);
+    prose = [];
+  };
+  const flushListItem = (): void => {
+    flush(listItem);
+    listItem = [];
+  };
+  const flushQuote = (): void => {
+    if (quote.length > 0) paragraphs.push(...contextualParagraphs(quote.join("\n")));
+    quote = [];
+  };
+
+  for (const line of markdown.split(/\r?\n/)) {
+    const blockquote = /^[ \t]*> ?(.*)$/.exec(line);
+    if (blockquote) {
+      flushProse();
+      flushListItem();
+      const content = blockquote[1] ?? "";
+      if (content.trim() === "") flushQuote();
+      else quote.push(content);
+      continue;
+    }
+
+    flushQuote();
+    if (line.trim() === "") {
+      flushProse();
+      flushListItem();
+    } else if (/^[ \t]*[-*+]\s+/.test(line)) {
+      flushProse();
+      flushListItem();
+      listItem = [line];
+    } else if (listItem.length > 0 && /^[ \t]+/.test(line)) {
+      listItem.push(line);
+    } else {
+      flushListItem();
+      prose.push(line);
+    }
+  }
+
+  flushProse();
+  flushListItem();
+  flushQuote();
+  return paragraphs;
+}
+
+function isHttpUrl(destination: string): boolean {
+  try {
+    const url = new URL(destination);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function sectionBody(markdown: string, heading: string): string | undefined {

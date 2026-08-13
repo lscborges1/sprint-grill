@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Logger } from "@sprint-griller/core";
 import Database from "better-sqlite3";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { CeremonyError } from "./ceremony-error";
@@ -30,6 +30,7 @@ import type {
   TranscriptEntry,
   TranscriptEvent,
   UnverifiedConsultation,
+  UnresolvedConsultation,
   VerifiedConsultation,
 } from "./types";
 
@@ -136,6 +137,8 @@ export interface CeremonyStore {
   listVerifiedConsultations(sessionId: string): readonly VerifiedConsultation[];
   /** Respostas ao vivo que precisam constar como hipótese, não como fato. */
   listUnverifiedConsultations(sessionId: string): readonly UnverifiedConsultation[];
+  /** Perguntas factuais que ainda participam do gate de maturidade. */
+  listUnresolvedConsultations(sessionId: string): readonly UnresolvedConsultation[];
   appendEvent(sessionId: string, event: TranscriptEvent): void;
   listTranscript(sessionId: string): readonly TranscriptEntry[];
   saveSpecDraft(input: SaveSpecDraftInput): SpecDraft;
@@ -762,6 +765,22 @@ export function openCeremonyStore(
         .filter(isUnverifiedConsultation);
     },
 
+    listUnresolvedConsultations(sessionId) {
+      return db
+        .select()
+        .from(consultations)
+        .where(
+          and(
+            eq(consultations.sessionId, sessionId),
+            inArray(consultations.status, ["buscando", "sem-lastro", "falhou"]),
+          ),
+        )
+        .orderBy(asc(consultations.seq))
+        .all()
+        .map(toConsultation)
+        .filter(isUnresolvedConsultation);
+    },
+
     appendEvent(sessionId, event) {
       assertDossieMutable(sessionId);
       db.insert(events)
@@ -1111,6 +1130,12 @@ function isVerifiedConsultation(
   consultation: CeremonyConsultation,
 ): consultation is VerifiedConsultation {
   return consultation.status === "respondida";
+}
+
+function isUnresolvedConsultation(
+  consultation: CeremonyConsultation,
+): consultation is UnresolvedConsultation {
+  return consultation.status !== "respondida";
 }
 
 function toDecision(row: DecisionRow): CeremonyDecision {

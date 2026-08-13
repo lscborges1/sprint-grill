@@ -592,9 +592,11 @@ describe("dumpCeremony", () => {
       await vi.waitFor(() => expect(ceremonyFinishers.has(session.id)).toBe(true));
       await askFact({ sessionId: session.id, question: "Quem consome o total?" });
       await vi.waitFor(() =>
-        expect(getDossie(session.id)?.pending).toContainEqual({
-          id: "consulta:1",
-          question: "Quem consome o total?",
+        expect(getDossie(session.id)).toMatchObject({
+          pending: [{ id: "consulta:1", question: "Quem consome o total?" }],
+          investigation: {
+            unverified: expect.stringContaining("O portal parece consumir o total."),
+          },
         }),
       );
       const dossie = getDossie(session.id)!;

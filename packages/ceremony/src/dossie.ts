@@ -28,6 +28,7 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
   if (!session) return undefined;
 
   const unverifiedConsultations = store.listUnverifiedConsultations(sessionId);
+  const unresolvedConsultations = store.listUnresolvedConsultations(sessionId);
 
   const document: DossieDocument = {
     story: { id: session.storyId, title: session.storyTitle, url: session.storyUrl },
@@ -37,7 +38,7 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
         id: asked.id,
         question: asked.question,
       })),
-      ...unverifiedConsultations.map((consultation) => ({
+      ...unresolvedConsultations.map((consultation) => ({
         id: `consulta:${consultation.id}`,
         question: consultation.question,
       })),

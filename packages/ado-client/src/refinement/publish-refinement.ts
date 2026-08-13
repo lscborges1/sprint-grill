@@ -1,3 +1,4 @@
+import markdownIt from "markdown-it";
 import { z } from "zod";
 import { AdoError } from "../ado-error";
 import {
@@ -13,6 +14,38 @@ import type { AdoClientOptions } from "../rest/ado-rest";
 const SPEC_BLOCK_START = "<!-- sprint-griller:spec:start -->";
 const SPEC_BLOCK_END = "<!-- sprint-griller:spec:end -->";
 const MARKDOWN_FORMAT = "markdown";
+
+const adoMarkdown = markdownIt({ html: false, linkify: false });
+// Parse every syntactically valid destination so unsafe links can retain their
+// visible label while the renderer removes only the active element.
+adoMarkdown.validateLink = () => true;
+adoMarkdown.renderer.rules.link_open = (tokens, index, options, _env, renderer) => {
+  const href = tokens[index]?.attrGet("href");
+  if (href !== null && href !== undefined && isAllowedDestination(href, ["http:", "https:", "mailto:"])) {
+    return renderer.renderToken(tokens, index, options);
+  }
+
+  const closing = tokens.slice(index + 1).find((token) => token.type === "link_close");
+  if (closing) closing.hidden = true;
+  return "";
+};
+adoMarkdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
+  const image = tokens[index];
+  const source = image?.attrGet("src");
+  if (
+    image !== undefined &&
+    source !== null &&
+    source !== undefined &&
+    isAllowedDestination(source, ["http:", "https:"])
+  ) {
+    image.attrSet("alt", renderer.renderInlineAsText(image.children ?? [], options, env));
+    return renderer.renderToken(tokens, index, options);
+  }
+
+  return adoMarkdown.utils.escapeHtml(
+    renderer.renderInlineAsText(image?.children ?? [], options, env),
+  );
+};
 
 export interface DecisionRecordToPublish {
   readonly storyId: number;
@@ -441,123 +474,18 @@ export function replaceManagedSpec(description: string, markdown: string, dumpId
  * listas e links da Spec/Tasks aparecem como Markdown cru na tela do work item.
  */
 export function markdownToAdoHtml(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-  const parts: string[] = [];
-  let index = 0;
+  return adoMarkdown.render(markdown).trimEnd();
+}
 
-  while (index < lines.length) {
-    const line = lines[index] ?? "";
-    if (line.trim() === "") {
-      index += 1;
-      continue;
-    }
-
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      const level = heading[1]?.length ?? 1;
-      parts.push(`<h${level}>${renderInlineMarkdown(heading[2] ?? "")}</h${level}>`);
-      index += 1;
-      continue;
-    }
-
-    if (/^(\s*)([-*])\s+/.test(line)) {
-      const list = consumeMarkdownList(lines, index, 0);
-      parts.push(list.html);
-      index = list.nextIndex;
-      continue;
-    }
-
-    const paragraph: string[] = [];
-    while (index < lines.length) {
-      const current = lines[index] ?? "";
-      if (current.trim() === "") break;
-      if (/^(#{1,6})\s+/.test(current) || /^(\s*)([-*])\s+/.test(current)) break;
-      paragraph.push(current);
-      index += 1;
-    }
-    parts.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+function isAllowedDestination(
+  destination: string,
+  protocols: readonly string[],
+): boolean {
+  try {
+    return protocols.includes(new URL(destination).protocol);
+  } catch {
+    return false;
   }
-
-  return parts.join("\n");
-}
-
-function consumeMarkdownList(
-  lines: readonly string[],
-  startIndex: number,
-  indent: number,
-): { readonly html: string; readonly nextIndex: number } {
-  const items: string[] = [];
-  let index = startIndex;
-
-  while (index < lines.length) {
-    const line = lines[index] ?? "";
-    if (line.trim() === "") {
-      index += 1;
-      continue;
-    }
-    const match = /^(\s*)([-*])\s+(.*)$/.exec(line);
-    if (!match) break;
-    const spaces = match[1]?.length ?? 0;
-    if (spaces < indent) break;
-    if (spaces > indent) {
-      const nested = consumeMarkdownList(lines, index, spaces);
-      const last = items.pop();
-      items.push(`${last ?? "<li></li>"}`.replace(/<\/li>$/, `${nested.html}</li>`));
-      index = nested.nextIndex;
-      continue;
-    }
-
-    items.push(`<li>${renderInlineMarkdown(match[3] ?? "")}</li>`);
-    index += 1;
-  }
-
-  return { html: `<ul>${items.join("")}</ul>`, nextIndex: index };
-}
-
-function renderInlineMarkdown(text: string): string {
-  const parts: string[] = [];
-  let lastIndex = 0;
-  for (const match of text.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)) {
-    if (match.index === undefined) continue;
-    parts.push(renderInlineText(text.slice(lastIndex, match.index)));
-    const label = renderInlineText(match[1] ?? "");
-    const safeHref = sanitizeMarkdownHref(match[2] ?? "");
-    parts.push(
-      safeHref === undefined
-        ? label
-        : `<a href="${escapeHtml(safeHref)}">${label}</a>`,
-    );
-    lastIndex = match.index + match[0].length;
-  }
-  parts.push(renderInlineText(text.slice(lastIndex)));
-  return parts.join("");
-}
-
-function renderInlineText(text: string): string {
-  return escapeHtml(text)
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/_([^_]+)_/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>");
-}
-
-/** Só http(s) e mailto entram em href; o texto já vem HTML-escaped. */
-function sanitizeMarkdownHref(href: string): string | undefined {
-  const trimmed = href.trim();
-  const decoded = trimmed
-    .replaceAll("&amp;", "&")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"');
-  if (!/^(https?:|mailto:)/i.test(decoded)) return undefined;
-  return trimmed;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
 
 async function findPublishedTasks(

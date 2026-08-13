@@ -71,10 +71,15 @@ describe("replaceManagedSpec", () => {
 
 describe("markdownToAdoHtml", () => {
   it("should render headings, lists, links and emphasis for work item HTML fields", () => {
-    expect(
-      markdownToAdoHtml("# Spec\n\n_intro_\n\n- **item** — [abrir](https://example.test)"),
-    ).toBe(
-      '<h1>Spec</h1>\n<p><em>intro</em></p>\n<ul><li><strong>item</strong> — <a href="https://example.test">abrir</a></li></ul>',
+    const html = markdownToAdoHtml(
+      "# Spec\n\n_intro_\n\n- **item** — [abrir](https://example.test)",
+    );
+
+    expect(html).toContain("<h1>Spec</h1>");
+    expect(html).toContain("<p><em>intro</em></p>");
+    expect(html).toContain("<ul>");
+    expect(html).toContain(
+      '<li><strong>item</strong> — <a href="https://example.test">abrir</a></li>',
     );
   });
 
@@ -92,6 +97,48 @@ describe("markdownToAdoHtml", () => {
     expect(markdownToAdoHtml(`[**Spec _atual_**](${href})`)).toBe(
       `<p><a href="${href}"><strong>Spec <em>atual</em></strong></a></p>`,
     );
+  });
+
+  it("should preserve general Markdown structure in work item HTML", () => {
+    const html = markdownToAdoHtml(`1. Primeiro
+2. Segundo
+
+> Atenção
+
+\`\`\`ts
+const answer = 42;
+\`\`\`
+
+| Campo | Valor |
+| --- | --- |
+| estado | pronto |
+
+![Diagrama](https://example.test/diagram.png)`);
+
+    expect(html).toContain("<ol>");
+    expect(html).toContain("<blockquote>");
+    expect(html).toContain('<pre><code class="language-ts">const answer = 42;');
+    expect(html).toContain("<table>");
+    expect(html).toContain('<img src="https://example.test/diagram.png" alt="Diagrama">');
+  });
+
+  it("should render unsafe raw HTML and destinations as inert text", () => {
+    const html = markdownToAdoHtml([
+      "<script>alert(1)</script>",
+      "[executar](javascript:alert(1))",
+      "[relativo](/segredo)",
+      "![roubar](mailto:po@example.test)",
+      "![relativa](/imagem.png)",
+    ].join("\n\n"));
+
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).toContain("<p>executar</p>");
+    expect(html).toContain("<p>relativo</p>");
+    expect(html).toContain("<p>roubar</p>");
+    expect(html).toContain("<p>relativa</p>");
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain('src="mailto:');
+    expect(html).not.toContain('src="/imagem.png"');
   });
 });
 
@@ -387,7 +434,7 @@ Preservar clientes antigos.
       ado.calls.find((call) => call.url.includes("/_apis/wit/workitems/$Task"))?.init?.body,
     );
     expect(taskBody).toContain("<h3>Contexto técnico</h3>");
-    expect(taskBody).toContain("<p>    pnpm test</p>");
+    expect(taskBody).toContain("<pre><code>pnpm test\\n</code></pre>");
     expect(taskBody).toContain("Preservar clientes antigos.");
     expect(taskBody).not.toContain("Spec da US");
     expect(taskBody).toContain("sprint-griller:dump:dump-4211:task:1");

@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./dump-state": "./src/dump-state.ts",
     "./palco-state": "./src/palco-state.ts",
     "./session-state": "./src/session-state.ts",
     "./estimate": "./src/estimate.ts",

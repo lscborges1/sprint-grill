@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { CeremonyDumpState, DossieState, SignedDumpInputs } from "./types";
+import { dumpStateSchema } from "./dump-state";
+import type { DossieState } from "./types";
+
+export { signedDumpInputs } from "./dump-state";
 
 // O vocabulário da Spec anda com os contratos: a aba do Dossiê é uma tela ao
 // vivo, e precisa das mesmas palavras que o Markdown do despejo.
@@ -29,28 +32,6 @@ const decisionSchema = z.object({
   recordUrl: z.string().url().optional(),
 });
 
-const signedDumpInputsSchema = z.object({
-  dumpId: z.string(),
-  markdown: z.string(),
-  tasksMarkdown: z.string(),
-  estimate: z.number().finite().positive(),
-});
-
-const dumpStateSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("not-started") }),
-  z.object({
-    status: z.literal("publishing"),
-    inputs: signedDumpInputsSchema,
-    startedAt: z.number().int().nonnegative(),
-  }),
-  z.object({ status: z.literal("retryable"), inputs: signedDumpInputsSchema }),
-  z.object({
-    status: z.literal("completed"),
-    inputs: signedDumpInputsSchema,
-    completedAt: z.number().int().nonnegative(),
-  }),
-]);
-
 /**
  * O Dossiê chega ao browser pelo mesmo caminho do Palco. `generated` e `draft`
  * viajam separados de propósito: é a comparação entre o texto gerado agora e a
@@ -73,15 +54,3 @@ export const dossieStateSchema: z.ZodType<DossieState> = z.object({
       .nullable(),
   }),
 });
-
-/** Os inputs assinados existem em todos os estados posteriores ao primeiro beginDump. */
-export function signedDumpInputs(dump: CeremonyDumpState): SignedDumpInputs | undefined {
-  switch (dump.status) {
-    case "not-started":
-      return undefined;
-    case "publishing":
-    case "retryable":
-    case "completed":
-      return dump.inputs;
-  }
-}

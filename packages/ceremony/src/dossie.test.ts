@@ -272,6 +272,30 @@ describe("readDossie", () => {
     });
   });
 
+  it.each([
+    ["buscando", undefined],
+    ["falhou", { status: "falhou", message: "o agente caiu" }],
+    [
+      "sem-lastro",
+      {
+        status: "sem-lastro",
+        answer: "A regra parece estar no serviço de folha.",
+        citations: [],
+        motivo: "a resposta veio sem citar nenhum arquivo dos repos da squad.",
+      },
+    ],
+  ] as const)("should keep a %s factual consultation pending", (_status, outcome) => {
+    const store = open();
+    newSession(store);
+    const consultation = store.openConsultation("thread-1", "Onde está a regra de comissão?");
+    if (outcome !== undefined) store.answerConsultation(consultation.id, outcome);
+
+    expect(readDossie(store, "thread-1")?.pending).toContainEqual({
+      id: `consulta:${consultation.id}`,
+      question: "Onde está a regra de comissão?",
+    });
+  });
+
   it("should survive an Investigação without the expected headings", () => {
     const store = open();
     newSession(store, "Um relatório sem seção nenhuma.");

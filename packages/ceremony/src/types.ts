@@ -3,20 +3,11 @@
  * Registro de decisão, Palco — em português, porque é o que a sala fala.
  */
 
+import type { CeremonyDumpState } from "./dump-state";
+
+export type { CeremonyDumpState, SignedDumpInputs } from "./dump-state";
+
 export type SessionStatus = "ativa" | "encerrada" | "falhou";
-
-export interface SignedDumpInputs {
-  readonly dumpId: string;
-  readonly markdown: string;
-  readonly tasksMarkdown: string;
-  readonly estimate: number;
-}
-
-export type CeremonyDumpState =
-  | { readonly status: "not-started" }
-  | { readonly status: "publishing"; readonly inputs: SignedDumpInputs; readonly startedAt: number }
-  | { readonly status: "retryable"; readonly inputs: SignedDumpInputs }
-  | { readonly status: "completed"; readonly inputs: SignedDumpInputs; readonly completedAt: number };
 
 export interface CeremonySession {
   readonly id: string;
@@ -126,6 +117,12 @@ export type CeremonyConsultation =
 export type UnverifiedConsultation = Extract<
   CeremonyConsultation,
   { readonly status: "sem-lastro" }
+>;
+
+/** Consulta cuja pergunta ainda precisa ficar explícita no gate de maturidade. */
+export type UnresolvedConsultation = Extract<
+  CeremonyConsultation,
+  { readonly status: "buscando" | "sem-lastro" | "falhou" }
 >;
 
 /** Consulta factual cuja resposta e evidências passaram pela checagem no disco. */

@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SCHEMA_VERSION } from "./schema";
+import { SPEC_SECTIONS } from "./spec-vocabulary";
 import { openCeremonyStore } from "./store";
 import type { CeremonyStore } from "./store";
 import type { CeremonyQuestion } from "./types";
@@ -50,7 +51,83 @@ const question = (overrides: Partial<CeremonyQuestion> = {}): CeremonyQuestion =
   ...overrides,
 });
 
+function validSpec(note: string): string {
+  return [
+    `# ${note}`,
+    ...Object.values(SPEC_SECTIONS).flatMap((section) => [
+      `## ${section.heading}`,
+      `${section.heading}: ${note}`,
+    ]),
+    "## Rastreabilidade de decisões",
+    "_Nenhuma decisão foi registrada._",
+  ].join("\n\n");
+}
+
+const DUMP_DETAILS = {
+  markdown: validSpec("Spec assinada"),
+  tasksMarkdown: "## Task\n\nEntrega um slice vertical.\n\n[Spec da US](https://dev.azure.com/org/proj/_workitems/edit/4242)\n\n### Critérios de aceite\n\n- Critério.",
+  estimate: 5,
+} as const;
+
+function beginDump(
+  store: CeremonyStore,
+  sessionId = "thread-1",
+  dumpId = "dump-fingerprint",
+): void {
+  store.beginDump(sessionId, { dumpId, ...DUMP_DETAILS });
+}
+
 describe("openCeremonyStore", () => {
+  it("should expose only valid dump states through the full lifecycle", () => {
+    const store = open(dbPath());
+
+    expect(newSession(store).dump).toEqual({ status: "not-started" });
+
+    beginDump(store);
+    expect(store.getSession("thread-1")?.dump).toMatchObject({
+      status: "publishing",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+      startedAt: expect.any(Number),
+    });
+
+    store.abortDump("thread-1");
+    expect(store.getSession("thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+    });
+
+    beginDump(store);
+    store.markDumpCompleted("thread-1");
+    expect(store.getSession("thread-1")?.dump).toMatchObject({
+      status: "completed",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+      completedAt: expect.any(Number),
+    });
+  });
+
+  it("should reject an impossible persisted dump state with an actionable error", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    newSession(store, "thread-2");
+    store.close();
+    opened.pop();
+
+    const database = new Database(file);
+    database.prepare("UPDATE sessions SET dump_id = ? WHERE id = ?").run("partial", "thread-1");
+    database.prepare("UPDATE sessions SET dump_started_at = ? WHERE id = ?").run(1, "thread-2");
+    database.close();
+
+    const reopened = open(file);
+
+    expect(() => reopened.getSession("thread-1")).toThrow(
+      /thread-1.*estado de despejo inconsistente.*Apague o banco/s,
+    );
+    expect(() => reopened.getSession("thread-2")).toThrow(
+      /thread-2.*estado de despejo inconsistente.*Apague o banco/s,
+    );
+  });
+
   it("should return the same ceremony when the store is reopened on the same file", () => {
     const file = dbPath();
 
@@ -72,6 +149,125 @@ describe("openCeremonyStore", () => {
     expect(reopened.getSession("thread-1")?.storyTitle).toBe("Exportar relatório de comissões");
     expect(reopened.countDecisions("thread-1")).toBe(1);
     expect(reopened.currentQuestion("thread-1")?.id).toBe("q2");
+  });
+
+  it("should preserve a completed dump when the store is reopened", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+    beginDump(first);
+    first.markDumpCompleted("thread-1");
+    first.close();
+    opened.pop();
+
+    const reopened = open(file);
+
+    expect(reopened.getSession("thread-1")?.dump).toMatchObject({
+      status: "completed",
+      completedAt: expect.any(Number),
+    });
+  });
+
+  it("should keep Dossiê mutations frozen when an interrupted dump is recovered", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+    first.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
+    first.close();
+    opened.pop();
+
+    const reopened = open(file);
+
+    expect(() => reopened.askQuestions("thread-1", [question()])).toThrow(/despejo/i);
+    expect(reopened.getSession("thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+    });
+  });
+
+  it("should keep the dump fingerprint and signed inputs after abort so a retry can reconcile", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(store.getSession("thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+    });
+
+    beginDump(store);
+    expect(store.getSession("thread-1")?.dump).toMatchObject({
+      status: "publishing",
+      startedAt: expect.any(Number),
+    });
+  });
+
+  it("should refuse a retry that changes the dump fingerprint", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(() => beginDump(store, "thread-1", "outro-fingerprint")).toThrow(/Spec|Tasks|estimativa/i);
+    expect(store.getSession("thread-1")?.dump).toMatchObject({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint" },
+    });
+  });
+
+  it("should refuse a retry that changes only the signed Tasks without overwriting them", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(() =>
+      store.beginDump("thread-1", {
+        dumpId: "dump-fingerprint",
+        ...DUMP_DETAILS,
+        tasksMarkdown: `${DUMP_DETAILS.tasksMarkdown}\n\nNota diferente.`,
+      }),
+    ).toThrow(/Tasks assinadas|mesmos valores/i);
+    expect(store.getSession("thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+    });
+  });
+
+  it("should refuse Spec edits after a partial dump freezes the signed inputs", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: "# Spec diferente",
+        base: "gerado",
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/fingerprint|Spec assinada/i);
+  });
+
+  it("should find an incomplete dump for a story after abort", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.finishSession("thread-1", { status: "encerrada" });
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(store.findIncompleteDumpByStory(4242)?.id).toBe("thread-1");
+  });
+
+  it("should not treat a completed dump as incomplete", () => {
+    const store = open(dbPath());
+    newSession(store);
+    beginDump(store);
+    store.markDumpCompleted("thread-1");
+
+    expect(store.findIncompleteDumpByStory(4242)).toBeUndefined();
   });
 
   it.each([0, 3])("should refuse a database written by the previous schema %s", (version) => {
@@ -210,6 +406,35 @@ describe("recordDecision", () => {
       recordId: 99,
       recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/99",
     });
+  });
+
+  it("should attach a decision record once so a later dump can skip it", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    const decision = store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+
+    store.attachDecisionRecord({
+      sessionId: "thread-1",
+      questionSeq: decision.questionSeq,
+      recordId: 99,
+      recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/4211",
+    });
+
+    expect(store.listDecisions("thread-1")[0]).toMatchObject({ recordId: 99 });
+    expect(() =>
+      store.attachDecisionRecord({
+        sessionId: "thread-1",
+        questionSeq: decision.questionSeq,
+        recordId: 100,
+        recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/4211",
+      }),
+    ).toThrow(/já tem Registro/i);
   });
 
   it("should refuse a decision with no one behind it", () => {
@@ -387,7 +612,7 @@ describe("saveSpecDraft", () => {
 
     first.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "# Spec da US #4242\n\nFora de escopo: relatório mensal.",
+      markdown: validSpec("Fora de escopo: relatório mensal."),
       base: "# Spec da US #4242",
       expectedSavedAt: null,
     });
@@ -395,7 +620,7 @@ describe("saveSpecDraft", () => {
     opened.pop();
 
     expect(open(file).getSpecDraft("thread-1")).toMatchObject({
-      markdown: "# Spec da US #4242\n\nFora de escopo: relatório mensal.",
+      markdown: validSpec("Fora de escopo: relatório mensal."),
       base: "# Spec da US #4242",
     });
   });
@@ -406,18 +631,18 @@ describe("saveSpecDraft", () => {
 
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "rascunho",
+      markdown: validSpec("rascunho"),
       base: "gerado",
       expectedSavedAt: null,
     });
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "revisado",
+      markdown: validSpec("revisado"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
 
-    expect(store.getSpecDraft("thread-1")?.markdown).toBe("revisado");
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe(validSpec("revisado"));
   });
 
   it("should assign distinct revisions when saves share the same clock tick", () => {
@@ -427,13 +652,13 @@ describe("saveSpecDraft", () => {
 
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     const second = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segundo",
+      markdown: validSpec("segundo"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
@@ -447,13 +672,13 @@ describe("saveSpecDraft", () => {
     newSession(store);
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segunda aba",
+      markdown: validSpec("segunda aba"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
@@ -461,12 +686,12 @@ describe("saveSpecDraft", () => {
     expect(() =>
       store.saveSpecDraft({
         sessionId: "thread-1",
-        markdown: "primeira aba atrasada",
+        markdown: validSpec("primeira aba atrasada"),
         base: "gerado",
         expectedSavedAt: first.savedAt,
       }),
     ).toThrow(/desatualizado/i);
-    expect(store.getSpecDraft("thread-1")?.markdown).toBe("segunda aba");
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe(validSpec("segunda aba"));
   });
 
   it("should overwrite a stale revision only when explicitly confirmed", () => {
@@ -474,26 +699,26 @@ describe("saveSpecDraft", () => {
     newSession(store);
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segunda aba",
+      markdown: validSpec("segunda aba"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
 
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeira aba confirmada",
+      markdown: validSpec("primeira aba confirmada"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
       overwrite: true,
     });
 
-    expect(store.getSpecDraft("thread-1")?.markdown).toBe("primeira aba confirmada");
+    expect(store.getSpecDraft("thread-1")?.markdown).toBe(validSpec("primeira aba confirmada"));
   });
 
   it("should assign a revision above the one it overwrote when both land on the same tick", () => {
@@ -501,13 +726,13 @@ describe("saveSpecDraft", () => {
     newSession(store);
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     const other = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segunda aba",
+      markdown: validSpec("segunda aba"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
@@ -515,7 +740,7 @@ describe("saveSpecDraft", () => {
 
     const confirmed = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeira aba confirmada",
+      markdown: validSpec("primeira aba confirmada"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
       overwrite: true,
@@ -541,10 +766,80 @@ describe("saveSpecDraft", () => {
     expect(store.getSpecDraft("thread-1")).toBeUndefined();
   });
 
+  it("should refuse a draft that removes mandatory Spec sections", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: "# Nota",
+        base: "gerado",
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/Decisões.*Contexto de impacto.*Não verificado.*Pendências.*Fora de escopo/s);
+    expect(store.getSpecDraft("thread-1")).toBeUndefined();
+  });
+
+  it("should reject unsigned decision traceability before saving or beginning a dump", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    const decision = store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+    const signed = validSpec("Spec assinada").replace(
+      "_Nenhuma decisão foi registrada._",
+      `- **${decision.question}** — ${decision.answer}\n\nObservação livre do Operador.`,
+    );
+    const unsigned = signed.replace(`- **${decision.question}** — ${decision.answer}`, "");
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: unsigned,
+        base: signed,
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/rastreabilidade/i);
+    expect(() =>
+      store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS, markdown: unsigned }),
+    ).toThrow(/rastreabilidade/i);
+    expect(store.getSession("thread-1")?.dump).toEqual({ status: "not-started" });
+  });
+
+  it.each([
+    ["missing", "Observação livre do Operador."],
+    ["altered", "_Nenhuma decisão relevante foi registrada._"],
+  ] as const)("should reject a %s empty traceability entry before saving or beginning a dump", (_kind, replacement) => {
+    const store = open(dbPath());
+    newSession(store);
+    const invalid = validSpec("Spec assinada").replace(
+      "_Nenhuma decisão foi registrada._",
+      replacement,
+    );
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: invalid,
+        base: validSpec("Spec assinada"),
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/nenhuma decisão foi registrada/i);
+    expect(() =>
+      store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS, markdown: invalid }),
+    ).toThrow(/nenhuma decisão foi registrada/i);
+    expect(store.getSession("thread-1")?.dump).toEqual({ status: "not-started" });
+  });
+
   it("should keep leading Markdown whitespace the Operator typed", () => {
     const store = open(dbPath());
     newSession(store);
-    const markdown = "    code\n\n# Spec";
+    const markdown = `    code\n\n${validSpec("Spec")}`;
 
     store.saveSpecDraft({ sessionId: "thread-1", markdown, base: "gerado", expectedSavedAt: null });
 
@@ -571,7 +866,7 @@ describe("discardSpecDraft", () => {
     newSession(store);
     const draft = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "rascunho",
+      markdown: validSpec("rascunho"),
       base: "gerado",
       expectedSavedAt: null,
     });
@@ -589,13 +884,13 @@ describe("discardSpecDraft", () => {
     newSession(store);
     const first = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "primeiro",
+      markdown: validSpec("primeiro"),
       base: "gerado",
       expectedSavedAt: null,
     });
     const second = store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "segunda aba",
+      markdown: validSpec("segunda aba"),
       base: "gerado",
       expectedSavedAt: first.savedAt,
     });
@@ -623,6 +918,114 @@ describe("findOpenSessionByStory", () => {
 
     expect(store.findOpenSessionByStory(4242)).toBeUndefined();
     expect(store.getSession("thread-1")?.status).toBe("encerrada");
+  });
+});
+
+describe("dump freeze", () => {
+  it("should refuse invalid Spec Markdown before freezing dump inputs", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    expect(() =>
+      store.beginDump("thread-1", {
+        dumpId: "dump-fingerprint",
+        ...DUMP_DETAILS,
+        markdown: "# Nota",
+      }),
+    ).toThrow(/Decisões.*Fora de escopo/s);
+    expect(store.getSession("thread-1")?.dump).toEqual({ status: "not-started" });
+  });
+
+  it("should reject a decision after the dump has started", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
+
+    expect(() =>
+      store.recordDecision({
+        sessionId: "thread-1",
+        questionId: "q1",
+        answer: "Regra bancária",
+        decidedBy: "PO",
+      }),
+    ).toThrow(/despejo/i);
+  });
+
+  it("should reject questions and consultations while dumping", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
+
+    expect(() => store.askQuestions("thread-1", [question()])).toThrow(/despejo/i);
+    expect(() => store.openConsultation("thread-1", "Qual campo a API aceita?")).toThrow(/despejo/i);
+  });
+
+  it("should reject every Dossiê mutation after an aborted dump", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    const consultation = store.openConsultation("thread-1", "Qual campo a API aceita?");
+    beginDump(store);
+    store.abortDump("thread-1");
+
+    expect(() => store.askQuestions("thread-1", [question({ id: "q2" })])).toThrow(/despejo/i);
+    expect(() => store.abandonPendingQuestions("thread-1")).toThrow(/despejo/i);
+    expect(() => store.finishSession("thread-1", { status: "falhou", message: "tarde demais" }))
+      .toThrow(/despejo/i);
+    expect(() =>
+      store.recordDecision({
+        sessionId: "thread-1",
+        questionId: "q1",
+        answer: "Regra bancária",
+        decidedBy: "PO",
+      }),
+    ).toThrow(/despejo/i);
+    expect(() =>
+      store.answerConsultation(consultation.id, { status: "falhou", message: "o agente caiu" }),
+    ).toThrow(/despejo/i);
+    expect(() => store.appendEvent("thread-1", { kind: "turno-encerrado" })).toThrow(/despejo/i);
+  });
+
+  it("should reject Dossiê mutations after a completed dump while allowing record metadata", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.askQuestions("thread-1", [question()]);
+    const decision = store.recordDecision({
+      sessionId: "thread-1",
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    });
+    store.beginDump("thread-1", {
+      dumpId: "dump-fingerprint",
+      ...DUMP_DETAILS,
+      markdown: DUMP_DETAILS.markdown.replace(
+        "_Nenhuma decisão foi registrada._",
+        `- **${decision.question}** — ${decision.answer}`,
+      ),
+    });
+    store.markDumpCompleted("thread-1", 1);
+
+    expect(() => store.askQuestions("thread-1", [question({ id: "q2" })])).toThrow(/despejo/i);
+    expect(() => store.appendEvent("thread-1", { kind: "turno-encerrado" })).toThrow(/despejo/i);
+    expect(() =>
+      store.attachDecisionRecord({
+        sessionId: "thread-1",
+        questionSeq: decision.questionSeq,
+        recordId: 99,
+        recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/4242",
+      }),
+    ).not.toThrow();
+  });
+
+  it("should refuse completion when the decision revision changed", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.beginDump("thread-1", { dumpId: "dump-fingerprint", ...DUMP_DETAILS });
+
+    expect(() => store.markDumpCompleted("thread-1", 1)).toThrow(/conclusão/i);
+    expect(store.getSession("thread-1")?.dump).toMatchObject({ status: "publishing" });
   });
 });
 

@@ -1,5 +1,6 @@
 import type { SquadConfig } from "@sprint-griller/core";
 import type { CeremonyDecision } from "./types";
+import { TASK_DRAFT_END, TASK_DRAFT_START } from "./task-draft";
 
 /** A US como a cerimônia precisa dela — mesma forma do `StoryDetails` do ADO. */
 export interface CeremonyStory {
@@ -65,7 +66,20 @@ export function ceremonyInstructions(repos: SquadConfig["repos"]): string {
     "destrava e faça a próxima pergunta.",
     "",
     "Quando não restar decisão aberta, pare de perguntar e feche o turno com um",
-    "resumo curto do que ficou decidido e do que continua em aberto.",
+    "resumo curto do que ficou decidido e do que continua em aberto. Em seguida,",
+    "redija o preview das Tasks agent-ready dentro destes marcadores, uma por uma",
+    "slice vertical autocontida, dimensionada para uma sessão de agente: título em ##,",
+    "descrição curta, ### Critérios de aceite com ao menos",
+    "um item e, se necessário, ### Bloqueada por com o título de outra Task.",
+    "Cada Task precisa conter um link Markdown cujo destino seja exatamente a URL",
+    "da Spec da US fornecida no prompt de abertura.",
+    TASK_DRAFT_START,
+    "## Título da Task",
+    "",
+    "### Critérios de aceite",
+    "",
+    "- Critério observável.",
+    TASK_DRAFT_END,
     "",
     "Você roda em sandbox somente-leitura: pedido de escalar permissão é recusado.",
   ].join("\n");
@@ -82,6 +96,10 @@ export function ceremonyOpeningPrompt(
     "Descrição no Azure DevOps (HTML, como o PO escreveu):",
     "",
     story.description?.trim() ? story.description : "(a US está sem descrição)",
+    "",
+    `URL da Spec da US: ${story.url}`,
+    "Cada Task do preview deve conter exatamente este link Markdown:",
+    `[Spec da US](${story.url})`,
     "",
     "## Investigação (insumo do grilling)",
     "",

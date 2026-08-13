@@ -1,13 +1,21 @@
 import { createAgentRuntime } from "@sprint-griller/agent-runtime";
+import { createHash } from "node:crypto";
 import {
+  appendDecisionTraceability,
+  assertValidSpecMarkdown,
   CeremonyError,
   createCeremony,
   openCeremonyStore,
   readDossie,
   readPalco,
+  stripDecisionRecordLinks,
+  parseTaskDraft,
+  signedDumpInputs,
 } from "@sprint-griller/ceremony";
+import { isCeremonyEstimate } from "@sprint-griller/ceremony/estimate";
 import type {
   Ceremony,
+  CeremonyDumpState,
   CeremonySession,
   CeremonyStore,
   DossieState,
@@ -16,7 +24,15 @@ import type {
   SaveSpecDraftInput,
   SpecDraft,
 } from "@sprint-griller/ceremony";
-import { defaultCeremonyDbPath } from "@sprint-griller/core";
+import { defaultCeremonyDbPath, loadAdoCredentials } from "@sprint-griller/core";
+import {
+  publishDumpCompletion,
+  publishChildTasks,
+  publishDecisionRecord,
+  publishStorySpec,
+  readDumpCompletion,
+  readIncompleteDumps,
+} from "@sprint-griller/ado-client";
 import { z } from "zod";
 import { getInvestigation } from "./investigations";
 import { logger } from "./logger";
@@ -63,6 +79,15 @@ export const discardSpecDraftSchema = z.object({
   expectedSavedAt: expectedSavedAtSchema,
 });
 
+export const dumpCeremonySchema = z.object({
+  sessionId: sessionIdSchema,
+  markdown: z.string().min(1),
+  base: z.string(),
+  tasksMarkdown: z.string().min(1, "escreva as Tasks agent-ready antes de despejar"),
+  estimate: z.coerce.number().finite().positive("registre a estimativa da squad"),
+  confirmPending: z.boolean(),
+});
+
 /** Assinante de uma sessão: o que ele projeta é decisão dele, não do registro. */
 type SessionListener = () => void;
 
@@ -73,6 +98,13 @@ interface CeremonyRegistry {
   /** Evita duas sessões ativas da mesma US quando o clique em "Grelhar" corre em paralelo. */
   startingByStory: Map<number, Promise<CeremonySession>>;
   listeners: Map<string, Set<SessionListener>>;
+  dumpsInFlightByStory: Map<number, DumpInFlight>;
+}
+
+interface DumpInFlight {
+  readonly sessionId: string;
+  readonly signedInputSignature: string;
+  readonly promise: Promise<void>;
 }
 
 /**
@@ -87,9 +119,11 @@ const registry: CeremonyRegistry = ((
   starting: undefined,
   startingByStory: new Map(),
   listeners: new Map(),
+  dumpsInFlightByStory: new Map(),
 });
 // Campo novo: HMR pode reusar um registry antigo sem ele.
 registry.startingByStory ??= new Map();
+registry.dumpsInFlightByStory ??= new Map();
 
 /** Abrir o banco é efeito colateral: só acontece quando alguém pergunta de cerimônia. */
 function getStore(): CeremonyStore {
@@ -139,11 +173,31 @@ export async function startCeremony(storyId: number): Promise<CeremonySession> {
   const open = getStore().findOpenSessionByStory(storyId);
   if (open) return open;
 
+  const incompleteLocal = getStore().findIncompleteDumpByStory(storyId);
+  if (incompleteLocal && isIncompleteDump(incompleteLocal.dump)) {
+    throw new CeremonyError(
+      `A US #${storyId} tem um despejo incompleto na cerimônia anterior. ` +
+        `Abra o Dossiê dessa cerimônia e conclua o retry antes de grelhar de novo.`,
+    );
+  }
+
   const starting = (async () => {
     const run = getInvestigation(storyId);
     if (run?.status !== "aprovado" || !run.story) {
       throw new CeremonyError(
         `A US #${storyId} ainda não tem Investigação aprovada — investigue antes de grelhar.`,
+      );
+    }
+
+    const { azureDevOps } = getSquadConfig();
+    const incompleteRemote = await readIncompleteDumps(
+      { azureDevOps, credentials: loadAdoCredentials(), logger },
+      storyId,
+    );
+    if (incompleteRemote.length > 0) {
+      throw new CeremonyError(
+        `A US #${storyId} tem um despejo incompleto no Azure DevOps. ` +
+          `Conclua o retry desse despejo antes de abrir outra cerimônia.`,
       );
     }
 
@@ -197,6 +251,247 @@ export function saveSpecDraft(input: SaveSpecDraftInput): SpecDraft {
 export function discardSpecDraft(input: DiscardSpecDraftInput): void {
   getStore().discardSpecDraft(input);
   publish(input.sessionId);
+}
+
+/**
+ * O despejo é serial por US: cada comment confirmado fica no SQLite antes da
+ * próxima escrita, então um retry explícito não duplica Registros já vistos e
+ * duas cerimônias da mesma US não publicam em paralelo.
+ */
+export function dumpCeremony(input: z.infer<typeof dumpCeremonySchema>): Promise<void> {
+  const initial = getDossie(input.sessionId);
+  if (!initial) {
+    return Promise.reject(new CeremonyError(`cerimônia ${input.sessionId} não existe.`));
+  }
+
+  if (registry.startingByStory.has(initial.story.id)) {
+    return Promise.reject(new CeremonyError(
+      `a US #${initial.story.id} já está abrindo outra cerimônia. Aguarde antes de despejar.`,
+    ));
+  }
+  const open = getStore().findOpenSessionByStory(initial.story.id);
+  if (open && open.id !== input.sessionId) {
+    return Promise.reject(new CeremonyError(
+      `a US #${initial.story.id} já tem outra cerimônia aberta. Encerre-a antes de despejar esta.`,
+    ));
+  }
+
+  const signature = signedInputSignature(input);
+  const inFlight = registry.dumpsInFlightByStory.get(initial.story.id);
+  if (inFlight) {
+    if (inFlight.sessionId !== input.sessionId) {
+      return Promise.reject(new CeremonyError(
+        `a US #${initial.story.id} já tem um despejo em andamento em outra cerimônia.`,
+      ));
+    }
+    if (inFlight.signedInputSignature !== signature) {
+      return Promise.reject(new CeremonyError(
+        "esta cerimônia já está despejando outros valores assinados — aguarde antes de tentar novamente.",
+      ));
+    }
+    return inFlight.promise;
+  }
+
+  const tracked = dumpCeremonyNow(input, initial).finally(() => {
+    if (registry.dumpsInFlightByStory.get(initial.story.id)?.promise === tracked) {
+      registry.dumpsInFlightByStory.delete(initial.story.id);
+    }
+  });
+  registry.dumpsInFlightByStory.set(initial.story.id, {
+    sessionId: input.sessionId,
+    signedInputSignature: signature,
+    promise: tracked,
+  });
+  return tracked;
+}
+
+async function dumpCeremonyNow(
+  input: z.infer<typeof dumpCeremonySchema>,
+  initial: DossieState,
+): Promise<void> {
+  if (isCompletedDump(initial.dump)) return;
+  if (getStore().getSession(input.sessionId)?.status !== "encerrada") {
+    throw new CeremonyError("encerre a cerimônia antes de despejar.");
+  }
+
+  const frozenInputs = signedDumpInputs(initial.dump);
+  const frozen = frozenInputs?.markdown;
+  const signed = frozen ?? initial.spec.draft?.markdown ?? initial.spec.generated;
+  if (input.markdown !== signed) {
+    throw new CeremonyError(
+      frozen === undefined
+        ? "salve a edição do Dossiê antes de despejar."
+        : "o despejo já começou com outra Spec — use a Spec assinada no retry.",
+    );
+  }
+  // O próprio despejo pode ter acabado de anexar links de Registro ao documento
+  // gerado. Isso não é uma nova decisão da sala e não invalida um retry.
+  if (
+    frozen === undefined &&
+    stripDecisionRecordLinks(input.base) !== stripDecisionRecordLinks(initial.spec.generated)
+  ) {
+    throw new CeremonyError(
+      "a cerimônia andou depois desta edição — regenere ou salve uma Spec atualizada antes de despejar.",
+    );
+  }
+  if (initial.pending.length > 0 && !input.confirmPending) {
+    throw new CeremonyError("confirme que deseja despejar com as pendências abertas.");
+  }
+  if (frozenInputs !== undefined && input.estimate !== frozenInputs.estimate) {
+    throw new CeremonyError(
+      "o despejo já começou com outra estimativa — use a estimativa assinada no retry.",
+    );
+  }
+  if (frozenInputs === undefined && !isCeremonyEstimate(input.estimate)) {
+    throw new CeremonyError("a estimativa deve usar a escala Fibonacci da squad.");
+  }
+  if (frozenInputs !== undefined && input.tasksMarkdown !== frozenInputs.tasksMarkdown) {
+    throw new CeremonyError(
+      "o despejo já começou com outras Tasks assinadas — use as mesmas Tasks no retry.",
+    );
+  }
+  const tasksMarkdown = frozenInputs?.tasksMarkdown ?? input.tasksMarkdown;
+  const tasks = parseTaskDraft(tasksMarkdown, initial.story.url);
+  const dumpId = frozenInputs?.dumpId ?? dumpFingerprint(
+    initial.sessionId,
+    initial.story.id,
+    signed,
+    tasks,
+    input.estimate,
+  );
+
+  assertValidSpecMarkdown(signed, initial.decisions);
+  const store = getStore();
+  store.beginDump(input.sessionId, {
+    dumpId,
+    markdown: signed,
+    tasksMarkdown,
+    estimate: input.estimate,
+  });
+  publish(input.sessionId);
+
+  try {
+  const { azureDevOps } = getSquadConfig();
+  const ado = { azureDevOps, credentials: loadAdoCredentials(), logger };
+  const completions = await readDumpCompletion(ado, initial.story.id);
+  // Um despejo já concluído com outro fingerprint não bloqueia: a cerimônia nova
+  // é o fluxo explícito para publicar uma Spec revisada sobre a anterior.
+  const incomplete = await readIncompleteDumps(ado, initial.story.id);
+  if (incomplete.some((id) => id !== dumpId)) {
+    throw new CeremonyError(
+      "a US tem um despejo incompleto de outra cerimônia. Conclua o retry desse despejo antes de publicar outro.",
+    );
+  }
+
+  if (completions.includes(dumpId)) {
+    store.markDumpCompleted(input.sessionId, initial.decisions.length);
+    publish(input.sessionId);
+    return;
+  }
+
+  for (const decision of initial.decisions) {
+    if (decision.recordId !== undefined && decision.recordUrl !== undefined) continue;
+    if (decision.recordId !== undefined || decision.recordUrl !== undefined) {
+      throw new CeremonyError(`a decisão ${decision.questionSeq} tem um Registro incompleto no banco local.`);
+    }
+    const published = await publishDecisionRecord(ado, {
+      storyId: initial.story.id,
+      dumpId,
+      questionSeq: decision.questionSeq,
+      question: decision.question,
+      answer: decision.answer,
+      recommendation: decision.recommendation,
+      decidedBy: decision.decidedBy,
+      decidedAt: decision.decidedAt,
+    });
+    if (decision.recordId === undefined && decision.recordUrl === undefined) {
+      store.attachDecisionRecord({
+        sessionId: input.sessionId,
+        questionSeq: decision.questionSeq,
+        recordId: published.commentId,
+        recordUrl: published.url,
+      });
+      publish(input.sessionId);
+    }
+  }
+
+  const dossieWithRecords = getDossie(input.sessionId);
+  if (!dossieWithRecords) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
+  await publishStorySpec(ado, {
+    storyId: dossieWithRecords.story.id,
+    dumpId,
+    markdown: appendDecisionTraceability(signed, dossieWithRecords.decisions),
+    estimate: input.estimate,
+  });
+  await publishChildTasks(ado, {
+    storyId: dossieWithRecords.story.id,
+    dumpId,
+    tasks,
+  });
+
+  await publishDumpCompletion(ado, { storyId: dossieWithRecords.story.id, dumpId });
+
+  store.markDumpCompleted(input.sessionId, initial.decisions.length);
+  publish(input.sessionId);
+  logger.info(
+    {
+      sessionId: input.sessionId,
+      storyId: dossieWithRecords.story.id,
+      decisions: dossieWithRecords.decisions.length,
+      tasks: tasks.length,
+      estimate: input.estimate,
+    },
+    "despejo da cerimônia concluído",
+  );
+  } catch (error) {
+    store.abortDump(input.sessionId);
+    publish(input.sessionId);
+    throw error;
+  }
+}
+
+function signedInputSignature(input: z.infer<typeof dumpCeremonySchema>): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      markdown: input.markdown,
+      tasksMarkdown: input.tasksMarkdown,
+      estimate: input.estimate,
+    }))
+    .digest("hex");
+}
+
+function isIncompleteDump(dump: CeremonyDumpState): boolean {
+  switch (dump.status) {
+    case "publishing":
+    case "retryable":
+      return true;
+    case "not-started":
+    case "completed":
+      return false;
+  }
+}
+
+function isCompletedDump(dump: CeremonyDumpState): boolean {
+  switch (dump.status) {
+    case "completed":
+      return true;
+    case "not-started":
+    case "publishing":
+    case "retryable":
+      return false;
+  }
+}
+
+function dumpFingerprint(
+  sessionId: string,
+  storyId: number,
+  markdown: string,
+  tasks: readonly ReturnType<typeof parseTaskDraft>[number][],
+  estimate: number,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ sessionId, storyId, markdown, tasks, estimate }))
+    .digest("hex");
 }
 
 export function findOpenCeremony(storyId: number): CeremonySession | undefined {

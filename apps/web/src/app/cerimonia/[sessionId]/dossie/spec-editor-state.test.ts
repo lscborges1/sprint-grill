@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  dumpGateResetKey,
+  isDumpGateBlocked,
+  isSpecStale,
   reconcileSpecDraft,
   resolveRegeneration,
   synchronizePristineGeneratedDocument,
@@ -184,5 +187,64 @@ describe("resolveRegeneration", () => {
 
   it("should ignore a result from an earlier regeneration attempt", () => {
     expect(resolveRegeneration(pending, { status: "success", requestId: "discard-0" }, "novo")).toBeNull();
+  });
+});
+
+describe("isSpecStale", () => {
+  it("should keep a saved draft dumpable when only decision-record links arrived", () => {
+    const base = "# Spec\n\n- **Pergunta** — Sim\n";
+    const generatedWithRecord = `${base}  - Registro no Azure DevOps: [#91](https://dev.azure.com/acme/Plataforma/_workitems/edit/1)\n`;
+
+    expect(isSpecStale(generatedWithRecord, base)).toBe(false);
+  });
+
+  it("should flag a later decision as stale", () => {
+    expect(isSpecStale("# Spec\n\n- Decisão nova", "# Spec")).toBe(true);
+  });
+});
+
+describe("dumpGateResetKey", () => {
+  it("should reset only the task editor when unchanged inputs become frozen", () => {
+    const tasksMarkdown = "## Implementar retry\n\n### Critérios de aceite\n\n- Reutiliza as Tasks assinadas.";
+
+    expect(dumpGateResetKey(tasksMarkdown, false)).not.toBe(
+      dumpGateResetKey(tasksMarkdown, true),
+    );
+  });
+});
+
+describe("isDumpGateBlocked", () => {
+  it("should allow a frozen partial-dump retry despite stale and conflicting editor state", () => {
+    expect(
+      isDumpGateBlocked({
+        busy: false,
+        conflict: "edicao",
+        stale: true,
+        dumpLocked: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("should block a frozen retry while another editor action is busy", () => {
+    expect(
+      isDumpGateBlocked({ busy: true, conflict: null, stale: false, dumpLocked: true }),
+    ).toBe(true);
+  });
+
+  it("should block an unfrozen dump when the Spec is stale", () => {
+    expect(
+      isDumpGateBlocked({ busy: false, conflict: null, stale: true, dumpLocked: false }),
+    ).toBe(true);
+  });
+
+  it("should block an unfrozen dump when the editor has a conflict", () => {
+    expect(
+      isDumpGateBlocked({
+        busy: false,
+        conflict: "descarte",
+        stale: false,
+        dumpLocked: false,
+      }),
+    ).toBe(true);
   });
 });

@@ -3,6 +3,10 @@
  * Registro de decisão, Palco — em português, porque é o que a sala fala.
  */
 
+import type { CeremonyDumpState } from "./dump-state";
+
+export type { CeremonyDumpState, SignedDumpInputs } from "./dump-state";
+
 export type SessionStatus = "ativa" | "encerrada" | "falhou";
 
 export interface CeremonySession {
@@ -15,6 +19,7 @@ export interface CeremonySession {
   readonly createdAt: number;
   readonly status: SessionStatus;
   readonly failureMessage: string | null;
+  readonly dump: CeremonyDumpState;
 }
 
 export interface CeremonyQuestionOption {
@@ -112,6 +117,12 @@ export type CeremonyConsultation =
 export type UnverifiedConsultation = Extract<
   CeremonyConsultation,
   { readonly status: "sem-lastro" }
+>;
+
+/** Consulta cuja pergunta ainda precisa ficar explícita no gate de maturidade. */
+export type UnresolvedConsultation = Extract<
+  CeremonyConsultation,
+  { readonly status: "buscando" | "sem-lastro" | "falhou" }
 >;
 
 /** Consulta factual cuja resposta e evidências passaram pela checagem no disco. */
@@ -237,8 +248,12 @@ export interface SpecDraft {
 /** A aba do Operador: o documento vivo mais o preview editável do despejo. */
 export interface DossieState extends DossieDocument {
   readonly sessionId: string;
+  readonly status: SessionStatus;
   /** Fuso capturado na abertura da cerimônia, usado para exibir decisões. */
   readonly timeZone: string;
+  /** Rascunho de Tasks que o agente redigiu no encerramento da cerimônia. */
+  readonly taskPreview: string;
+  readonly dump: CeremonyDumpState;
   readonly spec: {
     readonly generated: string;
     readonly draft: SpecDraft | null;

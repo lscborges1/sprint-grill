@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
  * Estado de cerimônia, e só ele ([ADR 0003](../../../docs/adr/0003-azure-devops-como-fonte-da-verdade.md)):
@@ -16,6 +16,16 @@ export const sessions = sqliteTable("sessions", {
   createdAt: integer("created_at").notNull(),
   status: text("status", { enum: ["ativa", "encerrada", "falhou"] }).notNull(),
   failureMessage: text("failure_message"),
+  dumpStartedAt: integer("dump_started_at"),
+  /** Fingerprint do despejo: sobrevive ao abort para o retry não criar Tasks duplicadas. */
+  dumpId: text("dump_id"),
+  /** Spec assinada no beginDump — editar depois mudaria o fingerprint e travaria o retry. */
+  dumpMarkdown: text("dump_markdown"),
+  /** Markdown de Tasks assinado no beginDump — sobrevive ao F5 para o retry hashear igual. */
+  dumpTasksMarkdown: text("dump_tasks_markdown"),
+  /** Estimativa assinada no beginDump — mesma razão do Markdown de Tasks. */
+  dumpEstimate: real("dump_estimate"),
+  dumpedAt: integer("dumped_at"),
 });
 
 export const questions = sqliteTable(
@@ -113,7 +123,7 @@ export const events = sqliteTable(
  * recusada na abertura, mandando apagar o arquivo — descobrir a divergência no
  * meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 11;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -133,7 +143,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   time_zone TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   status TEXT NOT NULL,
-  failure_message TEXT
+  failure_message TEXT,
+  dump_started_at INTEGER,
+  dump_id TEXT,
+  dump_markdown TEXT,
+  dump_tasks_markdown TEXT,
+  dump_estimate REAL,
+  dumped_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS questions (

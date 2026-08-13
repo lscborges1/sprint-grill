@@ -198,7 +198,7 @@ describe("fetchCurrentIteration", () => {
         {
           id: 3,
           title: "Já refinada",
-          comments: [`${INVESTIGATION_MARKER}`, `${SPEC_MARKER}\n## Decisões`],
+          comments: [`${INVESTIGATION_MARKER}`, `${SPEC_MARKER}\n## Decisões\n<!-- sprint-griller:dump:abc123:complete -->`],
         },
       ],
     });

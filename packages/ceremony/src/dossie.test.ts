@@ -4,6 +4,7 @@ import path from "node:path";
 import { renderReportMarkdown, reportSectionMarker } from "@sprint-griller/investigation";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readDossie } from "./dossie";
+import { readSpecSection } from "./spec";
 import { SPEC_SECTIONS } from "./spec-vocabulary";
 import { openCeremonyStore } from "./store";
 import type { CeremonyStore } from "./store";
@@ -109,6 +110,49 @@ describe("readDossie", () => {
     expect(readDossie(store, "thread-1")?.timeZone).toBe("America/Sao_Paulo");
   });
 
+  it("should expose the task draft the ceremony agent wrote in its closing message", () => {
+    const store = open();
+    const session = newSession(store);
+    store.appendEvent("thread-1", {
+      kind: "mensagem",
+      text: `Resumo da cerimônia.\n\n<!-- sprint-griller:tasks:start -->\n## Criar exportação\n\n[Spec da US](${session.storyUrl})\n\n### Critérios de aceite\n\n- Gera o CSV.\n<!-- sprint-griller:tasks:end -->`,
+    });
+
+    expect(readDossie(store, "thread-1")?.taskPreview).toContain("## Criar exportação");
+  });
+
+  it("should seed a fallback Task preview with the exact current Spec link", () => {
+    const store = open();
+    const session = newSession(store);
+
+    expect(readDossie(store, "thread-1")?.taskPreview).toContain(
+      `[Spec da US](${session.storyUrl})`,
+    );
+  });
+
+  it("should expose signed dump Spec, Tasks and estimate after beginDump", () => {
+    const store = open();
+    const session = newSession(store);
+    const markdown = readDossie(store, "thread-1")!.spec.generated;
+    store.beginDump("thread-1", {
+      dumpId: "dump-fingerprint",
+      markdown,
+      tasksMarkdown: `## Task assinada\n\n[Spec da US](${session.storyUrl})\n\n### Critérios de aceite\n\n- Critério.`,
+      estimate: 8,
+    });
+    store.abortDump("thread-1");
+
+    expect(readDossie(store, "thread-1")?.dump).toEqual({
+      status: "retryable",
+      inputs: {
+        dumpId: "dump-fingerprint",
+        markdown,
+        tasksMarkdown: `## Task assinada\n\n[Spec da US](${session.storyUrl})\n\n### Critérios de aceite\n\n- Critério.`,
+        estimate: 8,
+      },
+    });
+  });
+
   it("should carry the impact context of the Investigação into the document", () => {
     const store = open();
     newSession(store);
@@ -185,6 +229,71 @@ describe("readDossie", () => {
     );
     expect(dossie?.investigation.impact).not.toContain("O portal do vendedor também parece");
     expect(dossie?.spec.generated).toContain("O portal do vendedor também parece consumir o total.");
+  });
+
+  it("should carry an ungrounded factual consultation into the pending and unverified Spec sections", () => {
+    const store = open();
+    newSession(store);
+    const consultation = store.openConsultation(
+      "thread-1",
+      "Quem também consome o total da comissão?",
+    );
+    store.answerConsultation(consultation.id, {
+      status: "sem-lastro",
+      answer: "O portal do vendedor também parece consumir o total.",
+      citations: [],
+      motivo: "a resposta veio sem citar nenhum arquivo dos repos da squad.",
+    });
+
+    const spec = readDossie(store, "thread-1")!.spec.generated;
+
+    expect(readSpecSection(spec, SPEC_SECTIONS.pending.heading)).toContain(
+      "Quem também consome o total da comissão?",
+    );
+    expect(readSpecSection(spec, SPEC_SECTIONS.unverified.heading)).toContain(
+      "O portal do vendedor também parece consumir o total.",
+    );
+  });
+
+  it("should namespace pending identifiers for ungrounded factual consultations", () => {
+    const store = open();
+    newSession(store);
+    const consultation = store.openConsultation("thread-1", "Onde está a regra de comissão?");
+    store.answerConsultation(consultation.id, {
+      status: "sem-lastro",
+      answer: "A regra parece estar no serviço de folha.",
+      citations: [],
+      motivo: "a resposta veio sem citar nenhum arquivo dos repos da squad.",
+    });
+
+    expect(readDossie(store, "thread-1")?.pending).toContainEqual({
+      id: `consulta:${consultation.id}`,
+      question: "Onde está a regra de comissão?",
+    });
+  });
+
+  it.each([
+    ["buscando", undefined],
+    ["falhou", { status: "falhou", message: "o agente caiu" }],
+    [
+      "sem-lastro",
+      {
+        status: "sem-lastro",
+        answer: "A regra parece estar no serviço de folha.",
+        citations: [],
+        motivo: "a resposta veio sem citar nenhum arquivo dos repos da squad.",
+      },
+    ],
+  ] as const)("should keep a %s factual consultation pending", (_status, outcome) => {
+    const store = open();
+    newSession(store);
+    const consultation = store.openConsultation("thread-1", "Onde está a regra de comissão?");
+    if (outcome !== undefined) store.answerConsultation(consultation.id, outcome);
+
+    expect(readDossie(store, "thread-1")?.pending).toContainEqual({
+      id: `consulta:${consultation.id}`,
+      question: "Onde está a regra de comissão?",
+    });
   });
 
   it("should survive an Investigação without the expected headings", () => {
@@ -264,7 +373,7 @@ describe("readDossie", () => {
     const before = readDossie(store, "thread-1")?.spec.generated ?? "";
     store.saveSpecDraft({
       sessionId: "thread-1",
-      markdown: "assinado",
+      markdown: `${before}\nNota assinada pelo Operador.`,
       base: before,
       expectedSavedAt: null,
     });

@@ -1,5 +1,8 @@
 import { z } from "zod";
+import { dumpStateSchema } from "./dump-state";
 import type { DossieState } from "./types";
+
+export { signedDumpInputs } from "./dump-state";
 
 // O vocabulário da Spec anda com os contratos: a aba do Dossiê é uma tela ao
 // vivo, e precisa das mesmas palavras que o Markdown do despejo.
@@ -11,7 +14,8 @@ export { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
  * `@sprint-griller/ceremony/session-state`: o barril puxa o store, e o store
  * puxa o binding nativo do SQLite, que não existe no bundle do cliente.
  *
- * Só dependências de tipo aqui dentro. Nada de runtime além do zod.
+ * Tudo aqui continua browser-safe: schemas e projeções puras, sem store nem
+ * binding nativo.
  */
 
 const storySchema = z.object({ id: z.number(), title: z.string(), url: z.string() });
@@ -35,7 +39,10 @@ const decisionSchema = z.object({
  */
 export const dossieStateSchema: z.ZodType<DossieState> = z.object({
   sessionId: z.string(),
+  status: z.enum(["ativa", "encerrada", "falhou"]),
   timeZone: z.string(),
+  taskPreview: z.string(),
+  dump: dumpStateSchema,
   story: storySchema,
   decisions: z.array(decisionSchema),
   pending: z.array(z.object({ id: z.string(), question: z.string() })),

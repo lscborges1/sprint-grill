@@ -26,21 +26,21 @@ describe("inferRefinementStatus", () => {
     expect(status).toBe("investigada");
   });
 
-  it("should report a US as refinada when the despejo already wrote the Spec da US", () => {
+  it("should report a US as refinada only when ADO has the final dump marker", () => {
     const status = inferRefinementStatus({
       description: "Como PO, quero exportar o relatório em CSV.",
       comments: [
         `${INVESTIGATION_MARKER}\n## Impacto`,
-        `${SPEC_MARKER}\n## Decisões\n- CSV com separador ";" (PO, 06/08)`,
+        `${SPEC_MARKER}\n## Decisões\n- CSV com separador ";" (PO, 06/08)\n<!-- sprint-griller:dump:abc123:complete -->`,
       ],
     });
 
     expect(status).toBe("refinada");
   });
 
-  it("should report a US as refinada when the Spec lives in the description instead of a comment", () => {
+  it("should report a US as refinada when the final marker lives in its description", () => {
     const status = inferRefinementStatus({
-      description: `Como PO, quero exportar o relatório em CSV.\n\n${SPEC_MARKER}\n## Decisões`,
+      description: `Como PO, quero exportar o relatório em CSV.\n\n${SPEC_MARKER}\n## Decisões\n<!-- sprint-griller:dump:abc123:complete -->`,
       comments: [],
     });
 

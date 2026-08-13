@@ -12,12 +12,27 @@ export { ceremonyInstructions, ceremonyOpeningPrompt, ceremonyResumePrompt } fro
 export type { CeremonyStory } from "./prompt";
 // Os schemas de estado vivem em subpaths: o browser não pode puxar SQLite pelo barril.
 export { palcoStateSchema } from "./palco-state";
-export { dossieStateSchema } from "./session-state";
-export { readSpecSection, renderSpecMarkdown } from "./spec";
+export { dossieStateSchema, signedDumpInputs } from "./session-state";
+export {
+  appendDecisionTraceability,
+  assertValidSpecMarkdown,
+  readSpecSection,
+  renderSpecMarkdown,
+  stripDecisionRecordLinks,
+} from "./spec";
 export { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
+export {
+  parseTaskDraft,
+  taskDraftTemplate,
+  taskPreviewFromTranscript,
+  validateTaskDraft,
+} from "./task-draft";
+export type { TaskDraft, TaskDraftValidation } from "./task-draft";
 export { openCeremonyStore } from "./store";
 export type {
   CeremonyStore,
+  AttachDecisionRecordInput,
+  BeginDumpInput,
   CreateSessionInput,
   DiscardSpecDraftInput,
   FinishSessionOutcome,
@@ -31,6 +46,7 @@ export type {
   CeremonyQuestion,
   CeremonyQuestionOption,
   CeremonySession,
+  CeremonyDumpState,
   ConsultationOutcome,
   PersistedCeremonyQuestion,
   DossieDocument,
@@ -39,6 +55,7 @@ export type {
   PalcoPhase,
   PalcoState,
   SessionStatus,
+  SignedDumpInputs,
   SpecDraft,
   StoryRef,
   TranscriptEntry,

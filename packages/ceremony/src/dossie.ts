@@ -4,6 +4,7 @@ import {
   reportSectionMarker,
 } from "@sprint-griller/investigation";
 import { renderSpecMarkdown } from "./spec";
+import { taskPreviewFromTranscript } from "./task-draft";
 import type { CeremonyStore } from "./store";
 import type {
   DossieDocument,
@@ -26,13 +27,22 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
   const session = store.getSession(sessionId);
   if (!session) return undefined;
 
+  const unverifiedConsultations = store.listUnverifiedConsultations(sessionId);
+  const unresolvedConsultations = store.listUnresolvedConsultations(sessionId);
+
   const document: DossieDocument = {
     story: { id: session.storyId, title: session.storyTitle, url: session.storyUrl },
     decisions: store.listDecisions(sessionId),
-    pending: store.unansweredQuestions(sessionId).map((asked) => ({
-      id: asked.id,
-      question: asked.question,
-    })),
+    pending: [
+      ...store.unansweredQuestions(sessionId).map((asked) => ({
+        id: asked.id,
+        question: asked.question,
+      })),
+      ...unresolvedConsultations.map((consultation) => ({
+        id: `consulta:${consultation.id}`,
+        question: consultation.question,
+      })),
+    ],
     investigation: {
       impact: verifiedContext(
         sectionOf(session.investigationMarkdown, "impacts"),
@@ -40,7 +50,7 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
       ),
       unverified: unverifiedContext(
         sectionOf(session.investigationMarkdown, "unverified"),
-        store.listUnverifiedConsultations(sessionId),
+        unverifiedConsultations,
       ),
     },
   };
@@ -48,7 +58,10 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
   return {
     ...document,
     sessionId,
+    status: session.status,
     timeZone: session.timeZone,
+    taskPreview: taskPreviewFromTranscript(store.listTranscript(sessionId), session.storyUrl),
+    dump: session.dump,
     spec: {
       generated: renderSpecMarkdown(document, session.timeZone),
       draft: store.getSpecDraft(sessionId) ?? null,

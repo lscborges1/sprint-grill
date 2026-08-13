@@ -1,3 +1,5 @@
+import { completedDumpIds } from "./dump-marker";
+
 /**
  * Onde a US está no fluxo de refinamento. Não é estado nosso: cada valor é
  * apenas o nome do artefato mais avançado que a ferramenta já gravou no ADO
@@ -29,9 +31,13 @@ export interface WorkItemArtifacts {
 export function inferRefinementStatus(
   artifacts: WorkItemArtifacts,
 ): RefinementStatus {
-  if (hasMarker(artifacts, SPEC_MARKER)) return "refinada";
+  if (hasCompletionMarker(artifacts)) return "refinada";
   if (hasMarker(artifacts, INVESTIGATION_MARKER)) return "investigada";
   return "sem-investigacao";
+}
+
+function hasCompletionMarker(artifacts: WorkItemArtifacts): boolean {
+  return completedDumpIds([artifacts.description ?? "", ...artifacts.comments]).length > 0;
 }
 
 function hasMarker(artifacts: WorkItemArtifacts, marker: string): boolean {

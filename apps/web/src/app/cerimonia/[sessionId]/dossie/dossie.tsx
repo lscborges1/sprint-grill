@@ -2,12 +2,21 @@
 
 // Subpath de propósito: o barril do pacote puxa o store, e o binding nativo do
 // SQLite não existe no bundle do cliente.
-import { SPEC_SECTIONS, dossieStateSchema } from "@sprint-griller/ceremony/session-state";
+import {
+  SPEC_SECTIONS,
+  dossieStateSchema,
+  signedDumpInputs,
+} from "@sprint-griller/ceremony/session-state";
 import { formatDecisionWhen, readSpecSection } from "@sprint-griller/ceremony/spec";
-import type { CeremonyDecision, DossieState } from "@sprint-griller/ceremony";
+import type {
+  CeremonyDecision,
+  DossieState,
+} from "@sprint-griller/ceremony";
 import Link from "next/link";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
+import { DumpGate } from "./dump-gate";
+import { isDumpGateBlocked } from "./spec-editor-state";
 import { useSpecEditor } from "./use-spec-editor";
 
 /**
@@ -116,7 +125,15 @@ export function Dossie({ initial }: { initial: DossieState }) {
         />
       </Section>
 
-      <SpecEditor sessionId={state.sessionId} spec={state.spec} />
+      <SpecEditor
+        sessionId={state.sessionId}
+        storyUrl={state.story.url}
+        spec={state.spec}
+        pending={state.pending}
+        taskPreview={state.taskPreview}
+        dump={state.dump}
+        ceremonyStatus={state.status}
+      />
     </main>
   );
 }
@@ -237,10 +254,20 @@ function operatorOutOfScope(markdown: string): string {
  */
 function SpecEditor({
   sessionId,
+  storyUrl,
   spec,
+  pending,
+  taskPreview,
+  dump,
+  ceremonyStatus,
 }: {
   sessionId: string;
+  storyUrl: string;
   spec: DossieState["spec"];
+  pending: DossieState["pending"];
+  taskPreview: string;
+  dump: DossieState["dump"];
+  ceremonyStatus: DossieState["status"];
 }) {
   const {
     adoptRemote,
@@ -256,15 +283,19 @@ function SpecEditor({
     stale,
     updateMarkdown,
   } = useSpecEditor(spec);
+  const signedInputs = signedDumpInputs(dump);
+  const dumpLocked = signedInputs !== undefined;
+  const dumpMarkdown = signedInputs?.markdown ?? markdown;
 
   return (
     <Section id="despejo" heading="Preview do despejo">
       <p className="text-base text-muted">
-        A Spec da US como ela vai para o Azure DevOps. Edite à vontade: nada foi
-        gravado ainda, e o despejo leva o que estiver aqui.
+        {dumpLocked
+          ? "Um despejo parcial já assinou esta Spec — o retry precisa do mesmo texto."
+          : "A Spec da US como ela vai para o Azure DevOps. Edite à vontade: nada foi gravado ainda, e o despejo leva o que estiver aqui."}
       </p>
 
-      {conflict !== null && (
+      {conflict !== null && !dumpLocked && (
         <div
           role="alert"
           className="flex flex-col gap-3 rounded-lg border border-amber-500/60 bg-amber-500/5 px-5 py-4"
@@ -300,7 +331,7 @@ function SpecEditor({
         </div>
       )}
 
-      {stale && (
+      {stale && !dumpLocked && (
         <div
           role="alert"
           className="flex flex-col gap-3 rounded-lg border border-amber-500/60 bg-amber-500/5 px-5 py-4"
@@ -329,8 +360,9 @@ function SpecEditor({
         <textarea
           id="markdown"
           name="markdown"
-          value={markdown}
-          disabled={busy}
+          value={dumpMarkdown}
+          disabled={busy || dumpLocked}
+          readOnly={dumpLocked}
           onChange={(event) => updateMarkdown(event.target.value)}
           rows={24}
           spellCheck={false}
@@ -339,15 +371,17 @@ function SpecEditor({
         <div className="flex flex-wrap items-center gap-4">
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || dumpLocked}
             className="rounded-xl border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background disabled:opacity-50"
           >
             Salvar edição
           </button>
           <span className="text-sm text-muted">
-            {spec.draft
-              ? `Editado por último às ${formatSavedAt(spec.draft.savedAt)}.`
-              : "Sem edição salva: o texto acima é o gerado da cerimônia."}
+            {dumpLocked
+              ? "Spec assinada no despejo parcial."
+              : spec.draft
+                ? `Editado por último às ${formatSavedAt(spec.draft.savedAt)}.`
+                : "Sem edição salva: o texto acima é o gerado da cerimônia."}
           </span>
         </div>
         {error !== null && (
@@ -359,7 +393,7 @@ function SpecEditor({
 
       {/* Sem isto, uma edição salva não teria volta enquanto a cerimônia não
           andasse — o Operador ficaria preso ao próprio rascunho. */}
-      {spec.draft && !stale && (
+      {spec.draft && !stale && !dumpLocked && (
         <Regenerate
           sessionId={sessionId}
           expectedSavedAt={expectedSavedAt}
@@ -367,6 +401,18 @@ function SpecEditor({
           pending={busy || remoteDraftConflict}
         />
       )}
+
+      <DumpGate
+        sessionId={sessionId}
+        storyUrl={storyUrl}
+        markdown={dumpMarkdown}
+        base={base}
+        pending={pending}
+        taskPreview={taskPreview}
+        dump={dump}
+        ceremonyStatus={ceremonyStatus}
+        blocked={isDumpGateBlocked({ busy, conflict, stale, dumpLocked })}
+      />
     </Section>
   );
 }

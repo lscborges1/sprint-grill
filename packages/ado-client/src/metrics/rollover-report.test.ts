@@ -14,6 +14,8 @@ function sprint(
     path: `Plataforma\\${name}`,
     startDate: new Date("2026-01-19T00:00:00Z"),
     finishDate: new Date("2026-01-30T00:00:00Z"),
+    closesAt: new Date("2026-01-31T00:00:00Z"),
+    stories: [],
     ...counts,
     rolled,
     rate: counts.scope === 0 ? undefined : rolled / counts.scope,

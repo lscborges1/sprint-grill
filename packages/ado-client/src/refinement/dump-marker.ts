@@ -7,6 +7,11 @@ interface DumpMarker {
   readonly artifact: string;
 }
 
+export interface DumpAudit {
+  readonly dumpId: string;
+  readonly openQuestions: number;
+}
+
 /** Cria um marcador determinístico para um artefato publicado no despejo. */
 export function dumpMarker(dumpId: string, artifact: string): string {
   return `${DUMP_MARKER_PREFIX}${dumpId}:${artifact}${DUMP_MARKER_SUFFIX}`;
@@ -15,6 +20,28 @@ export function dumpMarker(dumpId: string, artifact: string): string {
 /** Cria a prova final de que todos os artefatos de um despejo foram publicados. */
 export function dumpCompletionMarker(dumpId: string): string {
   return dumpMarker(dumpId, "complete");
+}
+
+/**
+ * Prova imutável do gate no instante em que o despejo ficou completo. Vive num
+ * comment, não na descrição editável da US, para a retro poder datá-la pelo
+ * próprio Azure DevOps sem estado paralelo.
+ */
+export function dumpAuditMarker(dumpId: string, openQuestions: number): string {
+  if (!Number.isSafeInteger(openQuestions) || openQuestions < 0) {
+    throw new TypeError("openQuestions precisa ser um inteiro não negativo.");
+  }
+  return dumpMarker(dumpId, `audit:pending:${openQuestions}`);
+}
+
+/** Extrai os resultados de gate gravados pela versão atual do despejo. */
+export function dumpAudits(texts: readonly string[]): readonly DumpAudit[] {
+  return readDumpMarkers(texts).flatMap(({ dumpId, artifact }) => {
+    const match = /^audit:pending:(\d+)$/.exec(artifact);
+    if (!match?.[1]) return [];
+    const openQuestions = Number(match[1]);
+    return Number.isSafeInteger(openQuestions) ? [{ dumpId, openQuestions }] : [];
+  });
 }
 
 /** IDs dos despejos concluídos encontrados nos textos do work item. */

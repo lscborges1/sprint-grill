@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AdoError } from "../ado-error";
 import {
   completedDumpIds,
+  dumpAuditMarker,
   dumpCompletionMarker,
   dumpMarker,
   incompleteDumpIds,
@@ -200,7 +201,10 @@ async function listDecisionRecordComments(
       schema: commentsSchema,
     });
     all.push(...result.data.comments);
-    continuationToken = result.data.continuationToken ?? undefined;
+    continuationToken =
+      result.headers.get("x-ms-continuationtoken") ??
+      result.data.continuationToken ??
+      undefined;
   } while (continuationToken !== undefined);
 
   return all;
@@ -281,9 +285,29 @@ export async function readIncompleteDumps(
 /** Escreve a prova final somente depois de todos os artefatos do dump existirem. */
 export async function publishDumpCompletion(
   options: AdoClientOptions,
-  input: { readonly storyId: number; readonly dumpId: string },
+  input: {
+    readonly storyId: number;
+    readonly dumpId: string;
+    /** Pendências que o gate mostrou ao Operador no instante do despejo. */
+    readonly openQuestions: number;
+  },
 ): Promise<void> {
   const rest = createAdoRest(options);
+  const audit = dumpAuditMarker(input.dumpId, input.openQuestions);
+  const comments = await listDecisionRecordComments(rest, input.storyId);
+  if (!comments.some((comment) => comment.text.includes(audit))) {
+    await rest.request({
+      operation: "a auditoria do gate de despejo",
+      path: `_apis/wit/workItems/${input.storyId}/comments`,
+      apiVersion: COMMENTS_API_VERSION,
+      query: { format: MARKDOWN_FORMAT },
+      schema: commentSchema,
+      write: true,
+      body: { text: audit },
+      notFound: `O Azure DevOps não encontrou a US #${input.storyId} no projeto configurado — nada foi publicado.`,
+    });
+  }
+
   const story = await rest.request({
     operation: "a US para concluir o despejo",
     path: `_apis/wit/workitems/${input.storyId}`,

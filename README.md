@@ -31,7 +31,7 @@ O caminho do arquivo de config pode ser trocado com `SPRINT_GRILLER_CONFIG`.
 | Comando | O que faz |
 |---|---|
 | `pnpm dev` | Sobe o app em <http://localhost:3000> |
-| `pnpm rolagem` | Baseline de rolagem das últimas 6 sprints (ver abaixo) |
+| `pnpm rolagem` | Trio anti-vaidade por sprint das últimas 6 sprints (ver abaixo) |
 | `pnpm check` | Typecheck + lint + testes — o comando único do CI |
 | `pnpm test` | Só os testes (vitest) |
 | `pnpm build` / `pnpm start` | Build e execução em modo produção |
@@ -129,11 +129,11 @@ ou resposta fora do contrato podem ter deixado o comment lá — republicar às 
 > O PAT precisa do escopo **Work Items (leitura e escrita)** para publicar a
 > Spec, as Tasks, a estimativa e os Registros de decisão na própria US.
 
-## Baseline de rolagem
+## Trio anti-vaidade por sprint
 
-A métrica que julga a ferramenta não pode sair da ferramenta. A **taxa de
-rolagem** — % de US que entram numa sprint e não concluem nela — é lida do
-Azure DevOps cru, por um script fora da UI, auditável no repo:
+O comando da retro reúne três sinais: **taxa de rolagem** (% de US que entram
+numa sprint e não concluem nela), **cobertura de refinamento** e **dúvidas
+abertas no despejo** por US. Rola fora da UI e só lê o Azure DevOps:
 
 ```bash
 pnpm rolagem              # últimas 6 sprints encerradas
@@ -141,7 +141,19 @@ pnpm rolagem --sprints 10
 pnpm rolagem --before 2026-02-01  # baseline anterior ao rollout
 ```
 
-A tabela sai no stdout (colável na retro) e o log estruturado no stderr.
+A tabela sai no stdout (colável na retro) e o log estruturado no stderr. A
+rolagem vem de WIQL cru; cobertura só recebe crédito quando a Investigação e a
+auditoria imutável do gate foram gravadas no ADO até o fechamento da sprint.
+US rolada com duas ou mais dúvidas abertas ganha o destaque diagnóstico.
+
+O despejo grava a auditoria como comment invisível (`<!--
+sprint-griller:dump:<id>:audit:pending:<n> -->`), com o número de pendências
+que o gate mostrou. É o único estado adicional usado pelo relatório; comentários
+posteriores não reescrevem a história de uma sprint encerrada.
+
+Interpretação anti-vaidade, impressa no relatório: rolagem caindo + cobertura
+alta = funciona; rolagem caindo + cobertura baixa = outra causa; rolagem
+estável + cobertura alta = tese falhou.
 
 Como a conta é feita, para quem for conferir o número na retro:
 

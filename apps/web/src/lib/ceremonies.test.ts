@@ -123,35 +123,40 @@ beforeEach(() => {
 });
 
 describe("ceremony input parsing", () => {
-  it("should parse the session, decision, draft, and dump boundaries", () => {
-    expect({
-      session: sessionIdSchema.parse("session-1"),
-      decision: decisionSchema.parse({
-        sessionId: "session-1",
-        questionId: "q1",
-        answer: "  Sim  ",
-        decidedBy: "  PO  ",
-      }),
-      draft: specDraftSchema.parse({
-        sessionId: "session-1",
-        markdown: "# Spec",
-        base: "# Base",
-        expectedSavedAt: "",
-        overwrite: "true",
-      }),
-      dump: dumpCeremonySchema.parse({
-        sessionId: "session-1",
-        markdown: "# Spec",
-        base: "# Base",
-        tasksMarkdown: "## Task",
-        estimate: "5",
-        confirmPending: true,
-      }),
-    }).toMatchObject({
-      session: "session-1",
-      decision: { answer: "Sim", decidedBy: "PO" },
-      draft: { expectedSavedAt: null, overwrite: true },
-      dump: { estimate: 5, confirmPending: true },
+  it("should parse a session identifier", () => {
+    expect(sessionIdSchema.parse("session-1")).toBe("session-1");
+  });
+
+  it("should trim decision authors and answers", () => {
+    expect(decisionSchema.parse({
+      sessionId: "session-1",
+      questionId: "q1",
+      answer: "  Sim  ",
+      decidedBy: "  PO  ",
+    })).toMatchObject({ answer: "Sim", decidedBy: "PO" });
+  });
+
+  it("should coerce the Spec draft concurrency fields", () => {
+    expect(specDraftSchema.parse({
+      sessionId: "session-1",
+      markdown: "# Spec",
+      base: "# Base",
+      expectedSavedAt: "",
+      overwrite: "true",
+    })).toMatchObject({ expectedSavedAt: null, overwrite: true });
+  });
+
+  it("should coerce the dump estimate while preserving pending confirmation", () => {
+    expect(dumpCeremonySchema.parse({
+      sessionId: "session-1",
+      markdown: "# Spec",
+      base: "# Base",
+      tasksMarkdown: "## Task",
+      estimate: "5",
+      confirmPending: true,
+    })).toMatchObject({
+      estimate: 5,
+      confirmPending: true,
     });
   });
 });

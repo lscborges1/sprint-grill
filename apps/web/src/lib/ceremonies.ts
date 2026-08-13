@@ -10,6 +10,7 @@ import {
 import type {
   Ceremony,
   CeremonyDump,
+  CeremonyDumpInput,
   CeremonySession,
   CeremonyStore,
   DossieState,
@@ -17,6 +18,7 @@ import type {
   PalcoState,
   SaveSpecDraftInput,
   SpecDraft,
+  StartCeremonyInput,
 } from "@sprint-griller/ceremony";
 import { defaultCeremonyDbPath, loadAdoCredentials } from "@sprint-griller/core";
 import { z } from "zod";
@@ -72,7 +74,7 @@ export const dumpCeremonySchema = z.object({
   tasksMarkdown: z.string().min(1, "escreva as Tasks agent-ready antes de despejar"),
   estimate: z.coerce.number().finite().positive("registre a estimativa da squad"),
   confirmPending: z.boolean(),
-});
+}) satisfies z.ZodType<CeremonyDumpInput>;
 
 /** Assinante de uma sessão: o que ele projeta é decisão dele, não do registro. */
 type SessionListener = () => void;
@@ -168,30 +170,42 @@ export async function startCeremony(storyId: number): Promise<CeremonySession> {
 
   const starting = (async () => {
     const run = getInvestigation(storyId);
-    const investigationApproved = run?.status === "aprovado" && run.story !== undefined;
-    await getCeremonyDump().assertCanStartCeremony({ storyId, investigationApproved });
-    if (!investigationApproved) throw new CeremonyError("Investigação aprovada ausente.");
+    const startInput = ceremonyInputFromInvestigation(run);
+    await getCeremonyDump().assertCanStartCeremony({
+      storyId,
+      investigationApproved: startInput !== undefined,
+    });
+    if (!startInput) {
+      throw new Error("assertCanStartCeremony aceitou uma Investigação não aprovada.");
+    }
 
     const ceremony = await getCeremony();
     // Outro caminho pode ter aberto a sessão enquanto o runtime subia.
     const raced = getStore().findOpenSessionByStory(storyId);
     if (raced) return raced;
 
-    return ceremony.start({
-      story: {
-        id: run.story.id,
-        title: run.story.title,
-        description: run.story.description,
-        url: run.story.url,
-      },
-      investigationMarkdown: run.markdown,
-    });
+    return ceremony.start(startInput);
   })().finally(() => {
     registry.startingByStory.delete(storyId);
   });
 
   registry.startingByStory.set(storyId, starting);
   return starting;
+}
+
+function ceremonyInputFromInvestigation(
+  run: ReturnType<typeof getInvestigation>,
+): StartCeremonyInput | undefined {
+  if (run?.status !== "aprovado" || run.story === undefined) return undefined;
+  return {
+    story: {
+      id: run.story.id,
+      title: run.story.title,
+      description: run.story.description,
+      url: run.story.url,
+    },
+    investigationMarkdown: run.markdown,
+  };
 }
 
 /**

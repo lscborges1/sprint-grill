@@ -8,6 +8,7 @@ import Database from "better-sqlite3";
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCeremonyDump } from "./despejo";
+import type { CeremonyDumpInput } from "./despejo";
 import { readDossie } from "./dossie";
 import { openCeremonyStore } from "./store";
 import type { CeremonyStore } from "./store";
@@ -162,6 +163,7 @@ function createAzure(): { readonly state: AzureState; readonly fetch: typeof glo
 }
 
 function createFixture(options: {
+  readonly active?: boolean;
   readonly fetch?: (base: typeof globalThis.fetch) => typeof globalThis.fetch;
   readonly onChange?: (sessionId: string) => void;
   readonly withDecision?: boolean;
@@ -197,7 +199,7 @@ function createFixture(options: {
       decidedBy: "PO + squad",
     });
   }
-  store.finishSession("session-1", { status: "encerrada" });
+  if (!options.active) store.finishSession("session-1", { status: "encerrada" });
   const dossie = readDossie(store, "session-1");
   if (!dossie) throw new Error("expected fixture dossie");
   const azure = createAzure();
@@ -238,14 +240,7 @@ function createFixture(options: {
   };
 }
 
-function inputFor(dossie: NonNullable<ReturnType<typeof readDossie>>): {
-  readonly sessionId: string;
-  readonly markdown: string;
-  readonly base: string;
-  readonly tasksMarkdown: string;
-  readonly estimate: number;
-  readonly confirmPending: boolean;
-} {
+function inputFor(dossie: NonNullable<ReturnType<typeof readDossie>>): CeremonyDumpInput {
   if (!dossie) throw new Error("expected dossie");
   return {
     sessionId: dossie.sessionId,
@@ -604,7 +599,7 @@ describe("CeremonyDump", () => {
       .toHaveLength(1);
   });
 
-  it("should reject stale or unsigned Specs before resolving Azure DevOps options", async () => {
+  it("should reject a stale Spec before resolving Azure DevOps options", async () => {
     const stale = createFixture();
     const staleInput = inputFor(stale.dossie);
     await expect(stale.dump.publish({
@@ -612,7 +607,9 @@ describe("CeremonyDump", () => {
       markdown: `${staleInput.markdown}\ntexto não salvo`,
     })).rejects.toThrow(/salve a edição/i);
     expect(stale.adoOptionsCalls()).toBe(0);
+  });
 
+  it("should reject an unsigned Spec before resolving Azure DevOps options", async () => {
     const unsigned = createFixture({ withDecision: true });
     const generated = unsigned.dossie.spec.generated;
     const markdown = generated.replace(
@@ -632,27 +629,220 @@ describe("CeremonyDump", () => {
     expect(unsigned.adoOptionsCalls()).toBe(0);
   });
 
-  it("should reject invalid Tasks, estimate, and unconfirmed pending questions before ADO", async () => {
+  it("should reject invalid Tasks before ADO", async () => {
     const invalidTasks = createFixture();
     await expect(invalidTasks.dump.publish({
       ...inputFor(invalidTasks.dossie),
       tasksMarkdown: "## Task sem contrato",
     })).rejects.toThrow(/slice vertical|critérios de aceite/i);
     expect(invalidTasks.adoOptionsCalls()).toBe(0);
+  });
 
+  it("should reject an invalid estimate before ADO", async () => {
     const invalidEstimate = createFixture();
     await expect(invalidEstimate.dump.publish({
       ...inputFor(invalidEstimate.dossie),
       estimate: 4,
     })).rejects.toThrow(/Fibonacci/i);
     expect(invalidEstimate.adoOptionsCalls()).toBe(0);
+  });
 
+  it("should reject unconfirmed pending questions before ADO", async () => {
     const pending = createFixture({ withPending: true });
     await expect(pending.dump.publish({
       ...inputFor(pending.dossie),
       confirmPending: false,
     })).rejects.toThrow(/confirme/i);
     expect(pending.adoOptionsCalls()).toBe(0);
+  });
+
+  it("should reject publication before the ceremony ends", async () => {
+    const fixture = createFixture({ active: true });
+
+    await expect(fixture.dump.publish(inputFor(fixture.dossie))).rejects.toThrow(
+      /encerre a cerimônia/i,
+    );
+
+    expect(fixture.adoOptionsCalls()).toBe(0);
+  });
+
+  it("should retry frozen legacy estimates only with their signed value", async () => {
+    let failPreflight = true;
+    const fixture = createFixture({
+      fetch: (base) => async (request, init) => {
+        if (failPreflight) {
+          failPreflight = false;
+          return json({ message: "transient" }, 500);
+        }
+        return base(request, init);
+      },
+    });
+    const input = inputFor(fixture.dossie);
+
+    await expect(fixture.dump.publish(input)).rejects.toThrow(/Azure DevOps/i);
+    const database = new Database(fixture.dbPath);
+    database.prepare("UPDATE sessions SET dump_id = ?, dump_estimate = ? WHERE id = ?").run(
+      "legacy-non-fibonacci",
+      4,
+      input.sessionId,
+    );
+    database.close();
+
+    await expect(fixture.dump.publish(input)).rejects.toThrow(/estimativa assinada/i);
+    await expect(fixture.dump.publish({ ...input, estimate: 4 })).resolves.toBeUndefined();
+  });
+
+  it("should publish a revised ceremony after another dump completed remotely", async () => {
+    const fixture = createFixture();
+    fixture.azure.description = dumpCompletionMarker("prior-completed-dump");
+
+    await fixture.dump.publish(inputFor(fixture.dossie));
+
+    expect({
+      wroteEveryArtifact: fixture.azure.artifactWrites.length === 4,
+      description: fixture.azure.description,
+      status: fixture.store.getSession(fixture.dossie.sessionId)?.dump.status,
+    }).toEqual({
+      wroteEveryArtifact: true,
+      description: expect.stringContaining("Exportar relatório de comissões"),
+      status: "completed",
+    });
+  });
+
+  it("should ignore stale editor base while retrying frozen inputs", async () => {
+    let failCompletion = true;
+    const fixture = createFixture({
+      fetch: (base) => async (request, init) => {
+        const description = patchValue(requestBody(init), "/fields/System.Description");
+        if (failCompletion && typeof description === "string" && description.includes(":complete -->")) {
+          failCompletion = false;
+          return json({ message: "transient" }, 500);
+        }
+        return base(request, init);
+      },
+    });
+    const input = inputFor(fixture.dossie);
+
+    await expect(fixture.dump.publish(input)).rejects.toThrow(/pode ter acontecido/i);
+
+    await expect(fixture.dump.publish({
+      ...input,
+      base: "# base obsoleta de outra aba",
+    })).resolves.toBeUndefined();
+  });
+
+  it("should freeze the signed snapshot before asynchronous ADO preflight", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const requestStarted = new Promise<void>((resolve) => { entered = resolve; });
+    let heldOnce = false;
+    const fixture = createFixture({
+      withPending: true,
+      fetch: (base) => async (request, init) => {
+        if (!heldOnce) {
+          heldOnce = true;
+          entered();
+          await held;
+        }
+        return base(request, init);
+      },
+    });
+    const publishing = fixture.dump.publish(inputFor(fixture.dossie));
+    await requestStarted;
+
+    await expect(Promise.resolve().then(() => fixture.store.recordDecision({
+      sessionId: fixture.dossie.sessionId,
+      questionId: "q1",
+      answer: "Regra bancária",
+      decidedBy: "PO",
+    }))).rejects.toThrow(/despejo/i);
+
+    release();
+    await publishing;
+  });
+
+  it("should assign distinct dump identities to separate ceremonies with identical output", async () => {
+    const fixture = createFixture();
+    const firstInput = inputFor(fixture.dossie);
+    await fixture.dump.publish(firstInput);
+    fixture.store.createSession({
+      id: "session-2",
+      storyId: STORY_ID,
+      storyTitle: fixture.dossie.story.title,
+      storyUrl: STORY_URL,
+      investigationMarkdown: "## Furos da US\n\n- Sem regra de arredondamento.",
+      timeZone: "America/Bahia",
+    });
+    fixture.store.finishSession("session-2", { status: "encerrada" });
+    const secondDossie = readDossie(fixture.store, "session-2");
+    if (!secondDossie) throw new Error("expected second dossie");
+
+    await fixture.dump.publish(inputFor(secondDossie));
+
+    const first = readDossie(fixture.store, firstInput.sessionId)?.dump;
+    const second = readDossie(fixture.store, secondDossie.sessionId)?.dump;
+    expect(first?.status === "completed" && second?.status === "completed"
+      ? first.inputs.dumpId === second.inputs.dumpId
+      : undefined).toBe(false);
+  });
+
+  it("should retry when a decision-record write has an uncertain outcome", async () => {
+    let failDecision = true;
+    const fixture = createFixture({
+      withDecision: true,
+      fetch: (base) => async (request, init) => {
+        const url = new URL(typeof request === "string" || request instanceof URL
+          ? request
+          : request.url);
+        if (
+          failDecision &&
+          init?.method === "POST" &&
+          /\/workItems\/4242\/comments$/i.test(decodeURIComponent(url.pathname))
+        ) {
+          failDecision = false;
+          return json({ message: "transient" }, 500);
+        }
+        return base(request, init);
+      },
+    });
+    const input = inputFor(fixture.dossie);
+
+    await expect(fixture.dump.publish(input)).rejects.toMatchObject({
+      writeMayHaveSucceeded: true,
+    });
+    await fixture.dump.publish(input);
+
+    expect(fixture.azure.comments.filter(({ text }) => text.includes("Registro de decisão")))
+      .toHaveLength(1);
+  });
+
+  it("should retry when a child-Task write has an uncertain outcome", async () => {
+    let failTask = true;
+    const fixture = createFixture({
+      fetch: (base) => async (request, init) => {
+        const url = new URL(typeof request === "string" || request instanceof URL
+          ? request
+          : request.url);
+        if (
+          failTask &&
+          init?.method === "POST" &&
+          /\/workitems\/\$Task$/i.test(decodeURIComponent(url.pathname))
+        ) {
+          failTask = false;
+          return json({ message: "transient" }, 500);
+        }
+        return base(request, init);
+      },
+    });
+    const input = inputFor(fixture.dossie);
+
+    await expect(fixture.dump.publish(input)).rejects.toMatchObject({
+      writeMayHaveSucceeded: true,
+    });
+    await fixture.dump.publish(input);
+
+    expect(fixture.azure.tasks).toHaveLength(1);
   });
 
   it("should notify every local checkpoint and log the ordered final publication", async () => {

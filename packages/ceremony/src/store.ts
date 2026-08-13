@@ -6,6 +6,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { CeremonyError } from "./ceremony-error";
+import { findSignedDumpInputConflict } from "./dump-state";
 import { assertValidSpecMarkdown } from "./spec";
 import {
   SCHEMA_DDL,
@@ -534,7 +535,10 @@ export function openCeremonyStore(
       }
       if (
         session.dump.status === "retryable" &&
-        !sameSignedDumpInputs(session.dump.inputs, input)
+        (
+          session.dump.inputs.dumpId !== input.dumpId ||
+          findSignedDumpInputConflict(session.dump.inputs, input) !== undefined
+        )
       ) {
         throw new CeremonyError(
           "o despejo já começou com outra Spec, outras Tasks ou outra estimativa — use os mesmos valores assinados no retry.",
@@ -1000,13 +1004,6 @@ function toDumpState(
   if (dumpedAt !== null) return { status: "completed", inputs, completedAt: dumpedAt };
   if (dumpStartedAt !== null) return { status: "publishing", inputs, startedAt: dumpStartedAt };
   return { status: "retryable", inputs };
-}
-
-function sameSignedDumpInputs(left: SignedDumpInputs, right: SignedDumpInputs): boolean {
-  return left.dumpId === right.dumpId
-    && left.markdown === right.markdown
-    && left.tasksMarkdown === right.tasksMarkdown
-    && left.estimate === right.estimate;
 }
 
 /**

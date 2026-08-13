@@ -17,9 +17,12 @@ export {
   markdownToAdoHtml,
 } from "./refinement/publish-refinement";
 export {
+  dumpAudits,
+  dumpAuditMarker,
   dumpCompletionMarker,
   dumpMarker,
 } from "./refinement/dump-marker";
+export type { DumpAudit } from "./refinement/dump-marker";
 export type {
   DecisionRecordToPublish,
   ChildTaskToPublish,
@@ -41,6 +44,14 @@ export type {
   RolloverCounts,
   SprintRollover,
 } from "./metrics/rollover";
+export { fetchSprintMetrics } from "./metrics/sprint-metrics";
+export { renderSprintMetricsReport } from "./metrics/sprint-metrics-report";
+export type {
+  DumpDoubt,
+  RefinementCoverage,
+  SprintMetrics,
+  SprintMetricsReport,
+} from "./metrics/sprint-metrics";
 // O picker lê a Investigação e a conclusão do dump para inferir o status.
 // SPEC_MARKER identifica o bloco gerenciado, mas não significa "refinada".
 export {

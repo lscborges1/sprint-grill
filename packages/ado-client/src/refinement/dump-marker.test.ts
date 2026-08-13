@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dumpCompletionMarker, dumpMarker } from "../index";
+import { dumpAuditMarker, dumpCompletionMarker, dumpMarker } from "../index";
 import { inferRefinementStatus } from "./refinement-status";
 import {
   completedDumpIds,
@@ -33,5 +33,11 @@ describe("dump marker grammar", () => {
     ]);
 
     expect(dumpIds).toEqual(["dump-parcial"]);
+  });
+
+  it("should encode the gate's open questions in the durable dump audit", () => {
+    expect(dumpAuditMarker("dump-4211", 2)).toBe(
+      "<!-- sprint-griller:dump:dump-4211:audit:pending:2 -->",
+    );
   });
 });

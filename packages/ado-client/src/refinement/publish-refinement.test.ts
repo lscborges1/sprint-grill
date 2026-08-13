@@ -199,7 +199,12 @@ describe("publishDecisionRecord", () => {
         });
       }
       if (call.init?.method === "GET") {
-        return json({ comments: [], continuationToken: "next-page" });
+        return new Response(JSON.stringify({ comments: [] }), {
+          headers: {
+            "content-type": "application/json",
+            "x-ms-continuationtoken": "next-page",
+          },
+        });
       }
       return json({ commentId: 999 });
     });
@@ -277,17 +282,38 @@ describe("readIncompleteDumps", () => {
 });
 
 describe("publishDumpCompletion", () => {
-  it("should append the final completion marker with a revision guard", async () => {
-    const ado = fakeAdo((call) => call.init?.method === "PATCH"
-      ? json({ id: 4211 })
-      : json({ id: 4211, rev: 7, fields: { "System.Description": "Spec publicada", "System.WorkItemType": "User Story" } }));
+  it("should record the gate result in an immutable comment before marking the dump complete", async () => {
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("/comments")) {
+        return call.init?.method === "POST"
+          ? json({ commentId: 91 })
+          : json({ comments: [] });
+      }
+      return call.init?.method === "PATCH"
+        ? json({ id: 4211 })
+        : json({ id: 4211, rev: 7, fields: { "System.Description": "Spec publicada", "System.WorkItemType": "User Story" } });
+    });
 
-    await publishDumpCompletion(options(ado.fetch), { storyId: 4211, dumpId: "dump-4211" });
+    await publishDumpCompletion(options(ado.fetch), {
+      storyId: 4211,
+      dumpId: "dump-4211",
+      openQuestions: 2,
+    });
 
-    expect(JSON.parse(String(ado.calls.at(-1)?.init?.body))).toEqual([
-      { op: "test", path: "/rev", value: 7 },
-      expect.objectContaining({ value: expect.stringContaining("sprint-griller:dump:dump-4211:complete") }),
-    ]);
+    expect(ado.calls.flatMap((call) =>
+      call.init?.body === undefined
+        ? []
+        : [{ method: call.init.method, body: JSON.parse(String(call.init.body)) }],
+    )).toEqual(expect.arrayContaining([
+      { method: "POST", body: { text: "<!-- sprint-griller:dump:dump-4211:audit:pending:2 -->" } },
+      {
+        method: "PATCH",
+        body: [
+          { op: "test", path: "/rev", value: 7 },
+          expect.objectContaining({ value: expect.stringContaining("sprint-griller:dump:dump-4211:complete") }),
+        ],
+      },
+    ]));
   });
 });
 

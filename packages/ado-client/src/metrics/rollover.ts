@@ -34,6 +34,16 @@ export interface SprintRollover extends RolloverCounts {
   readonly path: string;
   readonly startDate: Date;
   readonly finishDate: Date;
+  /** Instante em que a sprint de fato fechou, após o último dia do ADO. */
+  readonly closesAt: Date;
+  /** Resultado por US, para cruzamentos diagnósticos fora do relatório agregado. */
+  readonly stories: readonly SprintStoryRollover[];
+}
+
+export interface SprintStoryRollover {
+  readonly id: number;
+  readonly title: string;
+  readonly outcome: "completed" | "rolled" | "removed";
 }
 
 export interface RolloverBaseline {
@@ -76,6 +86,7 @@ const statesBatchSchema = z.object({
       fields: z.object({
         "System.State": z.string(),
         "System.WorkItemType": z.string(),
+        "System.Title": z.string(),
       }),
     }),
   ),
@@ -84,6 +95,7 @@ const statesBatchSchema = z.object({
 interface WorkItemStateAsOf {
   readonly state: string;
   readonly type: string;
+  readonly title: string;
 }
 
 interface ClosedSprint {
@@ -229,17 +241,25 @@ async function sprintRollover(
   let completed = 0;
   let removed = 0;
   const unknown: string[] = [];
+  const stories: SprintStoryRollover[] = [];
   for (const id of ids) {
     const item = states.get(id);
     const category =
       item === undefined
         ? undefined
         : categories.get(stateCategoryKey(item.type, item.state));
-    if (category === "Completed" && stillInSprint.has(id)) completed += 1;
-    else if (category === "Removed") removed += 1;
+    const outcome =
+      category === "Completed" && stillInSprint.has(id)
+        ? "completed"
+        : category === "Removed"
+          ? "removed"
+          : "rolled";
+    if (outcome === "completed") completed += 1;
+    else if (outcome === "removed") removed += 1;
     else if (category === undefined) {
       unknown.push(item?.state ?? "(sem estado)");
     }
+    if (item !== undefined) stories.push({ id, title: item.title, outcome });
   }
 
   // Numa baseline retroativa isto acontece: estado aposentado do processo desde
@@ -257,6 +277,8 @@ async function sprintRollover(
     path: sprint.path,
     startDate: sprint.startDate,
     finishDate: sprint.finishDate,
+    closesAt: sprint.closesAt,
+    stories,
     ...counts({ scope: ids.length - removed, completed, removed }),
   };
 }
@@ -308,7 +330,7 @@ async function statesAsOf(
       schema: statesBatchSchema,
       body: {
         ids: ids.slice(from, from + BATCH_LIMIT),
-        fields: ["System.State", "System.WorkItemType"],
+        fields: ["System.State", "System.WorkItemType", "System.Title"],
         asOf: instant.toISOString(),
       },
     });
@@ -317,6 +339,7 @@ async function statesAsOf(
       states.set(item.id, {
         state: item.fields["System.State"],
         type: item.fields["System.WorkItemType"],
+        title: item.fields["System.Title"],
       });
     }
   }

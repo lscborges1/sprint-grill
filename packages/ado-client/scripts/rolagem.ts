@@ -17,8 +17,8 @@ import {
 } from "@sprint-griller/core";
 import {
   AdoError,
-  fetchRolloverBaseline,
-  renderRolloverReport,
+  fetchSprintMetrics,
+  renderSprintMetricsReport,
 } from "../src/index";
 import { parseRolagemArgs } from "../src/metrics/rolagem-args";
 
@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const { before, sprints } = parseRolagemArgs(process.argv.slice(2));
   const config = loadSquadConfig();
 
-  const baseline = await fetchRolloverBaseline({
+  const metrics = await fetchSprintMetrics({
     azureDevOps: config.azureDevOps,
     credentials: loadAdoCredentials(),
     // Log estruturado no stderr para a tabela do stdout seguir colável na retro.
@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     ...(before === undefined ? {} : { before }),
   });
 
-  stdout.write(`\n${renderRolloverReport(baseline, config.azureDevOps)}`);
+  stdout.write(`\n${renderSprintMetricsReport(metrics, config.azureDevOps)}`);
 }
 
 try {

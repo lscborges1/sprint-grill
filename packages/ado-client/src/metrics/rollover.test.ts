@@ -159,6 +159,7 @@ function fakeAdo(state: FakeAdoState = {}) {
               "System.State": states[id] ?? "Active",
               "System.WorkItemType":
                 state.workItemTypesById?.[id] ?? defaultType,
+              "System.Title": `US ${id}`,
             },
           })),
         });
@@ -372,7 +373,7 @@ describe("fetchRolloverBaseline", () => {
       .map(({ body }) => (body as { fields: string[] }).fields);
 
     expect(batchFields).toEqual([
-      expect.arrayContaining(["System.State", "System.WorkItemType"]),
+      expect.arrayContaining(["System.State", "System.WorkItemType", "System.Title"]),
     ]);
   });
 

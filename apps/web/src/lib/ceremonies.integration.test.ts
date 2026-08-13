@@ -339,7 +339,10 @@ describe("ceremony dump integration", () => {
     expect(getDossie(session.id)?.dump.status).toBe("retryable");
     await expect(dumpCeremony(input)).resolves.toBeUndefined();
 
-    expect(azure.comments).toHaveLength(1);
+    expect(azure.comments).toHaveLength(2);
+    expect(azure.comments.map(({ text }) => text)).toEqual(expect.arrayContaining([
+      expect.stringContaining(":audit:pending:0 -->"),
+    ]));
     expect(azure.taskWrites).toBe(2);
     expect(azure.dependencyWrites).toBe(1);
     expect(azure.specWrites).toBe(1);

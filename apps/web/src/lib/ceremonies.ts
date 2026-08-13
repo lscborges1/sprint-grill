@@ -429,7 +429,11 @@ async function dumpCeremonyNow(
     tasks,
   });
 
-  await publishDumpCompletion(ado, { storyId: dossieWithRecords.story.id, dumpId });
+  await publishDumpCompletion(ado, {
+    storyId: dossieWithRecords.story.id,
+    dumpId,
+    openQuestions: initial.pending.length,
+  });
 
   store.markDumpCompleted(input.sessionId, initial.decisions.length);
   publish(input.sessionId);

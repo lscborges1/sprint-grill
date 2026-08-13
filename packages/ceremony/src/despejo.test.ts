@@ -536,6 +536,48 @@ describe("CeremonyDump", () => {
     }).toEqual({ tasks: 1, audits: 1, dumpStatus: "completed" });
   });
 
+  it("should isolate throwing change notifications from publication and retry checkpoints", async () => {
+    let failCompletion = true;
+    const fixture = createFixture({
+      onChange: () => {
+        throw new Error("subscriber broke");
+      },
+      fetch: (base) => async (request, init) => {
+        const body = requestBody(init);
+        const description = patchValue(body, "/fields/System.Description");
+        if (failCompletion && typeof description === "string" && description.includes(":complete -->")) {
+          failCompletion = false;
+          return json({ message: "transient" }, 500);
+        }
+        return base(request, init);
+      },
+    });
+    const input = inputFor(fixture.dossie);
+
+    await expect(fixture.dump.publish(input)).rejects.toThrow(/pode ter acontecido/i);
+    expect(fixture.store.getSession(input.sessionId)?.dump.status).toBe("retryable");
+    await expect(fixture.dump.publish(input)).resolves.toBeUndefined();
+
+    const notificationFailure = fixture.logLines
+      .map((line) => JSON.parse(line) as unknown)
+      .find((entry): entry is Record<string, unknown> =>
+        typeof entry === "object" && entry !== null && "msg" in entry &&
+        entry.msg === "falha ao notificar mudança no despejo"
+      );
+    expect({
+      dumpStatus: fixture.store.getSession(input.sessionId)?.dump.status,
+      tasks: fixture.azure.tasks.length,
+      notificationFailure,
+    }).toEqual({
+      dumpStatus: "completed",
+      tasks: 1,
+      notificationFailure: expect.objectContaining({
+        sessionId: input.sessionId,
+        err: expect.objectContaining({ message: "subscriber broke" }),
+      }),
+    });
+  });
+
   it("should recover from a decision checkpoint without duplicating its remote record", async () => {
     let failSpec = true;
     const fixture = createFixture({

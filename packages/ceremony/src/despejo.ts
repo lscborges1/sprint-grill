@@ -55,6 +55,17 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
     readonly promise: Promise<void>;
   }>();
 
+  function changed(sessionId: string): void {
+    try {
+      options.onChange?.(sessionId);
+    } catch (error) {
+      options.logger.warn(
+        { err: error, sessionId },
+        "falha ao notificar mudança no despejo",
+      );
+    }
+  }
+
   return {
     async assertCanStartCeremony({ storyId, investigationApproved }) {
       const incompleteLocal = store.findIncompleteDumpByStory(storyId);
@@ -171,7 +182,7 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
           tasksMarkdown,
           estimate: input.estimate,
         });
-        options.onChange?.(input.sessionId);
+        changed(input.sessionId);
   
         try {
           const ado = await options.adoOptions();
@@ -185,7 +196,7 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
   
           if (completions.includes(dumpId)) {
             store.markDumpCompleted(input.sessionId, initial.decisions.length);
-            options.onChange?.(input.sessionId);
+            changed(input.sessionId);
             return;
           }
   
@@ -212,7 +223,7 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
               recordId: published.commentId,
               recordUrl: published.url,
             });
-            options.onChange?.(input.sessionId);
+            changed(input.sessionId);
           }
   
           const withRecords = readDossie(store, input.sessionId);
@@ -229,9 +240,9 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
             dumpId,
             openQuestions: initial.pending.length,
           });
-  
+
           store.markDumpCompleted(input.sessionId, initial.decisions.length);
-          options.onChange?.(input.sessionId);
+          changed(input.sessionId);
           options.logger.info(
             {
               sessionId: input.sessionId,
@@ -244,7 +255,7 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
           );
         } catch (error) {
           store.abortDump(input.sessionId);
-          options.onChange?.(input.sessionId);
+          changed(input.sessionId);
           throw error;
         }
       })().finally(() => {

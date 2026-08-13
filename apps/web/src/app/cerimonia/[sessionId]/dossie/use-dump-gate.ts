@@ -5,6 +5,7 @@ import type { CeremonyDumpState, DossieState } from "@sprint-griller/ceremony";
 import { useActionState, useState } from "react";
 import { dumpCeremonyAction } from "../../actions";
 import { DUMP_INITIAL_STATE, type DumpActionState } from "../../spec-draft-action-state";
+import { dumpGateResetKey } from "./spec-editor-state";
 
 interface UseDumpGateInput {
   readonly storyUrl: string;
@@ -38,7 +39,17 @@ export function useDumpGate(
   const initialTasksMarkdown = dump.status === "not-started" ? taskPreview : dump.inputs.tasksMarkdown;
   const [open, setOpen] = useState(false);
   const [result, action, dumping] = useActionState(dumpCeremonyAction, DUMP_INITIAL_STATE);
-  const [tasksMarkdown, setTasksMarkdown] = useState(initialTasksMarkdown);
+  const resetKey = dumpGateResetKey(
+    initialTasksMarkdown,
+    dump.status !== "not-started",
+  );
+  const [taskEditor, setTaskEditor] = useState({ resetKey, tasksMarkdown: initialTasksMarkdown });
+  if (taskEditor.resetKey !== resetKey) {
+    setTaskEditor({ resetKey, tasksMarkdown: initialTasksMarkdown });
+  }
+  const tasksMarkdown = taskEditor.resetKey === resetKey
+    ? taskEditor.tasksMarkdown
+    : initialTasksMarkdown;
   const validation = validateTaskDraft(tasksMarkdown, storyUrl);
 
   return {
@@ -49,7 +60,7 @@ export function useDumpGate(
     open,
     openGate: () => setOpen(true),
     result,
-    setTasksMarkdown,
+    setTasksMarkdown: (nextTasksMarkdown) => setTaskEditor({ resetKey, tasksMarkdown: nextTasksMarkdown }),
     taskErrors: validation.valid ? [] : validation.errors,
     view: dumpGateView(dump, result, tasksMarkdown),
   } as const;

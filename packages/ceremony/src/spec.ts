@@ -208,10 +208,7 @@ function findDecisionTraceability(
     );
   }
 
-  const appendix = {
-    ...appendices[0]!,
-    bodyEnd: findNextLevelTwoHeading(markdown, appendices[0]!.bodyStart),
-  };
+  const appendix = appendices[0]!;
   const traceability = markdown.slice(appendix.bodyStart, appendix.bodyEnd);
   if (
     requireEmptyEntry &&
@@ -262,38 +259,24 @@ function findExactTraceabilityEntry(
   return -1;
 }
 
-function findNextLevelTwoHeading(markdown: string, bodyStart: number): number {
-  let offset = bodyStart;
-  let fence = "";
-
-  for (const line of markdown.slice(bodyStart).split(/(?<=\n)/)) {
-    const withoutNewline = line.replace(/\r?\n$/, "");
-    const fenceMatch = withoutNewline.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (fenceMatch?.[1]) {
-      const closesFence =
-        fence !== "" &&
-        fenceMatch[1][0] === fence[0] &&
-        fenceMatch[1].length >= fence.length &&
-        fenceMatch[2]?.trim() === "";
-      if (closesFence) {
-        fence = "";
-      } else if (fence === "") {
-        fence = fenceMatch[1];
-      }
-    } else if (fence === "" && /^ {0,3}##[ \t]+/.test(withoutNewline)) {
-      return offset;
-    }
-    offset += line.length;
-  }
-
-  return markdown.length;
-}
-
 function findCanonicalSections(
   markdown: string,
   requiredHeadings: readonly string[],
 ): readonly SpecSectionOccurrence[] {
   const headings = new Set(requiredHeadings);
+  const sections = findLevelTwoSections(markdown);
+
+  return sections
+    .filter((section) => headings.has(section.heading))
+    .map((section) => ({
+      heading: section.heading,
+      bodyStart: section.bodyStart,
+      bodyEnd: sections.find((candidate) => candidate.headingStart > section.headingStart)?.headingStart
+        ?? markdown.length,
+    }));
+}
+
+function findLevelTwoSections(markdown: string): readonly SpecSectionStart[] {
   const found: SpecSectionStart[] = [];
   let offset = 0;
   let fence = "";
@@ -318,18 +301,14 @@ function findCanonicalSections(
 
     if (fence === "") {
       const heading = withoutNewline.match(/^ {0,3}##[ \t]+(.+?)[ \t]*$/)?.[1];
-      if (heading !== undefined && headings.has(heading)) {
+      if (heading !== undefined) {
         found.push({ heading, headingStart: offset, bodyStart: offset + line.length });
       }
     }
     offset += line.length;
   }
 
-  return found.map((section, index) => ({
-    heading: section.heading,
-    bodyStart: section.bodyStart,
-    bodyEnd: found[index + 1]?.headingStart ?? markdown.length,
-  }));
+  return found;
 }
 
 function italic(text: string): string {

@@ -105,7 +105,7 @@ const QUESTION: AgentQuestion = {
   allowFreeText: true,
 };
 
-const SECOND_QUESTION: AgentQuestion = {
+const SECOND_QUESTION = {
   id: "q2",
   header: "Formato",
   question: "O CSV usa ponto e vírgula?",
@@ -113,7 +113,7 @@ const SECOND_QUESTION: AgentQuestion = {
   evidence: ["core-api · src/reports/csv.ts"],
   options: [],
   allowFreeText: true,
-};
+} as const satisfies AgentQuestion;
 
 const TASKS_MARKDOWN = `## Implementar exportação
 

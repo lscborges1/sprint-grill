@@ -35,7 +35,7 @@ const { dumpCeremony, getDossie, getPalco, saveSpecDraft, startCeremony, submitD
 
 const STORY_ID = 4242;
 const STORY_URL = `https://dev.azure.com/acme/Plataforma/_workitems/edit/${STORY_ID}`;
-const QUESTION: AgentQuestion = {
+const QUESTION = {
   id: "q1",
   header: "Arredondamento",
   question: "A comissão usa a regra bancária?",
@@ -43,7 +43,7 @@ const QUESTION: AgentQuestion = {
   evidence: ["core-api · src/payroll/rounding.ts"],
   options: [],
   allowFreeText: true,
-};
+} as const satisfies AgentQuestion;
 const TASKS_MARKDOWN = `## Preparar cálculo
 
 Entrega o cálculo de comissão como um slice executável.

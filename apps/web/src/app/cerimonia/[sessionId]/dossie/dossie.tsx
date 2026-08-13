@@ -2,19 +2,21 @@
 
 // Subpath de propósito: o barril do pacote puxa o store, e o binding nativo do
 // SQLite não existe no bundle do cliente.
-import { SPEC_SECTIONS, dossieStateSchema } from "@sprint-griller/ceremony/session-state";
+import {
+  SPEC_SECTIONS,
+  dossieStateSchema,
+  signedDumpInputs,
+} from "@sprint-griller/ceremony/session-state";
 import { formatDecisionWhen, readSpecSection } from "@sprint-griller/ceremony/spec";
 import type {
   CeremonyDecision,
-  CeremonyDumpState,
   DossieState,
-  SignedDumpInputs,
 } from "@sprint-griller/ceremony";
 import Link from "next/link";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
 import { DumpGate } from "./dump-gate";
-import { dumpGateResetKey, isDumpGateBlocked } from "./spec-editor-state";
+import { isDumpGateBlocked } from "./spec-editor-state";
 import { useSpecEditor } from "./use-spec-editor";
 
 /**
@@ -401,7 +403,6 @@ function SpecEditor({
       )}
 
       <DumpGate
-        key={dumpGateResetKey(signedInputs?.tasksMarkdown ?? taskPreview, dumpLocked)}
         sessionId={sessionId}
         storyUrl={storyUrl}
         markdown={dumpMarkdown}
@@ -414,17 +415,6 @@ function SpecEditor({
       />
     </Section>
   );
-}
-
-function signedDumpInputs(dump: CeremonyDumpState): SignedDumpInputs | undefined {
-  switch (dump.status) {
-    case "not-started":
-      return undefined;
-    case "publishing":
-    case "retryable":
-    case "completed":
-      return dump.inputs;
-  }
 }
 
 /** Joga a edição fora e volta ao documento que a cerimônia gerou. */

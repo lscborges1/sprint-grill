@@ -84,6 +84,27 @@ Preservar compatibilidade com clientes antigos.
     });
   });
 
+  it("should preserve indentation and trailing Markdown spaces in the signed Task body", () => {
+    const markdownLineBreak = "  ";
+    const markdown = `## Executar exemplo
+
+    pnpm test
+
+[Spec da US](${SPEC_URL})${markdownLineBreak}
+
+### Critérios de aceite
+
+- Executa o exemplo.`;
+
+    expect(parseTaskDraft(markdown, SPEC_URL)[0]?.bodyMarkdown).toBe(`    pnpm test
+
+[Spec da US](${SPEC_URL})${markdownLineBreak}
+
+### Critérios de aceite
+
+- Executa o exemplo.`);
+  });
+
   it("should parse agent-ready child tasks and their native blockers", () => {
     expect(parseTaskDraft(VALID, SPEC_URL)).toEqual([
       {

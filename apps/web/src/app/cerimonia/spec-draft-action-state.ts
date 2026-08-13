@@ -23,4 +23,4 @@ export type DumpActionState =
   | { readonly status: "success" }
   | { readonly status: "error"; readonly message: string };
 
-export const DUMP_INITIAL_STATE: DumpActionState = { status: "idle" };
+export const DUMP_INITIAL_STATE = { status: "idle" } as const satisfies DumpActionState;

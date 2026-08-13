@@ -45,7 +45,6 @@ export interface ChildTaskToPublish {
   readonly title: string;
   /** Corpo Markdown completo assinado pelo Operador, sem o heading do título. */
   readonly bodyMarkdown: string;
-  readonly acceptanceCriteria: readonly string[];
   /** Títulos de outras tasks deste mesmo despejo que precisam terminar antes. */
   readonly blockedBy: readonly string[];
 }
@@ -414,7 +413,7 @@ function workItemIdFromUrl(url: string): number | undefined {
 }
 
 function renderChildTaskDescription(task: ChildTaskToPublish, marker: string): string {
-  return `${marker}\n${markdownToAdoHtml(task.bodyMarkdown.trim())}`;
+  return `${marker}\n${markdownToAdoHtml(task.bodyMarkdown)}`;
 }
 
 /** Exportado para cobrir o contrato de preservação do texto já escrito na US. */

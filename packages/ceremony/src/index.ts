@@ -12,7 +12,7 @@ export { ceremonyInstructions, ceremonyOpeningPrompt, ceremonyResumePrompt } fro
 export type { CeremonyStory } from "./prompt";
 // Os schemas de estado vivem em subpaths: o browser não pode puxar SQLite pelo barril.
 export { palcoStateSchema } from "./palco-state";
-export { dossieStateSchema } from "./session-state";
+export { dossieStateSchema, signedDumpInputs } from "./session-state";
 export {
   appendDecisionTraceability,
   assertValidSpecMarkdown,

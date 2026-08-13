@@ -204,7 +204,7 @@ describe("isSpecStale", () => {
 });
 
 describe("dumpGateResetKey", () => {
-  it("should reset the task editor when unchanged inputs become frozen", () => {
+  it("should reset only the task editor when unchanged inputs become frozen", () => {
     const tasksMarkdown = "## Implementar retry\n\n### Critérios de aceite\n\n- Reutiliza as Tasks assinadas.";
 
     expect(dumpGateResetKey(tasksMarkdown, false)).not.toBe(

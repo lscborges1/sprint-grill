@@ -10,6 +10,7 @@ import {
   readPalco,
   stripDecisionRecordLinks,
   parseTaskDraft,
+  signedDumpInputs,
 } from "@sprint-griller/ceremony";
 import { isCeremonyEstimate } from "@sprint-griller/ceremony/estimate";
 import type {
@@ -21,7 +22,6 @@ import type {
   DiscardSpecDraftInput,
   PalcoState,
   SaveSpecDraftInput,
-  SignedDumpInputs,
   SpecDraft,
 } from "@sprint-griller/ceremony";
 import { defaultCeremonyDbPath, loadAdoCredentials } from "@sprint-griller/core";
@@ -458,17 +458,6 @@ function signedInputSignature(input: z.infer<typeof dumpCeremonySchema>): string
       estimate: input.estimate,
     }))
     .digest("hex");
-}
-
-function signedDumpInputs(dump: CeremonyDumpState): SignedDumpInputs | undefined {
-  switch (dump.status) {
-    case "not-started":
-      return undefined;
-    case "publishing":
-    case "retryable":
-    case "completed":
-      return dump.inputs;
-  }
 }
 
 function isIncompleteDump(dump: CeremonyDumpState): boolean {

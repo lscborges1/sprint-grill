@@ -52,12 +52,12 @@ export function parseTaskDraft(markdown: string, specUrl: string): readonly Task
  * escrita no ADO se alguém contornar a tela.
  */
 export function validateTaskDraft(markdown: string, specUrl: string): TaskDraftValidation {
-  const trimmed = markdown.trim();
-  if (trimmed === "") {
+  const draft = trimBoundaryBlankLines(markdown);
+  if (draft.trim() === "") {
     return { valid: false, errors: ["escreva ao menos uma Task agent-ready antes de despejar."] };
   }
 
-  const firstTask = trimmed.search(/^## /m);
+  const firstTask = draft.search(/^## /m);
   if (firstTask === -1) {
     return { valid: false, errors: ["cada Task precisa começar com um título em ##."] };
   }
@@ -67,11 +67,10 @@ export function validateTaskDraft(markdown: string, specUrl: string): TaskDraftV
     errors.push("não escreva texto antes da primeira Task (`## título`).");
   }
 
-  const sections = trimmed
+  const sections = draft
     .slice(firstTask)
     .split(/^## /m)
-    .map((section) => section.trim())
-    .filter((section) => section !== "");
+    .filter((section) => section.trim() !== "");
   const parsed = sections.map((section, index) => parseTask(section, specUrl, index + 1));
   errors.push(...parsed.flatMap((entry) => entry.errors));
 
@@ -140,7 +139,7 @@ function parseTask(
     return { task: undefined, errors: [`a Task ${taskNumber} precisa de um título depois de ##.`] };
   }
 
-  const body = bodyLines.join("\n").trim();
+  const body = trimBoundaryBlankLines(bodyLines.join("\n"));
   const acceptance = sectionBody(body, ACCEPTANCE_HEADING);
   const errors: string[] = [];
   if (bodyBeforeFirstHeading(body) === "") {
@@ -222,6 +221,12 @@ function listItems(markdown: string): readonly string[] {
     .split("\n")
     .map((line) => line.match(/^-\s+(.+)$/)?.[1]?.trim())
     .filter((item): item is string => item !== undefined && item !== "");
+}
+
+function trimBoundaryBlankLines(markdown: string): string {
+  return markdown
+    .replace(/^(?:[ \t]*\r?\n)+/, "")
+    .replace(/(?:\r?\n[ \t]*)+$/, "");
 }
 
 function assertAcyclic(

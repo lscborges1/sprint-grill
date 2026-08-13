@@ -179,6 +179,15 @@ describe("assertValidSpecMarkdown", () => {
     expect(() => assertValidSpecMarkdown(markdown)).toThrow(/Contexto de impacto.*vazia/i);
   });
 
+  it("should not count a custom heading as content of an empty canonical section", () => {
+    const markdown = renderSpecMarkdown(REFINED).replace(
+      `${SPEC_SECTIONS.pending.blurb}\n\n- O mobile entra nesta US?`,
+      `\n## Nota do Operador\n\nDetalhe adicional.`,
+    );
+
+    expect(() => assertValidSpecMarkdown(markdown)).toThrow(/Pendências.*vazia/i);
+  });
+
   it("should reject a duplicated canonical section", () => {
     const markdown = `${renderSpecMarkdown(REFINED)}\n## ${SPEC_SECTIONS.decisions.heading}\n\nOutra versão.\n`;
 

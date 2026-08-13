@@ -350,7 +350,6 @@ describe("publishChildTasks", () => {
     tasks: [{
       title: "Criar endpoint",
       bodyMarkdown: "Entrega o CSV.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Retorna o CSV.",
-      acceptanceCriteria: ["Retorna o CSV."],
       blockedBy: [],
     }],
   } as const;
@@ -368,7 +367,9 @@ describe("publishChildTasks", () => {
       dumpId: "dump-4211",
       tasks: [{
         title: "Criar endpoint",
-        bodyMarkdown: `Entrega o CSV.
+        bodyMarkdown: `    pnpm test
+
+Entrega o CSV.
 
 ### Contexto técnico
 
@@ -378,7 +379,6 @@ Preservar clientes antigos.
 
 - Retorna o CSV.
 `,
-        acceptanceCriteria: ["Retorna o CSV."],
         blockedBy: [],
       }],
     });
@@ -387,6 +387,7 @@ Preservar clientes antigos.
       ado.calls.find((call) => call.url.includes("/_apis/wit/workitems/$Task"))?.init?.body,
     );
     expect(taskBody).toContain("<h3>Contexto técnico</h3>");
+    expect(taskBody).toContain("<p>    pnpm test</p>");
     expect(taskBody).toContain("Preservar clientes antigos.");
     expect(taskBody).not.toContain("Spec da US");
     expect(taskBody).toContain("sprint-griller:dump:dump-4211:task:1");
@@ -421,13 +422,11 @@ Preservar clientes antigos.
         {
           title: "Criar endpoint",
           bodyMarkdown: "Entrega o CSV.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Retorna o CSV.",
-          acceptanceCriteria: ["Retorna o CSV."],
           blockedBy: [],
         },
         {
           title: "Mostrar link",
           bodyMarkdown: "Mostra o link no portal.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Exibe o link.\n\n### Bloqueada por\n\n- Criar endpoint",
-          acceptanceCriteria: ["Exibe o link."],
           blockedBy: ["Criar endpoint"],
         },
       ],
@@ -469,7 +468,6 @@ Preservar clientes antigos.
       tasks: [{
         title: "Transferir dados pessoais de Maria",
         bodyMarkdown: "Transfere os dados solicitados.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Concluído.",
-        acceptanceCriteria: ["Concluído."],
         blockedBy: [],
       }],
     });
@@ -549,7 +547,6 @@ Preservar clientes antigos.
         {
           title: "Mostrar link",
           bodyMarkdown: "Mostra o link no portal.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Exibe o link.\n\n### Bloqueada por\n\n- Criar endpoint",
-          acceptanceCriteria: ["Exibe o link."],
           blockedBy: ["Criar endpoint"],
         },
       ],
@@ -602,7 +599,6 @@ Preservar clientes antigos.
         {
           title: "Mostrar link",
           bodyMarkdown: "Mostra o link no portal.\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/4211)\n\n### Critérios de aceite\n\n- Exibe o link.",
-          acceptanceCriteria: ["Exibe o link."],
           blockedBy: [],
         },
       ],

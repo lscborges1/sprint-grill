@@ -283,6 +283,23 @@ describe("CeremonyDump", () => {
     });
   });
 
+  it.each([
+    ["Spec", (input: ReturnType<typeof inputFor>) => ({ ...input, markdown: `${input.markdown}\nOutra Spec` })],
+    ["Tasks", (input: ReturnType<typeof inputFor>) => ({ ...input, tasksMarkdown: `${input.tasksMarkdown}\nOutra Task` })],
+    ["estimativa", (input: ReturnType<typeof inputFor>) => ({ ...input, estimate: 8 })],
+  ] as const)(
+    "should reject completed dump calls with conflicting signed %s",
+    async (_field, conflict) => {
+      const fixture = createFixture();
+      const input = inputFor(fixture.dossie);
+      await fixture.dump.publish(input);
+
+      await expect(fixture.dump.publish(conflict(input))).rejects.toThrow(
+        /Spec assinada|Tasks assinadas|estimativa assinada/i,
+      );
+    },
+  );
+
   it("should deduplicate concurrent publication of the same signed inputs", async () => {
     let release!: () => void;
     let entered!: () => void;
@@ -336,6 +353,67 @@ describe("CeremonyDump", () => {
     );
     release();
     await publishing;
+  });
+
+  it("should reject a different base while the same story is publishing", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const requestStarted = new Promise<void>((resolve) => { entered = resolve; });
+    let heldOnce = false;
+    const fixture = createFixture({
+      fetch: (base) => async (request, init) => {
+        if (!heldOnce) {
+          heldOnce = true;
+          entered();
+          await held;
+        }
+        return base(request, init);
+      },
+    });
+    const input = inputFor(fixture.dossie);
+    const publishing = fixture.dump.publish(input);
+    await requestStarted;
+
+    try {
+      await expect(fixture.dump.publish({ ...input, base: "# Outra base" })).rejects.toThrow(
+        /outros valores assinados/i,
+      );
+    } finally {
+      release();
+      await publishing;
+    }
+  });
+
+  it("should not let an unconfirmed pending caller join a confirmed publication", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const requestStarted = new Promise<void>((resolve) => { entered = resolve; });
+    let heldOnce = false;
+    const fixture = createFixture({
+      withPending: true,
+      fetch: (base) => async (request, init) => {
+        if (!heldOnce) {
+          heldOnce = true;
+          entered();
+          await held;
+        }
+        return base(request, init);
+      },
+    });
+    const input = inputFor(fixture.dossie);
+    const publishing = fixture.dump.publish(input);
+    await requestStarted;
+
+    try {
+      await expect(fixture.dump.publish({ ...input, confirmPending: false })).rejects.toThrow(
+        /outros valores assinados/i,
+      );
+    } finally {
+      release();
+      await publishing;
+    }
   });
 
   it("should serialize separate sessions of the same story", async () => {

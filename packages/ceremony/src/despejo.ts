@@ -109,12 +109,27 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
       }
 
       const tracked = (async (): Promise<void> => {
+        const frozenInputs = signedDumpInputs(initial.dump);
+        if (frozenInputs !== undefined && input.markdown !== frozenInputs.markdown) {
+          throw new CeremonyError(
+            "o despejo já começou com outra Spec — use a Spec assinada no retry.",
+          );
+        }
+        if (frozenInputs !== undefined && input.estimate !== frozenInputs.estimate) {
+          throw new CeremonyError(
+            "o despejo já começou com outra estimativa — use a estimativa assinada no retry.",
+          );
+        }
+        if (frozenInputs !== undefined && input.tasksMarkdown !== frozenInputs.tasksMarkdown) {
+          throw new CeremonyError(
+            "o despejo já começou com outras Tasks assinadas — use as mesmas Tasks no retry.",
+          );
+        }
         if (initial.dump.status === "completed") return;
         if (store.getSession(input.sessionId)?.status !== "encerrada") {
           throw new CeremonyError("encerre a cerimônia antes de despejar.");
         }
   
-        const frozenInputs = signedDumpInputs(initial.dump);
         const frozen = frozenInputs?.markdown;
         const signed = frozen ?? initial.spec.draft?.markdown ?? initial.spec.generated;
         if (input.markdown !== signed) {
@@ -135,18 +150,8 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
         if (initial.pending.length > 0 && !input.confirmPending) {
           throw new CeremonyError("confirme que deseja despejar com as pendências abertas.");
         }
-        if (frozenInputs !== undefined && input.estimate !== frozenInputs.estimate) {
-          throw new CeremonyError(
-            "o despejo já começou com outra estimativa — use a estimativa assinada no retry.",
-          );
-        }
         if (frozenInputs === undefined && !isCeremonyEstimate(input.estimate)) {
           throw new CeremonyError("a estimativa deve usar a escala Fibonacci da squad.");
-        }
-        if (frozenInputs !== undefined && input.tasksMarkdown !== frozenInputs.tasksMarkdown) {
-          throw new CeremonyError(
-            "o despejo já começou com outras Tasks assinadas — use as mesmas Tasks no retry.",
-          );
         }
   
         const tasksMarkdown = frozenInputs?.tasksMarkdown ?? input.tasksMarkdown;
@@ -256,9 +261,12 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
 function signedInputSignature(input: CeremonyDumpInput): string {
   return createHash("sha256")
     .update(JSON.stringify({
+      sessionId: input.sessionId,
       markdown: input.markdown,
+      base: input.base,
       tasksMarkdown: input.tasksMarkdown,
       estimate: input.estimate,
+      confirmPending: input.confirmPending,
     }))
     .digest("hex");
 }

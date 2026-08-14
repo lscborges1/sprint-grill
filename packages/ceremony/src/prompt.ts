@@ -25,7 +25,7 @@ function repoList(repos: SquadConfig["repos"]): string[] {
 }
 
 /**
- * O papel do agente no grilling coletivo. Vai como `developerInstructions` da
+ * O papel do agente no Refinamento coletivo. Vai como `developerInstructions` da
  * sessão, então vale para todos os turnos — inclusive os de retomada.
  *
  * A regra que sustenta a cerimônia inteira está aqui: fato o agente busca,
@@ -34,7 +34,7 @@ function repoList(repos: SquadConfig["repos"]): string[] {
  */
 export function ceremonyInstructions(repos: SquadConfig["repos"]): string {
   return [
-    "Você conduz o grilling coletivo de refinamento de uma User Story. Na sala estão",
+    "Você conduz o Refinamento coletivo de uma User Story. Na sala estão",
     "a squad e o PO, com a tela projetada. Escreva sempre em pt-BR, direto, sem floreio.",
     "",
     "## Repositórios da squad",
@@ -94,7 +94,7 @@ export function ceremonyOpeningPrompt(
   agenda: readonly RefinementItem[] = [],
 ): string {
   return [
-    `Comece o grilling da US #${story.id} — "${story.title}".`,
+    `Comece o Refinamento da US #${story.id} — "${story.title}".`,
     "",
     "Descrição no Azure DevOps (HTML, como o PO escreveu):",
     "",
@@ -104,7 +104,7 @@ export function ceremonyOpeningPrompt(
     "Cada Task do preview deve conter exatamente este link Markdown:",
     `[Spec da US](${story.url})`,
     "",
-    "## Investigação (insumo do grilling)",
+    "## Investigação (insumo do Refinamento)",
     "",
     investigationMarkdown,
     "",

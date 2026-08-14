@@ -61,7 +61,7 @@ export default async function InvestigationPage({
         )}
       </header>
 
-      {run?.status === "aprovado" && <Grill storyId={storyId} />}
+      {run?.status === "aprovado" && <RefinementCallToAction storyId={storyId} />}
 
       <Outcome run={run} />
     </main>
@@ -73,7 +73,7 @@ export default async function InvestigationPage({
  * do Refinamento, e é daqui que a sessão nasce. Se já existe uma aberta para
  * esta US, o botão volta para ela em vez de abrir outra.
  */
-function Grill({ storyId }: { storyId: number }) {
+function RefinementCallToAction({ storyId }: { storyId: number }) {
   const open = findOpenCeremony(storyId);
 
   return (

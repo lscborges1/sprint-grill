@@ -21,7 +21,7 @@ Linguagem ubíqua do domínio de refinamento. Os identificadores internos
 
 **Registro de decisão** — artefato de primeira classe que documenta uma escolha coletiva do refinamento (pergunta, resposta, recomendação e horário). O oposto de "ata perdida": é consultável e vinculado à US, sem autoria individual.
 
-**Consulta** — dúvida *factual* levantada na sala durante o Refinamento coletivo e resolvida ao vivo: o agente lê o código na hora e responde citando o arquivo. É o oposto do Registro de decisão — não tem quem decidiu, porque não houve decisão: quem respondeu foi o repositório. Existe para matar o "alguém verifica depois", que é como uma dúvida de dez segundos vira Explosão três semanas depois.
+**Consulta** — dúvida *factual* levantada na sala durante o Refinamento coletivo e resolvida ao vivo: o agente lê o código na hora e responde citando o arquivo. É o oposto do Registro de decisão — não há atribuição individual, porque não houve decisão: a resposta veio do repositório. Existe para matar o "alguém verifica depois", que é como uma dúvida de dez segundos vira Explosão três semanas depois.
 
 **Explosão** — descoberta de dependência ou restrição técnica no meio da implementação, depois da US já estimada e em sprint: a estimativa dobra e a decisão final é tomada às pressas, sem o PO saber que houve uma decisão. É a consequência dominante que o produto existe para evitar.
 

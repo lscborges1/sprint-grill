@@ -11,7 +11,7 @@ import {
 import { SPEC_SECTIONS } from "./spec-vocabulary";
 import type { DossieDocument } from "./types";
 
-// A Spec carimba quem decidiu e quando, e o "quando" é hora local do Operador.
+// A Spec carimba quando a decisão coletiva aconteceu; é hora local do Operador.
 // Fixar o fuso em cada teste deixa o carimbo verificável sem contaminar o worker.
 beforeEach(() => {
   vi.stubEnv("TZ", "UTC");

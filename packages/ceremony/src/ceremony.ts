@@ -589,7 +589,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       changed(sessionId);
 
       // Solta a busca: a sala vê "buscando" e a resposta chega pelo SSE. O turno
-      // do grilling continua parado na decisão da vez — é sessão à parte.
+      // do Refinamento continua parado na decisão da vez — é sessão à parte.
       const logger = sessionLogger(sessionId);
       void runConsultation({
         runtime,

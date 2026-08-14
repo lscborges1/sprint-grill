@@ -37,7 +37,7 @@ import { logger } from "@/lib/logger";
 
 /**
  * Abre o Palco de uma US investigada. Espera só a sessão nascer — o turno do
- * grilling segue solto, como a Investigação.
+ * Refinamento segue solto, como a Investigação.
  */
 export async function startCeremonyAction(formData: FormData): Promise<void> {
   const storyId = storyIdSchema.parse(formData.get("storyId"));
@@ -213,35 +213,35 @@ async function runRefinementGate(
   }
 }
 
-export function confirmRefinementAction(
+export async function confirmRefinementAction(
   _previous: string | null,
   formData: FormData,
 ): Promise<string | null> {
   return runRefinementGate(formData, confirmRefinement, "confirmação do Refinamento recusada");
 }
 
-export function continueRefiningAction(
+export async function continueRefiningAction(
   _previous: string | null,
   formData: FormData,
 ): Promise<string | null> {
   return runRefinementGate(formData, continueRefining, "continuação do Refinamento recusada");
 }
 
-export function approveSpecAction(
+export async function approveSpecAction(
   _previous: string | null,
   formData: FormData,
 ): Promise<string | null> {
   return runRefinementGate(formData, approveSpec, "aprovação da Spec recusada");
 }
 
-export function approveTicketsAction(
+export async function approveTicketsAction(
   _previous: string | null,
   formData: FormData,
 ): Promise<string | null> {
   return runRefinementGate(formData, approveTickets, "aprovação dos Tickets recusada");
 }
 
-export function reopenRefinementAction(
+export async function reopenRefinementAction(
   _previous: string | null,
   formData: FormData,
 ): Promise<string | null> {

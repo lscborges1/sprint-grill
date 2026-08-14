@@ -27,4 +27,3 @@ O Palco mostra a agenda, a pergunta ativa e a confirmação coletiva. O Dossiê 
 ## Compatibilidade
 
 Namespaces, rotas, configuração, banco e marcadores `sprint-griller:*` permanecem como identificadores internos. O schema local sobe de versão e recusa bancos antigos; artefatos já publicados no Azure DevOps não são reescritos.
-

@@ -62,7 +62,7 @@ describe("ceremonyInstructions", () => {
 });
 
 describe("ceremonyOpeningPrompt", () => {
-  it("should hand the investigation to the agent as the input of the grilling", () => {
+  it("should hand the investigation to the agent as the input of the refinement", () => {
     const prompt = ceremonyOpeningPrompt(story, "## Furos da US\n\n- Sem regra de arredondamento.");
 
     expect(prompt).toContain("#4242");

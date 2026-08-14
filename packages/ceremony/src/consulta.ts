@@ -54,7 +54,7 @@ const CONSULTATION_FAILURE_MESSAGE = "A consulta parou por um erro inesperado.";
  * Uma dúvida **factual** da sala resolvida ao vivo: o agente abre uma sessão
  * própria, lê os repos e volta com a resposta e as citações que a sustentam.
  *
- * Sessão separada da cerimônia de propósito: o turno do grilling está parado na
+ * Sessão separada da cerimônia de propósito: o turno do Refinamento está parado na
  * decisão da vez, e o codex só aceita um turno por sessão — perguntar por dentro
  * dele custaria a pergunta que está projetada na tela.
  *

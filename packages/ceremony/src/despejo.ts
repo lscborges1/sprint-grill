@@ -62,12 +62,12 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
       if (incompleteLocal) {
         throw new CeremonyError(
           `A US #${storyId} tem um despejo incompleto na cerimônia anterior. ` +
-            `Abra o Dossiê dessa cerimônia e conclua o retry antes de grelhar de novo.`,
+            `Abra o Dossiê dessa cerimônia e conclua o retry antes de refinar de novo.`,
         );
       }
       if (!investigationApproved) {
         throw new CeremonyError(
-          `A US #${storyId} ainda não tem Investigação aprovada — investigue antes de grelhar.`,
+          `A US #${storyId} ainda não tem Investigação aprovada — investigue antes de refinar.`,
         );
       }
       const ado = options.adoOptions();

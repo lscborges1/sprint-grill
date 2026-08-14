@@ -1,7 +1,7 @@
 import type { PalcoState } from "@sprint-griller/ceremony";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
-import { Palco } from "./palco";
+import { Palco, PalcoView } from "./palco";
 
 vi.mock("@/components/live-state", () => ({
   useLiveState: (_path: string, _schema: unknown, initial: PalcoState) => ({
@@ -57,4 +57,35 @@ it("should show the failure when a Spec review turn fails", () => {
   expect(html).toContain("O Refinamento parou por um erro");
   expect(html).toContain("O runtime parou.");
   expect(html).not.toContain("Abrir revisão no Dossiê");
+});
+
+it("should register one semantic decision after choosing a radio answer", () => {
+  const asking = {
+    ...stoppedSpecReview,
+    refinement: { phase: "refinando", revision: 1 },
+    pendingQuestions: [],
+    current: {
+      phase: "perguntando",
+      question: {
+        questionSeq: 1,
+        id: "q1",
+        agendaItemId: "agenda-1",
+        source: "agent",
+        header: "Comportamento",
+        question: "A sala confirma o comportamento?",
+        recommendation: "Sim, manter a regra atual.",
+        evidence: [],
+        options: [{ label: "Sim", description: "Mantém compatibilidade." }, { label: "Não", description: "Exige nova regra." }],
+        allowFreeText: true,
+      },
+    },
+  } as const satisfies PalcoState;
+
+  const html = renderToStaticMarkup(<PalcoView state={asking} connected />);
+
+  expect(html).toMatch(/type="radio"[^>]*name="answerKind"/);
+  expect(html).toMatch(/type="radio"[^>]*name="answer"/);
+  expect(html).toContain("Registrar decisão");
+  expect(html).not.toContain("answerLivre");
+  expect((html.match(/Registrar decisão/g) ?? []).length).toBe(1);
 });

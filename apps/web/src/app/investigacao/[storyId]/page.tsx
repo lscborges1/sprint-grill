@@ -11,7 +11,9 @@ import type {
 } from "@sprint-griller/investigation";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { OperationalFrame } from "@/components/operational-frame";
 import { Section } from "@/components/section";
+import { Alert, Button, ConfirmAction, EmptyState, MarkdownPreview, PageHeader } from "@/components/ui";
 import { startCeremonyAction } from "@/app/cerimonia/actions";
 import { findOpenCeremony } from "@/lib/ceremonies";
 import { getInvestigation, storyIdSchema } from "@/lib/investigations";
@@ -38,33 +40,18 @@ export default async function InvestigationPage({
   const run = getInvestigation(storyId);
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-12 px-8 py-20">
-      <header className="flex flex-col gap-3">
-        <Link href="/" className="text-sm text-muted underline underline-offset-4">
-          ← Voltar ao picker
-        </Link>
-        <h1 className="text-4xl font-semibold tracking-tight">
-          Investigação — US #{storyId}
-        </h1>
-        {run?.story && (
-          <p className="text-lg text-muted">
-            {run.story.title} ·{" "}
-            <a
-              href={run.story.url}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-4"
-            >
-              abrir no Azure DevOps
-            </a>
-          </p>
-        )}
-      </header>
-
-      {run?.status === "aprovado" && <RefinementCallToAction storyId={storyId} />}
-
-      <Outcome run={run} />
-    </main>
+    <OperationalFrame>
+      <main className="mx-auto flex w-full max-w-[1100px] flex-1 flex-col gap-8 px-4 py-8 sm:px-6 lg:px-10 lg:py-12">
+        <PageHeader
+          eyebrow={`Investigação · US #${storyId}`}
+          title={run?.story?.title ?? `Investigação — US #${storyId}`}
+          back={<Link href="/" className="text-sm text-muted underline underline-offset-4">← Voltar ao Picker</Link>}
+          description={run?.story ? <a href={run.story.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">Abrir no Azure DevOps</a> : undefined}
+        />
+        <Outcome run={run} />
+        {run?.status === "aprovado" && <RefinementCallToAction storyId={storyId} publication={run.publication} />}
+      </main>
+    </OperationalFrame>
   );
 }
 
@@ -73,34 +60,46 @@ export default async function InvestigationPage({
  * do Refinamento, e é daqui que a sessão nasce. Se já existe uma aberta para
  * esta US, o botão volta para ela em vez de abrir outra.
  */
-function RefinementCallToAction({ storyId }: { storyId: number }) {
+function RefinementCallToAction({ storyId, publication }: { readonly storyId: number; readonly publication: ReportRun["publication"] }) {
   const open = findOpenCeremony(storyId);
 
+  if (open) {
+    return <Section id="refinar" heading="Próxima ação"><Link href={`/cerimonia/${open.id}`} className="inline-flex min-h-10 items-center rounded-[var(--radius-md)] border border-accent bg-accent px-4 text-sm font-medium text-white">Voltar ao Palco</Link><p className="mt-2 text-sm text-muted">O Refinamento desta US já está aberto.</p></Section>;
+  }
+
+  if (publication?.status !== "publicada") {
+    return (
+      <Section id="refinar" heading="Próxima ação">
+        <p className="text-sm text-muted">Publique a Investigação antes de abrir o Refinamento para levar um insumo rastreável à sala.</p>
+        <ConfirmAction
+          triggerLabel="Refinar sem publicar"
+          title="Abrir Refinamento sem publicar?"
+          description="A sala receberá a Investigação aprovada, mas ela ainda não será registrada no Azure DevOps. Confirme somente se isso for intencional."
+          confirmLabel="Abrir sem publicar"
+          action={startCeremonyAction}
+          triggerProps={{ variant: "secondary" }}
+        >
+          <input type="hidden" name="storyId" value={storyId} />
+        </ConfirmAction>
+      </Section>
+    );
+  }
+
   return (
-    <form action={startCeremonyAction} className="flex flex-wrap items-center gap-4">
-      <input type="hidden" name="storyId" value={storyId} />
-      <button
-        type="submit"
-        className="rounded-full border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background"
-      >
-        {open ? "Voltar ao Palco" : "Refinar com a sala"}
-      </button>
-      <span className="text-sm text-muted">
-        {open
-          ? "O Refinamento desta US já está aberto."
-          : "Abre o Palco com esta Investigação como insumo do Refinamento coletivo."}
-      </span>
-    </form>
+    <Section id="refinar" heading="Próxima ação">
+      <form action={startCeremonyAction} className="flex flex-wrap items-center gap-3">
+        <input type="hidden" name="storyId" value={storyId} />
+        <Button type="submit" variant="primary">Refinar com a sala</Button>
+        <span className="text-sm text-muted">A Investigação publicada será o insumo do Refinamento coletivo.</span>
+      </form>
+    </Section>
   );
 }
 
 function Outcome({ run }: { run: InvestigationRun | undefined }) {
   if (!run) {
     return (
-      <p className="text-lg text-muted">
-        Nenhuma Investigação disparada para esta US neste processo. Volte ao
-        picker e clique em <strong>Investigar</strong>.
-      </p>
+      <EmptyState heading="Nenhuma Investigação neste processo">Volte ao Picker e clique em Investigar para iniciar o processamento.</EmptyState>
     );
   }
 
@@ -162,14 +161,12 @@ function Result({ run }: { run: ReportRun }) {
     <>
       {run.status === "reprovado" && <Violations violations={run.violations} />}
       <Report report={run.report} approved={run.status === "aprovado"} />
-      <Section id="markdown" heading="Markdown do relatório">
-        <details className="rounded-lg border border-line px-5 py-4">
+      <Section id="markdown" heading="Prévia do relatório">
+        <details className="rounded-[var(--radius-md)] border border-line bg-surface px-5 py-4">
           <summary className="cursor-pointer text-base">
             {MARKDOWN_PREVIEW[run.status]}
           </summary>
-          <pre className="mt-4 overflow-x-auto whitespace-pre-wrap font-mono text-sm text-muted">
-            {run.markdown}
-          </pre>
+          <div className="mt-4 border-t border-line pt-4"><MarkdownPreview markdown={run.markdown} /></div>
         </details>
       </Section>
     </>
@@ -371,30 +368,8 @@ function Items<T>({
   }
 
   return (
-    <ul className="flex flex-col gap-3">
-      {items.map((item) => (
-        <li key={keyOf(item)} className="rounded-lg border border-line px-5 py-4 text-base">
-          {render(item)}
-        </li>
-      ))}
+    <ul className="divide-y divide-line border-y border-line">
+      {items.map((item) => <li key={keyOf(item)} className="py-4 text-base">{render(item)}</li>)}
     </ul>
-  );
-}
-
-function Alert({
-  heading,
-  children,
-}: {
-  heading: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      role="alert"
-      className="flex flex-col gap-3 rounded-lg border border-red-600/50 bg-red-600/5 px-5 py-4"
-    >
-      <p className="text-lg font-medium tracking-tight">{heading}</p>
-      {children}
-    </div>
   );
 }

@@ -14,6 +14,11 @@ const nextConfig: NextConfig = {
   // As instruções para agentes deste repo vivem na raiz, não em arquivos
   // gerados a cada `next dev`.
   agentRules: false,
+  async rewrites() {
+    return process.env.NODE_ENV === "development"
+      ? [{ source: "/__dev/ui", destination: "/dev-ui" }]
+      : [];
+  },
 };
 
 export default nextConfig;

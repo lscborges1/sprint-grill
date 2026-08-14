@@ -3,17 +3,22 @@
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
-  --background: #ffffff;
-  --foreground: #171717;
-  --muted: #6b7280;
-  --line: #e5e7eb;
-  --accent: #2d5bff;
-  --investigated: #b45309;
-  --refined: #047857;
+  --background: #F7F7F5;
+  --surface: #FFFFFF;
+  --foreground: #1C1C1A;
+  --muted: #666661;
+  --line: #DFDFDA;
+  --accent: #3157D5;
+  --investigated: #8A5A00;
+  --refined: #177245;
+  --focus-ring: #3157D5;
+  --radius-sm: 8px;
+  --radius-md: 12px;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-line: var(--line);
@@ -28,31 +33,70 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  --muted: #9ca3af;
-  --line: #262626;
-  --accent: #8aa4ff;
-  --investigated: #fcd34d;
-  --refined: #6ee7b7;
+  --background: #111110;
+  --surface: #181817;
+  --foreground: #F1F1EC;
+  --muted: #A6A69D;
+  --line: #30302C;
+  --accent: #8DA2FF;
+  --investigated: #E5B55E;
+  --refined: #79D09D;
+  --focus-ring: #8DA2FF;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]),
   :root[data-theme="system"] {
     color-scheme: dark;
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    --muted: #9ca3af;
-    --line: #262626;
-    --accent: #8aa4ff;
-    --investigated: #fcd34d;
-    --refined: #6ee7b7;
+    --background: #111110;
+    --surface: #181817;
+    --foreground: #F1F1EC;
+    --muted: #A6A69D;
+    --line: #30302C;
+    --accent: #8DA2FF;
+    --investigated: #E5B55E;
+    --refined: #79D09D;
+    --focus-ring: #8DA2FF;
   }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+.palco-focus {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.palco-focus > main {
+  grid-column-start: 1;
+}
+
+.palco-focus > aside {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

@@ -11,8 +11,12 @@ describe("theme CSS contract", () => {
 
     expect(lightPalette).toMatchObject({
       "color-scheme": "light",
-      "--background": "#ffffff",
-      "--foreground": "#171717",
+      "--background": "#F7F7F5",
+      "--surface": "#FFFFFF",
+      "--foreground": "#1C1C1A",
+      "--muted": "#666661",
+      "--line": "#DFDFDA",
+      "--accent": "#3157D5",
     });
   });
 
@@ -24,8 +28,26 @@ describe("theme CSS contract", () => {
 
     expect(systemPalette).toMatchObject({
       "color-scheme": "dark",
-      "--background": "#0a0a0a",
-      "--foreground": "#ededed",
+      "--background": "#111110",
+      "--surface": "#181817",
+      "--foreground": "#F1F1EC",
+      "--muted": "#A6A69D",
+      "--line": "#30302C",
+      "--accent": "#8DA2FF",
+    });
+  });
+
+  it("should define the explicit dark semantic palette", () => {
+    const darkPalette = declarationsIn(blockAfter(css, ':root[data-theme="dark"]'));
+
+    expect(darkPalette).toMatchObject({
+      "color-scheme": "dark",
+      "--background": "#111110",
+      "--surface": "#181817",
+      "--foreground": "#F1F1EC",
+      "--muted": "#A6A69D",
+      "--line": "#30302C",
+      "--accent": "#8DA2FF",
     });
   });
 });

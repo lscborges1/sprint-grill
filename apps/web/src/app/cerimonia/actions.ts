@@ -19,11 +19,11 @@ import {
   confirmRefinement,
   consultationSchema,
   continueRefining,
-  decisionSchema,
   discardSpecDraft,
   discardSpecDraftSchema,
   dumpCeremony,
   dumpCeremonySchema,
+  decisionFormSchema,
   reopenRefinement,
   resumeCeremony,
   saveSpecDraft,
@@ -55,11 +55,11 @@ export async function submitDecisionAction(
   _previous: string | null,
   formData: FormData,
 ): Promise<string | null> {
-  const parsed = decisionSchema.safeParse({
+  const parsed = decisionFormSchema.safeParse({
     sessionId: formData.get("sessionId"),
     questionId: formData.get("questionId"),
-    // O botão da opção manda `answer`; o campo aberto, `answerLivre`.
-    answer: formData.get("answer") ?? formData.get("answerLivre") ?? "",
+    answerKind: formData.get("answerKind"),
+    answer: formData.get("answer") ?? "",
   });
 
   if (!parsed.success) {
@@ -67,7 +67,11 @@ export async function submitDecisionAction(
   }
 
   try {
-    await submitDecision(parsed.data);
+    await submitDecision({
+      sessionId: parsed.data.sessionId,
+      questionId: parsed.data.questionId,
+      answer: parsed.data.answer,
+    });
     return null;
   } catch (error) {
     if (!(error instanceof CeremonyError)) throw error;

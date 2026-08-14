@@ -96,7 +96,7 @@
 - Modify only defects exposed by verification or review.
 - Test: repository-wide checks
 
-- [ ] Run `rtk pnpm check` and fix failures with a regression test for each behavioral defect.
-- [ ] Run `rtk pnpm build` and fix integration/bundling defects.
-- [ ] Review `git diff origin/master...HEAD` against every requirement and remove stale visible Grill/grelhar and `decidedBy` references, excluding compatibility identifiers and historical ADR text.
-- [ ] Run the full checks again and record final evidence.
+- [x] Run `rtk pnpm check` and fix failures with a regression test for each behavioral defect.
+- [x] Run `rtk pnpm build` and fix integration/bundling defects.
+- [x] Review `git diff origin/master...HEAD` against every requirement and remove stale visible Grill/grelhar and `decidedBy` references, excluding compatibility identifiers and historical ADR text.
+- [x] Run the full checks again and record final evidence.

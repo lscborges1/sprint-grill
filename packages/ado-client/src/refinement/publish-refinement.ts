@@ -208,7 +208,7 @@ async function listDecisionRecordComments(
   return all;
 }
 
-/** Atualiza só o bloco do Sprint Griller, sem tocar no texto da US do PO. */
+/** Atualiza só o bloco do Refina, sem tocar no texto da US do PO. */
 export async function publishStorySpec(
   options: AdoClientOptions,
   spec: StorySpecToPublish,
@@ -481,7 +481,7 @@ export function replaceManagedSpec(description: string, markdown: string, dumpId
   if (end === -1) {
     throw new AdoError(
       "unexpected",
-      "A Spec anterior do Sprint Griller está sem o marcador de fechamento. " +
+      "A Spec anterior do Refina está sem o marcador de fechamento. " +
         "Corrija a descrição da US antes de despejar; a Spec não foi gravada.",
     );
   }

@@ -69,6 +69,53 @@ const DUMP_DETAILS = {
   estimate: 5,
 } as const;
 
+const STRUCTURED_SPEC = {
+  problem: "Problema.",
+  solution: "Solução.",
+  expectedBehaviors: ["Comportamento."],
+  implementationDecisions: ["Decisão."],
+  testStrategy: ["Teste."],
+  outOfScope: ["Fora."],
+  traceability: ["Registro."],
+};
+
+const STRUCTURED_TICKETS = {
+  tickets: [{
+    id: "one",
+    title: "Ticket",
+    description: "Slice completo.",
+    acceptanceCriteria: ["Entrega observável."],
+    specUrl: "https://ignored.example",
+    blockedBy: [],
+  }],
+};
+
+function advanceToReviewPhase(
+  store: CeremonyStore,
+  phase: "aguardando-confirmacao" | "revisando-spec" | "revisando-tickets" | "pronto-para-publicar",
+): void {
+  store.proposeRefinementCompletion({
+    sessionId: "thread-1",
+    expectedRevision: 0,
+    summary: "Agenda encerrada.",
+  });
+  if (phase === "aguardando-confirmacao") return;
+
+  store.updateRefinementPhase({
+    sessionId: "thread-1",
+    phase: "revisando-spec",
+    expectedRevision: 1,
+  });
+  if (phase === "revisando-spec") return;
+
+  store.submitSpec("thread-1", STRUCTURED_SPEC);
+  store.approveSpec({ sessionId: "thread-1", expectedRevision: 3 });
+  if (phase === "revisando-tickets") return;
+
+  store.submitTickets("thread-1", STRUCTURED_TICKETS);
+  store.approveTickets({ sessionId: "thread-1", expectedRevision: 5 });
+}
+
 function beginDump(
   store: CeremonyStore,
   sessionId = "thread-1",
@@ -78,6 +125,34 @@ function beginDump(
 }
 
 describe("openCeremonyStore", () => {
+  it.each([
+    "aguardando-confirmacao",
+    "revisando-spec",
+    "revisando-tickets",
+    "pronto-para-publicar",
+  ] as const)("should atomically reopen %s when a late doubt is added", (phase) => {
+    const store = open(dbPath());
+    newSession(store);
+    advanceToReviewPhase(store, phase);
+
+    const consultation = store.openConsultation("thread-1", "Esta regra também vale no mobile?");
+
+    expect(store.getSession("thread-1")?.refinement).toMatchObject({ phase: "refinando" });
+    expect(store.getRefinementCompletionProposal("thread-1")).toBeNull();
+    const artifacts = store.getArtifactState("thread-1");
+    if (phase === "revisando-tickets" || phase === "pronto-para-publicar") {
+      expect(artifacts.spec?.approval).toBeNull();
+    }
+    if (phase === "pronto-para-publicar") expect(artifacts.tickets?.approval).toBeNull();
+    expect(store.listRefinementItems("thread-1")).toContainEqual(
+      expect.objectContaining({
+        id: `duvida-${consultation.id}`,
+        question: "Esta regra também vale no mobile?",
+        status: "pesquisando",
+      }),
+    );
+  });
+
   it("should persist the completion proposal across a restart", () => {
     const file = dbPath();
     const first = open(file);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agendaResolutionArgumentsSchema,
   askOperatorArgumentsSchema,
   completionProposalArgumentsSchema,
 } from "./protocol";
@@ -70,5 +71,49 @@ describe("completionProposalArgumentsSchema", () => {
       completionProposalArgumentsSchema.safeParse({ summary: "Todos os furos foram resolvidos." })
         .success,
     ).toBe(true);
+  });
+});
+
+describe("agendaResolutionArgumentsSchema", () => {
+  it("should require at least one citation for a factual resolution", () => {
+    expect(
+      agendaResolutionArgumentsSchema.safeParse({
+        kind: "fact",
+        agendaItemId: "gap-1",
+        answer: "A regra já existe.",
+        citations: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("should reject a whitespace-only factual answer", () => {
+    expect(
+      agendaResolutionArgumentsSchema.safeParse({
+        kind: "fact",
+        agendaItemId: "gap-1",
+        answer: "   ",
+        citations: [{ repo: "core-api", path: "src/checkout.ts" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("should accept a justified out-of-scope resolution without citations", () => {
+    expect(
+      agendaResolutionArgumentsSchema.safeParse({
+        kind: "out-of-scope",
+        agendaItemId: "gap-1",
+        justification: "O mobile terá uma US própria.",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("should reject a whitespace-only out-of-scope justification", () => {
+    expect(
+      agendaResolutionArgumentsSchema.safeParse({
+        kind: "out-of-scope",
+        agendaItemId: "gap-1",
+        justification: "   ",
+      }).success,
+    ).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import type {
   PendingQuestion,
 } from "@sprint-griller/agent-runtime";
 import type { Logger, SquadConfig } from "@sprint-griller/core";
+import { verifyGrounding } from "@sprint-griller/investigation";
 import { CeremonyError } from "./ceremony-error";
 import { runConsultation } from "./consulta";
 import { readPalco } from "./palco";
@@ -74,6 +75,7 @@ export const NAO_E_DECISAO =
 
 const CEREMONY_AGENT_TOOLS = [
   "ask_operator",
+  "resolve_refinement_item",
   "propose_refinement_completion",
   "submit_refinement_spec",
   "submit_refinement_tickets",
@@ -233,6 +235,12 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
               }
               break;
 
+            case "agenda-resolution":
+              if (await receiveAgendaResolution(sessionId, event.resolution)) {
+                live.progressed = true;
+              }
+              break;
+
             case "spec-submission":
               await receiveSpecSubmission(sessionId, event.submission);
               break;
@@ -320,6 +328,73 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       accepted: true,
       message: "Agenda encerrada. A sala agora precisa confirmar o avanço.",
     });
+    changed(sessionId);
+    return true;
+  }
+
+  async function receiveAgendaResolution(
+    sessionId: string,
+    pending: Extract<AgentEvent, { readonly type: "agenda-resolution" }>["resolution"],
+  ): Promise<boolean> {
+    const session = store.getSession(sessionId);
+    if (!session || session.refinement.phase !== "refinando") {
+      await pending.respond({
+        accepted: false,
+        message: "Itens da Agenda só podem ser resolvidos durante a fase Refinar.",
+      });
+      return false;
+    }
+
+    const item = store
+      .listRefinementItems(sessionId)
+      .find((candidate) => candidate.id === pending.submission.agendaItemId);
+    if (!item || item.status === "resolvido" || item.status === "fora-de-escopo") {
+      await pending.respond({
+        accepted: false,
+        message: "O agendaItemId não identifica um item aberto desta Agenda.",
+      });
+      return false;
+    }
+
+    const transition: RefinementItemTransition = pending.submission.kind === "fact"
+      ? {
+          itemId: item.id,
+          status: "resolvido",
+          resolution: {
+            kind: "fato",
+            answer: pending.submission.answer,
+            citations: pending.submission.citations,
+          },
+        }
+      : {
+          itemId: item.id,
+          status: "fora-de-escopo",
+          resolution: {
+            kind: "fora-de-escopo",
+            justification: pending.submission.justification,
+          },
+        };
+
+    if (pending.submission.kind === "fact") {
+      const grounding = verifyGrounding(
+        [{ claim: pending.submission.answer, citations: pending.submission.citations }],
+        [repos.primary, ...repos.related],
+      );
+      if (grounding.status === "reprovado") {
+        await pending.respond({
+          accepted: false,
+          message: `A resolução factual foi recusada: ${grounding.violations[0]?.detail ?? "evidência inválida."}`,
+        });
+        return false;
+      }
+    }
+
+    store.transitionRefinementItem({
+      sessionId,
+      expectedRevision: session.refinement.revision,
+      ...transition,
+    });
+    await pending.respond({ accepted: true, message: "Item da Agenda resolvido." });
     changed(sessionId);
     return true;
   }
@@ -585,7 +660,6 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
 
       writeFailures.delete(sessionId);
       const consultation = store.openConsultation(sessionId, question);
-      openDoubtAgenda(sessionId, consultation.id, consultation.question);
       changed(sessionId);
 
       // Solta a busca: a sala vê "buscando" e a resposta chega pelo SSE. O turno
@@ -741,15 +815,6 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         allowFreeText: outcome.allowFreeText,
       },
     ]);
-  }
-
-  function openDoubtAgenda(sessionId: string, consultationId: string, question: string): void {
-    const itemId = `duvida-${consultationId}`;
-    store.seedRefinementItems(sessionId, [{ id: itemId, question }]);
-    transitionAgenda(sessionId, {
-      itemId,
-      status: "pesquisando",
-    });
   }
 
   function settleDoubtAgenda(

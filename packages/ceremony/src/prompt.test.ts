@@ -45,6 +45,7 @@ describe("ceremonyInstructions", () => {
     const instructions = ceremonyInstructions(repos);
 
     expect(instructions).toMatch(/fato.*(busque|você busca)/i);
+    expect(instructions).toContain("resolve_refinement_item");
     expect(instructions).toContain("ask_operator");
   });
 

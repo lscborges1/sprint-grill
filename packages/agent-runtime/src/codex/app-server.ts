@@ -209,7 +209,7 @@ export async function connectAppServer(
 
   await Promise.race([
     request("initialize", {
-      clientInfo: { name: CLIENT_NAME, title: "Sprint Griller", version: CLIENT_VERSION },
+      clientInfo: { name: CLIENT_NAME, title: "Refina", version: CLIENT_VERSION },
       capabilities: { experimentalApi: true, requestAttestation: false },
     }),
     spawnFailed,

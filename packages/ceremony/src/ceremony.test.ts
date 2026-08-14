@@ -54,6 +54,17 @@ const agentQuestion = (overrides: Partial<AgentQuestion> = {}): AgentQuestion =>
 type Step =
   | { readonly type: "message"; readonly text: string }
   | { readonly type: "ask"; readonly questions: readonly AgentQuestion[] }
+  | {
+      readonly type: "resolve-item";
+      readonly resolution:
+        | {
+            readonly kind: "fact";
+            readonly agendaItemId: string;
+            readonly answer: string;
+            readonly citations: readonly { readonly repo: string; readonly path: string; readonly symbol?: string }[];
+          }
+        | { readonly kind: "out-of-scope"; readonly agendaItemId: string; readonly justification: string };
+    }
   | { readonly type: "propose-completion"; readonly summary?: string }
   | { readonly type: "complete" }
   | { readonly type: "fail"; readonly message: string };
@@ -74,6 +85,7 @@ function fakeRuntime(
   const answered: Record<string, readonly string[]>[] = [];
   const resumed: string[] = [];
   const proposalVerdicts: { readonly accepted: boolean; readonly message: string }[] = [];
+  const resolutionVerdicts: { readonly accepted: boolean; readonly message: string }[] = [];
   let turn = 0;
   let sessions = 0;
 
@@ -138,6 +150,24 @@ function fakeRuntime(
               await gate;
               break;
             }
+            case "resolve-item": {
+              let release: () => void = () => undefined;
+              const gate = new Promise<void>((resolve) => {
+                release = resolve;
+              });
+              yield {
+                type: "agenda-resolution",
+                resolution: {
+                  submission: step.resolution,
+                  respond: async (verdict: { readonly accepted: boolean; readonly message: string }) => {
+                    resolutionVerdicts.push(verdict);
+                    release();
+                  },
+                },
+              } as const;
+              await gate;
+              break;
+            }
             case "complete":
               yield {
                 type: "turn-completed",
@@ -167,7 +197,7 @@ function fakeRuntime(
     close: async () => undefined,
   };
 
-  return { runtime, prompts, consultaPrompts, answered, resumed, proposalVerdicts };
+  return { runtime, prompts, consultaPrompts, answered, resumed, proposalVerdicts, resolutionVerdicts };
 }
 
 const stores: CeremonyStore[] = [];
@@ -289,6 +319,92 @@ describe("start", () => {
     await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(1));
     expect(proposalVerdicts[0]).toMatchObject({ accepted: false, message: expect.stringMatching(/aberto/i) });
     expect(store.getSession(SESSION_ID)?.refinement.phase).toBe("refinando");
+  });
+
+  it("should resolve an investigation item as a verified fact before proposing completion", async () => {
+    const { ceremony, store, proposalVerdicts, resolutionVerdicts } = ceremonyWith([
+      [
+        {
+          type: "resolve-item",
+          resolution: {
+            kind: "fact",
+            agendaItemId: "investigacao-1",
+            answer: "A regra já existe no checkout.",
+            citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+          },
+        },
+        { type: "propose-completion" },
+        { type: "complete" },
+      ],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(1));
+    expect(resolutionVerdicts).toEqual([expect.objectContaining({ accepted: true })]);
+    expect(store.listRefinementItems(SESSION_ID)).toEqual([
+      expect.objectContaining({
+        id: "investigacao-1",
+        status: "resolvido",
+        resolution: expect.objectContaining({ kind: "fato", answer: "A regra já existe no checkout." }),
+      }),
+    ]);
+    expect(store.getSession(SESSION_ID)?.refinement.phase).toBe("aguardando-confirmacao");
+  });
+
+  it("should resolve an investigation item as justified out of scope", async () => {
+    const { ceremony, store, resolutionVerdicts } = ceremonyWith([
+      [
+        {
+          type: "resolve-item",
+          resolution: {
+            kind: "out-of-scope",
+            agendaItemId: "investigacao-1",
+            justification: "O aplicativo mobile terá uma US própria.",
+          },
+        },
+        { type: "complete" },
+      ],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(resolutionVerdicts).toHaveLength(1));
+    expect(store.listRefinementItems(SESSION_ID)).toEqual([
+      expect.objectContaining({
+        id: "investigacao-1",
+        status: "fora-de-escopo",
+        resolution: expect.objectContaining({
+          kind: "fora-de-escopo",
+          justification: "O aplicativo mobile terá uma US própria.",
+        }),
+      }),
+    ]);
+  });
+
+  it("should reject a factual resolution whose citations do not exist", async () => {
+    const { ceremony, store, resolutionVerdicts } = ceremonyWith([
+      [
+        {
+          type: "resolve-item",
+          resolution: {
+            kind: "fact",
+            agendaItemId: "investigacao-1",
+            answer: "A regra já existe.",
+            citations: [{ repo: "core-api", path: "src/missing.ts" }],
+          },
+        },
+        { type: "complete" },
+      ],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(resolutionVerdicts).toHaveLength(1));
+    expect(resolutionVerdicts[0]).toMatchObject({ accepted: false, message: expect.stringMatching(/não existe/i) });
+    expect(store.listRefinementItems(SESSION_ID)).toEqual([
+      expect.objectContaining({ id: "investigacao-1", status: "aberto" }),
+    ]);
   });
 
   it("should stop after two rejected completion proposals make no persisted progress", async () => {
@@ -1008,7 +1124,7 @@ describe("consult", () => {
     const transition = store.transitionRefinementItem.bind(store);
     let doubtTransitions = 0;
     store.transitionRefinementItem = (input) => {
-      if (input.itemId === "duvida-1" && ++doubtTransitions === 2) {
+      if (input.itemId === "duvida-1" && ++doubtTransitions === 1) {
         throw new Error("revisão concorrente");
       }
       return transition(input);

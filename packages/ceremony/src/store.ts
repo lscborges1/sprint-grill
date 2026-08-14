@@ -363,6 +363,24 @@ export function openCeremonyStore(
     if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
   }
 
+  function invalidateArtifactApprovals(sessionId: string): void {
+    db.update(specArtifacts)
+      .set({ approvedRevision: null, approvedHash: null, approvedMarkdown: null, approvedAt: null })
+      .where(eq(specArtifacts.sessionId, sessionId))
+      .run();
+    db.update(ticketArtifacts)
+      .set({
+        approvedRevision: null,
+        approvedHash: null,
+        approvedMarkdown: null,
+        approvedSpecRevision: null,
+        approvedSpecHash: null,
+        approvedAt: null,
+      })
+      .where(eq(ticketArtifacts.sessionId, sessionId))
+      .run();
+  }
+
   const store: CeremonyStore = {
     createSession(input) {
       const session: SessionRow = {
@@ -706,21 +724,7 @@ export function openCeremonyStore(
           throw new CeremonyError("o refinamento só pode ser reaberto depois da confirmação da sala.");
         }
         if (session.refinement.revision !== expectedRevision) throw staleRevision(sessionId, expectedRevision);
-        db.update(specArtifacts)
-          .set({ approvedRevision: null, approvedHash: null, approvedMarkdown: null, approvedAt: null })
-          .where(eq(specArtifacts.sessionId, sessionId))
-          .run();
-        db.update(ticketArtifacts)
-          .set({
-            approvedRevision: null,
-            approvedHash: null,
-            approvedMarkdown: null,
-            approvedSpecRevision: null,
-            approvedSpecHash: null,
-            approvedAt: null,
-          })
-          .where(eq(ticketArtifacts.sessionId, sessionId))
-          .run();
+        invalidateArtifactApprovals(sessionId);
         const result = db.update(sessions)
           .set({
             refinementPhase: "refinando",
@@ -1181,13 +1185,18 @@ export function openCeremonyStore(
       if (asked === "") throw new CeremonyError("escreva a pergunta de fato para o agente.");
 
       const askedAt = Date.now();
-      return db.transaction((tx) => {
-        const row = tx
+      const open = sqlite.transaction((): CeremonyConsultation => {
+        const session = requireSession(sessionId);
+        if (session.refinement.phase !== "refinando") {
+          invalidateArtifactApprovals(sessionId);
+        }
+
+        const row = db
           .insert(consultations)
           .values({ sessionId, question: asked, askedAt, status: "buscando" })
           .returning()
           .get();
-        tx.insert(events)
+        db.insert(events)
           .values({
             sessionId,
             at: askedAt,
@@ -1199,8 +1208,32 @@ export function openCeremonyStore(
             } satisfies TranscriptEvent),
           })
           .run();
+        db.insert(refinementItems)
+          .values({
+            sessionId,
+            itemId: `duvida-${row.seq}`,
+            question: asked,
+            status: "pesquisando",
+            createdAt: askedAt,
+            updatedAt: askedAt,
+          })
+          .run();
+        const reopened = db.update(sessions)
+          .set({
+            refinementPhase: "refinando",
+            refinementRevision: session.refinement.revision + 1,
+            completionProposalSummary: null,
+            completionProposedAt: null,
+          })
+          .where(and(
+            eq(sessions.id, sessionId),
+            eq(sessions.refinementRevision, session.refinement.revision),
+          ))
+          .run();
+        if (reopened.changes !== 1) throw staleRevision(sessionId, session.refinement.revision);
         return toConsultation(row);
       });
+      return open.immediate();
     },
 
     answerConsultation(consultationId, outcome) {
@@ -1583,7 +1616,7 @@ function applySchema(sqlite: Database.Database, dbPath: string, logger?: Logger)
   const version = Number(sqlite.pragma("user_version", { simple: true }));
 
   // Banco novo abre em 0 e sem tabela nenhuma — só nesse caso o 0 não é o
-  // `user_version` que uma versão anterior do Sprint Griller deixou para trás.
+  // `user_version` que uma versão anterior do Refina deixou para trás.
   const isNew =
     version === 0 && sqlite.prepare("SELECT 1 FROM sqlite_master LIMIT 1").get() === undefined;
 
@@ -1594,7 +1627,7 @@ function applySchema(sqlite: Database.Database, dbPath: string, logger?: Logger)
     );
     throw new CeremonyError(
       `O banco de cerimônia está ${version === 0 ? "numa versão anterior" : `na versão ${version}`}` +
-        `, e esta versão do Sprint Griller fala a ${SCHEMA_VERSION}. Apague o arquivo ` +
+        `, e esta versão do Refina fala a ${SCHEMA_VERSION}. Apague o arquivo ` +
         `(ele guarda só estado de cerimônia) ou aponte SPRINT_GRILLER_DB para outro.`,
     );
   }

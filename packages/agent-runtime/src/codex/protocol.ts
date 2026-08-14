@@ -14,11 +14,13 @@ export const CLIENT_VERSION = "0.1.0";
 
 /** Ferramenta própria de HITL: superfície estável, sob nosso controle. */
 export const ASK_OPERATOR_TOOL_NAME = "ask_operator";
+export const AGENDA_RESOLUTION_TOOL_NAME = "resolve_refinement_item";
 export const COMPLETION_PROPOSAL_TOOL_NAME = "propose_refinement_completion";
 export const SPEC_SUBMISSION_TOOL_NAME = "submit_refinement_spec";
 export const TICKETS_SUBMISSION_TOOL_NAME = "submit_refinement_tickets";
 export const AGENT_TOOL_NAMES = [
   ASK_OPERATOR_TOOL_NAME,
+  AGENDA_RESOLUTION_TOOL_NAME,
   COMPLETION_PROPOSAL_TOOL_NAME,
   SPEC_SUBMISSION_TOOL_NAME,
   TICKETS_SUBMISSION_TOOL_NAME,
@@ -241,6 +243,38 @@ export const completionProposalToolSpec = {
   description:
     "Propõe explicitamente encerrar a etapa Refinar. O sistema confere a Agenda; terminar o turno não encerra nada.",
   inputSchema: z.toJSONSchema(completionProposalArgumentsSchema, {
+    io: "input",
+    target: "draft-7",
+  }),
+} as const;
+
+const refinementCitationSchema = z.object({
+  repo: z.string().trim().min(1),
+  path: z.string().trim().min(1),
+  symbol: z.string().trim().min(1).optional(),
+});
+
+export const agendaResolutionArgumentsSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("fact"),
+    agendaItemId: z.string().trim().min(1),
+    answer: z.string().trim().min(1),
+    citations: z.array(refinementCitationSchema).min(1),
+  }),
+  z.object({
+    kind: z.literal("out-of-scope"),
+    agendaItemId: z.string().trim().min(1),
+    justification: z.string().trim().min(1),
+  }),
+]);
+
+export const agendaResolutionToolSpec = {
+  type: "function",
+  name: AGENDA_RESOLUTION_TOOL_NAME,
+  description:
+    "Resolve um item aberto da Agenda como fato verificado ou justifica que ele está fora de escopo. " +
+    "Fatos exigem resposta e ao menos uma citação de arquivo; caminhos e símbolos serão conferidos mecanicamente.",
+  inputSchema: z.toJSONSchema(agendaResolutionArgumentsSchema, {
     io: "input",
     target: "draft-7",
   }),

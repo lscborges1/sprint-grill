@@ -254,6 +254,50 @@ describe("createAgentRuntime", () => {
     await runtime.close();
   });
 
+  it("should transport a structured agenda resolution and return the ceremony verdict", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "resolve_refinement_item",
+          arguments: {
+            kind: "fact",
+            agendaItemId: "gap-1",
+            answer: "O checkout já aplica a regra bancária.",
+            citations: [{ repo: "core-api", path: "src/checkout.ts", symbol: "round" }],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["resolve_refinement_item"] });
+    const events: AgentEvent[] = [];
+
+    for await (const event of session.send("resolva a agenda")) {
+      events.push(event);
+      if (event.type === "agenda-resolution") {
+        await event.resolution.respond({ accepted: true, message: "Item resolvido." });
+      }
+    }
+
+    expect(events[0]).toMatchObject({
+      type: "agenda-resolution",
+      resolution: {
+        submission: {
+          kind: "fact",
+          agendaItemId: "gap-1",
+          answer: "O checkout já aplica a regra bancária.",
+        },
+      },
+    });
+    expect(responsesIn(transcript)).toContainEqual({
+      success: true,
+      contentItems: [{ type: "inputText", text: "Item resolvido." }],
+    });
+    await runtime.close();
+  });
+
   it("should transport structured Spec and Ticket submissions without applying phase rules", async () => {
     const transcript = transcriptPath();
     const { runtime } = await runtimeWith(
@@ -842,6 +886,7 @@ describe("createAgentRuntime", () => {
       instructions: "você investiga User Stories",
       tools: [
         "ask_operator",
+        "resolve_refinement_item",
         "propose_refinement_completion",
         "submit_refinement_spec",
         "submit_refinement_tickets",
@@ -856,6 +901,7 @@ describe("createAgentRuntime", () => {
         developerInstructions: "você investiga User Stories",
         dynamicTools: [
           { name: "ask_operator" },
+          { name: "resolve_refinement_item" },
           { name: "propose_refinement_completion" },
           { name: "submit_refinement_spec" },
           { name: "submit_refinement_tickets" },

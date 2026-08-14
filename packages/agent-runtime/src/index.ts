@@ -1,5 +1,6 @@
 export { createAgentRuntime } from "./runtime";
 export {
+  agendaResolutionArgumentsSchema,
   refinementSpecSubmissionSchema,
   refinementTicketsSubmissionSchema,
 } from "./codex/protocol";
@@ -12,6 +13,7 @@ export type {
   AgentRuntime,
   AgentSession,
   AgentSubmissionVerdict,
+  AgendaResolution,
   ApprovalDecision,
   CompletionProposal,
   PendingAgentSubmission,

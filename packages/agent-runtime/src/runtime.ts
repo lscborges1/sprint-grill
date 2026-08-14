@@ -4,10 +4,13 @@ import type { AppServerClient, ServerRequest } from "./codex/app-server";
 import { connectAppServer } from "./codex/app-server";
 import type { AgentToolName, DynamicToolCallResponse, RequestId } from "./codex/protocol";
 import {
+  AGENDA_RESOLUTION_TOOL_NAME,
   ASK_OPERATOR_TOOL_NAME,
   COMPLETION_PROPOSAL_TOOL_NAME,
   SPEC_SUBMISSION_TOOL_NAME,
   TICKETS_SUBMISSION_TOOL_NAME,
+  agendaResolutionArgumentsSchema,
+  agendaResolutionToolSpec,
   agentMessageDeltaSchema,
   approvalParamsSchema,
   askOperatorArgumentsSchema,
@@ -251,7 +254,7 @@ export async function createAgentRuntime(
         logger.warn({ method: request.method }, "request do app-server sem tratamento");
         return connection.current?.respondError(
           request.id,
-          `sprint-griller não trata ${request.method}.`,
+          `Refina não trata ${request.method}.`,
         );
     }
   }
@@ -314,6 +317,15 @@ export async function createAgentRuntime(
         (proposal) => ({ type: "completion-proposal", proposal }),
       );
     }
+    if (parsed.data.tool === AGENDA_RESOLUTION_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        agendaResolutionArgumentsSchema,
+        "agenda-resolution",
+        (resolution) => ({ type: "agenda-resolution", resolution }),
+      );
+    }
     if (parsed.data.tool === SPEC_SUBMISSION_TOOL_NAME) {
       return registerSubmission(
         request,
@@ -370,7 +382,7 @@ export async function createAgentRuntime(
       readonly arguments: unknown;
     },
     schema: { safeParse(value: unknown): { success: true; data: TSubmission } | { success: false } },
-    kind: "completion-proposal" | "spec-submission" | "tickets-submission",
+    kind: "agenda-resolution" | "completion-proposal" | "spec-submission" | "tickets-submission",
     event: (submission: PendingAgentSubmission<TSubmission>) => AgentEvent,
   ): void {
     const parsed = schema.safeParse(origin.arguments);
@@ -660,6 +672,8 @@ function dynamicToolSpec(name: AgentToolName) {
   switch (name) {
     case ASK_OPERATOR_TOOL_NAME:
       return askOperatorToolSpec;
+    case AGENDA_RESOLUTION_TOOL_NAME:
+      return agendaResolutionToolSpec;
     case COMPLETION_PROPOSAL_TOOL_NAME:
       return completionProposalToolSpec;
     case SPEC_SUBMISSION_TOOL_NAME:

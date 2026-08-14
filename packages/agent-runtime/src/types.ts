@@ -10,6 +10,8 @@ export class AgentRuntimeError extends Error {
 /** Uma pergunta do agente para a sala. O `id` é a chave da resposta. */
 export interface AgentQuestion {
   readonly id: string;
+  /** Item persistido da Agenda do refinamento que esta pergunta destrava. */
+  readonly agendaItemId: string | null;
   /** Rótulo curto do assunto (ex.: "Escopo do cache"). */
   readonly header: string;
   readonly question: string;
@@ -36,7 +38,7 @@ export interface AgentQuestionOption {
  * chamado, o turno não anda.
  */
 export interface PendingQuestion {
-  /** De 1 a 3 perguntas, respondidas juntas. */
+  /** Uma única pergunta: a sala nunca divide atenção entre decisões concorrentes. */
   readonly questions: readonly AgentQuestion[];
   /** Respostas por `AgentQuestion.id`. Chamar duas vezes é erro. */
   answer(answers: Readonly<Record<string, readonly string[]>>): Promise<void>;
@@ -66,6 +68,21 @@ export interface TurnSummary {
   readonly durationMs: number | null;
 }
 
+export type AgentSubmissionVerdict =
+  | { readonly accepted: true; readonly message: string }
+  | { readonly accepted: false; readonly message: string };
+
+export interface PendingAgentSubmission<TSubmission> {
+  readonly submission: TSubmission;
+  /** Devolve ao agente o gate aplicado pela cerimônia. Chamar duas vezes é erro. */
+  respond(verdict: AgentSubmissionVerdict): Promise<void>;
+}
+
+export type CompletionProposal = z.infer<typeof completionProposalArgumentsSchema>;
+export type RefinementSpecSubmission = z.infer<typeof refinementSpecSubmissionSchema>;
+export type RefinementTicketSubmission = z.infer<typeof refinementTicketSubmissionSchema>;
+export type RefinementTicketsSubmission = z.infer<typeof refinementTicketsSubmissionSchema>;
+
 /**
  * O que a sessão emite enquanto o agente trabalha. Vocabulário do domínio, não
  * do codex — a costura para outro runtime cabe atrás disto (ver ADR 0001).
@@ -75,6 +92,18 @@ export type AgentEvent =
   | { readonly type: "message"; readonly text: string }
   | { readonly type: "question"; readonly question: PendingQuestion }
   | { readonly type: "approval"; readonly approval: PendingApproval }
+  | {
+      readonly type: "completion-proposal";
+      readonly proposal: PendingAgentSubmission<CompletionProposal>;
+    }
+  | {
+      readonly type: "spec-submission";
+      readonly submission: PendingAgentSubmission<RefinementSpecSubmission>;
+    }
+  | {
+      readonly type: "tickets-submission";
+      readonly submission: PendingAgentSubmission<RefinementTicketsSubmission>;
+    }
   | { readonly type: "turn-completed"; readonly turn: TurnSummary }
   | { readonly type: "turn-failed"; readonly error: AgentRuntimeError };
 
@@ -104,3 +133,10 @@ export interface StartSessionOptions {
   /** Instruções de sistema para a sessão (ex.: o papel do agente na Investigação). */
   readonly instructions?: string;
 }
+import type { z } from "zod";
+import type {
+  completionProposalArgumentsSchema,
+  refinementSpecSubmissionSchema,
+  refinementTicketSubmissionSchema,
+  refinementTicketsSubmissionSchema,
+} from "./codex/protocol";

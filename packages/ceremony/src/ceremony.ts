@@ -1,4 +1,5 @@
 import type {
+  AgentEvent,
   AgentQuestion,
   AgentRuntime,
   AgentSession,
@@ -8,7 +9,13 @@ import type { Logger, SquadConfig } from "@sprint-griller/core";
 import { CeremonyError } from "./ceremony-error";
 import { runConsultation } from "./consulta";
 import { readPalco } from "./palco";
-import { ceremonyInstructions, ceremonyOpeningPrompt, ceremonyResumePrompt } from "./prompt";
+import {
+  ceremonyContinuationPrompt,
+  ceremonyInstructions,
+  ceremonyOpeningPrompt,
+  ceremonyResumePrompt,
+  investigationAgenda,
+} from "./prompt";
 import type { CeremonyStory } from "./prompt";
 import type { CeremonyStore, RecordDecisionInput } from "./store";
 import type {
@@ -18,6 +25,7 @@ import type {
   CeremonySession,
   ConsultationOutcome,
   PalcoState,
+  RefinementItemTransition,
 } from "./types";
 
 export interface CreateCeremonyOptions {
@@ -62,6 +70,8 @@ interface LiveTurn {
   running: boolean;
   pending: PendingQuestion | undefined;
   answers: Record<string, readonly string[]>;
+  progressed: boolean;
+  noProgressCompletions: number;
 }
 
 /**
@@ -152,7 +162,13 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
   /** Solta o turno: a request que dispara não espera a cerimônia inteira. */
   function kick(agentSession: AgentSession, prompt: string): void {
     const sessionId = agentSession.id;
-    const live: LiveTurn = { running: true, pending: undefined, answers: {} };
+    const live: LiveTurn = {
+      running: true,
+      pending: undefined,
+      answers: {},
+      progressed: false,
+      noProgressCompletions: 0,
+    };
     lives.set(sessionId, live);
 
     void consume(agentSession, prompt, live).catch((error: unknown) => {
@@ -176,38 +192,77 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     const logger = sessionLogger(sessionId);
 
     try {
-      for await (const event of agentSession.send(prompt)) {
-        switch (event.type) {
-          case "message-delta":
-            break;
+      let nextPrompt = prompt;
+      while (true) {
+        live.progressed = false;
+        let completed = false;
 
-          case "message":
-            store.appendEvent(sessionId, { kind: "mensagem", text: event.text });
-            changed(sessionId);
-            break;
+        for await (const event of agentSession.send(nextPrompt)) {
+          switch (event.type) {
+            case "message-delta":
+              break;
 
-          case "question":
-            await receiveQuestion(sessionId, live, event.question);
-            break;
+            case "message":
+              store.appendEvent(sessionId, { kind: "mensagem", text: event.text });
+              changed(sessionId);
+              break;
 
-          case "approval":
-            // A cerimônia é leitura: sair do sandbox nunca é decisão da sala.
-            logger?.warn({ kind: event.approval.kind }, "aprovação recusada na cerimônia");
-            await event.approval.decide("decline");
-            break;
+            case "question":
+              await receiveQuestion(sessionId, live, event.question);
+              break;
 
-          case "turn-completed":
-            store.appendEvent(sessionId, { kind: "turno-encerrado" });
-            store.finishSession(sessionId, { status: "encerrada" });
-            logger?.info("cerimônia encerrada pelo agente");
-            break;
+            case "completion-proposal":
+              live.progressed = true;
+              await receiveCompletionProposal(sessionId, event.proposal);
+              break;
 
-          case "turn-failed":
-            store.appendEvent(sessionId, { kind: "turno-falhou", message: event.error.message });
-            store.finishSession(sessionId, { status: "falhou", message: event.error.message });
-            logger?.error({ err: event.error }, "turno da cerimônia falhou");
-            break;
+            case "spec-submission":
+            case "tickets-submission":
+              await event.submission.respond({
+                accepted: false,
+                message: "Esta submissão não pertence à fase Refinar.",
+              });
+              break;
+
+            case "approval":
+              // A cerimônia é leitura: sair do sandbox nunca é decisão da sala.
+              logger?.warn({ kind: event.approval.kind }, "aprovação recusada na cerimônia");
+              await event.approval.decide("decline");
+              break;
+
+            case "turn-completed":
+              store.appendEvent(sessionId, { kind: "turno-encerrado" });
+              completed = true;
+              break;
+
+            case "turn-failed":
+              store.appendEvent(sessionId, {
+                kind: "turno-falhou",
+                message: event.error.message,
+              });
+              store.finishSession(sessionId, { status: "falhou", message: event.error.message });
+              logger?.error({ err: event.error }, "turno da cerimônia falhou");
+              break;
+          }
         }
+
+        if (!completed || store.getSession(sessionId)?.refinement.phase !== "refinando") return;
+
+        if (live.progressed) live.noProgressCompletions = 0;
+        else live.noProgressCompletions += 1;
+
+        if (live.noProgressCompletions >= 2) {
+          store.appendEvent(sessionId, {
+            kind: "mensagem",
+            text:
+              "O agente terminou duas vezes sem avançar a Agenda. Retome a cerimônia para tentar de novo.",
+          });
+          logger?.warn("cerimônia ficou retomável após dois turnos sem progresso");
+          return;
+        }
+
+        logger?.info("turno terminou sem proposta aceita; continuação automática iniciada");
+        nextPrompt = ceremonyContinuationPrompt();
       }
     } finally {
       live.running = false;
@@ -216,17 +271,59 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     }
   }
 
+  async function receiveCompletionProposal(
+    sessionId: string,
+    proposal: Extract<AgentEvent, { readonly type: "completion-proposal" }>["proposal"],
+  ): Promise<void> {
+    const open = store
+      .listRefinementItems(sessionId)
+      .filter((item) => item.status !== "resolvido" && item.status !== "fora-de-escopo");
+    if (open.length > 0) {
+      await proposal.respond({
+        accepted: false,
+        message: `A conclusão foi recusada: ${open.length} item(ns) da Agenda continuam abertos.`,
+      });
+      return;
+    }
+
+    const session = store.getSession(sessionId);
+    if (!session || session.refinement.phase !== "refinando") {
+      await proposal.respond({
+        accepted: false,
+        message: "A conclusão só pode ser proposta durante a fase Refinar.",
+      });
+      return;
+    }
+
+    store.updateRefinementPhase({
+      sessionId,
+      phase: "aguardando-confirmacao",
+      expectedRevision: session.refinement.revision,
+    });
+    await proposal.respond({
+      accepted: true,
+      message: "Agenda encerrada. A sala agora precisa confirmar o avanço.",
+    });
+    changed(sessionId);
+  }
+
   async function receiveQuestion(
     sessionId: string,
     live: LiveTurn,
     pending: PendingQuestion,
   ): Promise<void> {
-    /**
-     * Rodada inteira ou nada: as duas origens de pergunta são homogêneas — a
-     * `ask_operator` só passa com recomendação (o zod do runtime recusa antes),
-     * e o HITL nativo do codex nunca tem onde carregar uma. Rodada misturada
-     * não existe, e tratar meia rodada seria maquinário para caso impossível.
-     */
+    if (pending.questions.length !== 1) {
+      await pending.answer(
+        Object.fromEntries(
+          pending.questions.map((question) => [
+            question.id,
+            ["Envie exatamente uma pergunta por vez para a sala."],
+          ]),
+        ),
+      );
+      return;
+    }
+    // A ask_operator já exige recomendação; o HITL nativo não tem esse campo.
     const semRecomendacao = pending.questions.filter((question) => question.recommendation === null);
 
     if (semRecomendacao.length > 0) {
@@ -247,6 +344,39 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       return;
     }
 
+    const agentQuestion = pending.questions[0];
+    if (!agentQuestion || agentQuestion.agendaItemId === null) {
+      await pending.answer({
+        [agentQuestion?.id ?? "pergunta"]: ["Vincule a pergunta a um agendaItemId persistido."],
+      });
+      return;
+    }
+
+    const agendaItem = store
+      .listRefinementItems(sessionId)
+      .find((item) => item.id === agentQuestion.agendaItemId);
+    if (!agendaItem || agendaItem.status === "resolvido" || agendaItem.status === "fora-de-escopo") {
+      await pending.answer({
+        [agentQuestion.id]: ["O agendaItemId não identifica um item aberto desta Agenda."],
+      });
+      return;
+    }
+    if (store.currentQuestion(sessionId)) {
+      await pending.answer({
+        [agentQuestion.id]: ["Já existe uma pergunta ativa. Espere a sala resolvê-la."],
+      });
+      return;
+    }
+
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+    store.transitionRefinementItem({
+      sessionId,
+      itemId: agendaItem.id,
+      status: "aguardando-sala",
+      expectedRevision: session.refinement.revision,
+    });
+
     // O filtro acima já provou que nenhuma é nula; aqui o tipo acompanha.
     store.askQuestions(
       sessionId,
@@ -256,6 +386,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     );
     live.pending = pending;
     live.answers = {};
+    live.progressed = true;
     changed(sessionId);
   }
 
@@ -284,17 +415,36 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         timeZone: currentTimeZone(),
       });
 
+      const agenda = store.seedRefinementItems(
+        session.id,
+        investigationAgenda(investigationMarkdown),
+      );
+
       sessionLogger(session.id)?.info({ storyId: story.id }, "cerimônia iniciada");
-      kick(agentSession, ceremonyOpeningPrompt(story, investigationMarkdown));
-      return session;
+      kick(agentSession, ceremonyOpeningPrompt(story, investigationMarkdown, agenda));
+      const started = store.getSession(session.id);
+      if (!started) throw new CeremonyError(`cerimônia ${session.id} não existe.`);
+      return started;
     },
 
     async decide(input) {
+      const asked = store
+        .listOpenQuestions(input.sessionId)
+        .find((question) => question.id === input.questionId);
       const decision = store.recordDecision(input);
       const live = lives.get(input.sessionId);
+      if (asked) {
+        resolveAgendaChoice(
+          input.sessionId,
+          asked.agendaItemId,
+          decision.answer,
+          asked.recommendation,
+        );
+      }
+      if (live) live.progressed = true;
       changed(input.sessionId);
 
-      if (!live?.running || !live.pending) {
+      if (!live?.running) {
         // O turno que perguntou morreu com o processo: a decisão está gravada,
         // e é ela que volta para o agente na retomada. Se a retomada falhar, a
         // decisão não vai junto: perder o que a sala inteira decidiu é o único
@@ -311,7 +461,15 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         return decision;
       }
 
-      live.answers = { ...live.answers, [input.questionId]: [decision.answer] };
+      // Uma escolha vinda da Consulta pode ser respondida enquanto o agente principal pensa.
+      if (!live.pending) return decision;
+
+      const agentQuestion = live.pending.questions.find(
+        (question) => question.agendaItemId === asked?.agendaItemId,
+      );
+      if (!agentQuestion) return decision;
+
+      live.answers = { ...live.answers, [agentQuestion.id]: [decision.answer] };
       const round = live.pending;
       if (round.questions.every((question) => question.id in live.answers)) {
         const answers = live.answers;
@@ -341,6 +499,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
 
       writeFailures.delete(sessionId);
       const consultation = store.openConsultation(sessionId, question);
+      openDoubtAgenda(sessionId, consultation.id, consultation.question);
       changed(sessionId);
 
       // Solta a busca: a sala vê "buscando" e a resposta chega pelo SSE. O turno
@@ -362,6 +521,10 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         })
         .then((outcome) => {
           settleConsultation(sessionId, consultation, outcome);
+          settleDoubtAgenda(sessionId, consultation.id, outcome);
+          if (outcome.status === "precisa-sala") {
+            queueRoomChoice(sessionId, consultation.id, outcome);
+          }
           changed(sessionId);
         });
 
@@ -383,6 +546,87 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       return sessionPalco(sessionId);
     },
   };
+
+  function resolveAgendaChoice(
+    sessionId: string,
+    itemId: string,
+    answer: string,
+    recommendation: string,
+  ): void {
+    const item = store.listRefinementItems(sessionId).find((candidate) => candidate.id === itemId);
+    const session = store.getSession(sessionId);
+    if (!item || !session || item.status === "resolvido" || item.status === "fora-de-escopo") return;
+
+    store.transitionRefinementItem({
+      sessionId,
+      itemId,
+      status: "resolvido",
+      resolution: { kind: "escolha", answer, recommendation },
+      expectedRevision: session.refinement.revision,
+    });
+  }
+
+  function queueRoomChoice(
+    sessionId: string,
+    consultationId: string,
+    outcome: Extract<ConsultationOutcome, { readonly status: "precisa-sala" }>,
+  ): void {
+    const itemId = `duvida-${consultationId}`;
+    store.askQuestions(sessionId, [
+      {
+        id: itemId,
+        agendaItemId: itemId,
+        header: "Dúvida da sala",
+        question: outcome.question,
+        recommendation: outcome.recommendation,
+        evidence: outcome.evidence,
+        options: outcome.options,
+        allowFreeText: outcome.allowFreeText,
+      },
+    ]);
+  }
+
+  function openDoubtAgenda(sessionId: string, consultationId: string, question: string): void {
+    const itemId = `duvida-${consultationId}`;
+    store.seedRefinementItems(sessionId, [{ id: itemId, question }]);
+    transitionAgenda(sessionId, {
+      itemId,
+      status: "pesquisando",
+    });
+  }
+
+  function settleDoubtAgenda(
+    sessionId: string,
+    consultationId: string,
+    outcome: ConsultationOutcome,
+  ): void {
+    const itemId = `duvida-${consultationId}`;
+    if (outcome.status === "respondida") {
+      transitionAgenda(sessionId, {
+        itemId,
+        status: "resolvido",
+        resolution: { kind: "fato", answer: outcome.answer, citations: outcome.citations },
+      });
+      return;
+    }
+    if (outcome.status === "precisa-sala") {
+      transitionAgenda(sessionId, { itemId, status: "aguardando-sala" });
+      return;
+    }
+    transitionAgenda(sessionId, { itemId, status: "aberto" });
+  }
+
+  function transitionAgenda(sessionId: string, transition: RefinementItemTransition): void {
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+    store.transitionRefinementItem({
+      sessionId,
+      expectedRevision: session.refinement.revision,
+      ...transition,
+    });
+    const live = lives.get(sessionId);
+    if (live) live.progressed = true;
+  }
 }
 
 function currentTimeZone(): string {
@@ -399,6 +643,7 @@ type RecommendedQuestion = AgentQuestion & { readonly recommendation: string };
 function toCeremonyQuestion(question: RecommendedQuestion): CeremonyQuestion {
   return {
     id: question.id,
+    agendaItemId: question.agendaItemId ?? question.id,
     header: question.header,
     question: question.question,
     recommendation: question.recommendation,

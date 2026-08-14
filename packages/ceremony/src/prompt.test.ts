@@ -6,6 +6,7 @@ import {
   ceremonyResumePrompt,
   consultationInstructions,
   consultationPrompt,
+  investigationAgenda,
 } from "./prompt";
 import { TASK_DRAFT_START } from "./task-draft";
 import type { CeremonyDecision } from "./types";
@@ -79,6 +80,18 @@ describe("ceremonyOpeningPrompt", () => {
   });
 });
 
+describe("investigationAgenda", () => {
+  it("should preserve only the gap question from rendered Investigation markdown", () => {
+    expect(
+      investigationAgenda(
+        "## Furos da US\n\n- **Qual regra de arredondamento?** — muda a estimativa\n\n## Impacto mapeado\n\n- outro texto",
+      ),
+    ).toEqual([
+      { id: "investigacao-1", question: "Qual regra de arredondamento?" },
+    ]);
+  });
+});
+
 describe("consultationInstructions", () => {
   it("should list every repo the agent may read with its absolute path", () => {
     const instructions = consultationInstructions(repos);
@@ -87,12 +100,15 @@ describe("consultationInstructions", () => {
     expect(instructions).toContain("`web-app` — /dev/web-app");
   });
 
-  it("should forbid asking anything, because nobody is there to answer", () => {
-    expect(consultationInstructions(repos)).toMatch(/não pergunte/i);
+  it("should classify a doubt that needs a room choice instead of guessing", () => {
+    const instructions = consultationInstructions(repos);
+
+    expect(instructions).toContain('"kind": "room-choice"');
+    expect(instructions).toMatch(/escolha.*sala/i);
   });
 
-  it("should forbid recommending, so a fact never comes back dressed as a decision", () => {
-    expect(consultationInstructions(repos)).toMatch(/não recomende/i);
+  it("should forbid recommending when the classified answer is a fact", () => {
+    expect(consultationInstructions(repos)).toMatch(/fato.*não recomende/i);
   });
 
   it("should ask for the answer with citations in the structured contract", () => {

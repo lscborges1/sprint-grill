@@ -502,6 +502,7 @@ export function openCeremonyStore(
             .values({
               sessionId,
               questionId: question.id,
+              agendaItemId: question.agendaItemId ?? question.id,
               header: question.header,
               question: question.question,
               recommendation: question.recommendation,
@@ -838,10 +839,25 @@ export function openCeremonyStore(
         tx.update(consultations)
           .set({
             status: outcome.status,
-            answer: outcome.status === "falhou" ? null : outcome.answer,
-            citations: outcome.status === "falhou" ? null : JSON.stringify(outcome.citations),
+            question: outcome.status === "precisa-sala" ? outcome.question : open.question,
+            answer:
+              outcome.status === "respondida" || outcome.status === "sem-lastro"
+                ? outcome.answer
+                : null,
+            citations:
+              outcome.status === "respondida" || outcome.status === "sem-lastro"
+                ? JSON.stringify(outcome.citations)
+                : null,
             motivo: outcome.status === "sem-lastro" ? outcome.motivo : null,
             message: outcome.status === "falhou" ? outcome.message : null,
+            recommendation:
+              outcome.status === "precisa-sala" ? outcome.recommendation : null,
+            evidence:
+              outcome.status === "precisa-sala" ? JSON.stringify(outcome.evidence) : null,
+            options:
+              outcome.status === "precisa-sala" ? JSON.stringify(outcome.options) : null,
+            allowFreeText:
+              outcome.status === "precisa-sala" ? outcome.allowFreeText : null,
             answeredAt,
           })
           .where(eq(consultations.seq, seq))
@@ -849,7 +865,7 @@ export function openCeremonyStore(
 
         // Consulta que não chegou a responder não deixa fato no transcript: o
         // registro é do que o código respondeu, não do que se tentou perguntar.
-        if (outcome.status === "falhou") return;
+        if (outcome.status === "falhou" || outcome.status === "precisa-sala") return;
 
         const factualEvent: TranscriptEvent =
           outcome.status === "respondida"
@@ -1244,6 +1260,7 @@ function toQuestion(row: QuestionRow): PersistedCeremonyQuestion {
   return {
     questionSeq: row.seq,
     id: row.questionId,
+    agendaItemId: row.agendaItemId,
     header: row.header,
     question: row.question,
     recommendation: row.recommendation,
@@ -1388,6 +1405,19 @@ function toConsultation(row: ConsultationRow): CeremonyConsultation {
       ...asked,
       status: "falhou",
       message: row.message ?? "a consulta não devolveu resposta.",
+      answeredAt,
+    };
+  }
+
+  if (row.status === "precisa-sala") {
+    return {
+      ...asked,
+      status: "precisa-sala",
+      question: row.question,
+      recommendation: row.recommendation ?? "",
+      evidence: evidenceSchema.parse(JSON.parse(row.evidence ?? "[]")),
+      options: optionsSchema.parse(JSON.parse(row.options ?? "[]")),
+      allowFreeText: row.allowFreeText ?? true,
       answeredAt,
     };
   }

@@ -46,6 +46,7 @@ export const questions = sqliteTable(
     sessionId: text("session_id").notNull(),
     // O id que o agente deu à pergunta: é a chave da resposta no `ask_operator`.
     questionId: text("question_id").notNull(),
+    agendaItemId: text("agenda_item_id").notNull(),
     header: text("header").notNull(),
     question: text("question").notNull(),
     recommendation: text("recommendation").notNull(),
@@ -116,7 +117,7 @@ export const consultations = sqliteTable(
     question: text("question").notNull(),
     askedAt: integer("asked_at").notNull(),
     status: text("status", {
-      enum: ["buscando", "respondida", "sem-lastro", "falhou"],
+      enum: ["buscando", "respondida", "sem-lastro", "precisa-sala", "falhou"],
     }).notNull(),
     answer: text("answer"),
     /** JSON das citações; nulo enquanto a resposta não chega. */
@@ -125,6 +126,10 @@ export const consultations = sqliteTable(
     motivo: text("motivo"),
     /** Por que não houve resposta, em `falhou`. */
     message: text("message"),
+    recommendation: text("recommendation"),
+    evidence: text("evidence"),
+    options: text("options"),
+    allowFreeText: integer("allow_free_text", { mode: "boolean" }),
     answeredAt: integer("answered_at"),
   },
   (table) => [index("consultations_por_sessao").on(table.sessionId)],
@@ -160,7 +165,7 @@ export const events = sqliteTable(
  * recusada na abertura, mandando apagar o arquivo — descobrir a divergência no
  * meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -195,6 +200,7 @@ CREATE TABLE IF NOT EXISTS questions (
   seq INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
   session_id TEXT NOT NULL,
   question_id TEXT NOT NULL,
+  agenda_item_id TEXT NOT NULL,
   header TEXT NOT NULL,
   question TEXT NOT NULL,
   recommendation TEXT NOT NULL,
@@ -250,6 +256,10 @@ CREATE TABLE IF NOT EXISTS consultations (
   citations TEXT,
   motivo TEXT,
   message TEXT,
+  recommendation TEXT,
+  evidence TEXT,
+  options TEXT,
+  allow_free_text INTEGER,
   answered_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS consultations_por_sessao ON consultations (session_id);

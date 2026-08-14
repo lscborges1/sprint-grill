@@ -62,6 +62,7 @@ function answerMessage(citations: unknown): AgentEvent {
   return {
     type: "message",
     text: `\`\`\`json\n${JSON.stringify({
+      kind: "fact",
       answer: "O createOrder só é chamado pelo checkout.",
       citations,
     })}\n\`\`\``,
@@ -127,6 +128,34 @@ describe("runConsultation", () => {
       status: "respondida",
       answer: "O createOrder só é chamado pelo checkout.",
       citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+    });
+  });
+
+  it("should classify a product choice for the room instead of inventing a fact", async () => {
+    const fake = fakeRuntime([
+      {
+        type: "message",
+        text: `\`\`\`json\n${JSON.stringify({
+          kind: "room-choice",
+          question: "O parcelamento também vale no app?",
+          recommendation: "Começar pela web para reduzir o risco do rollout.",
+          evidence: ["core-api · src/order.ts"],
+          options: [{ label: "Só web", description: "Entrega inicial menor." }],
+          allowFreeText: true,
+        })}\n\`\`\``,
+      },
+      TURN_COMPLETED,
+    ]);
+
+    const outcome = await consult(fake.runtime, "Isto vale no app também?");
+
+    expect(outcome).toEqual({
+      status: "precisa-sala",
+      question: "O parcelamento também vale no app?",
+      recommendation: "Começar pela web para reduzir o risco do rollout.",
+      evidence: ["core-api · src/order.ts"],
+      options: [{ label: "Só web", description: "Entrega inicial menor." }],
+      allowFreeText: true,
     });
   });
 
@@ -220,6 +249,7 @@ describe("runConsultation", () => {
           questions: [
             {
               id: "q1",
+              agendaItemId: null,
               header: "Escopo",
               question: "Que repo?",
               recommendation: null,

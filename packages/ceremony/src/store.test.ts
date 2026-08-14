@@ -1266,6 +1266,33 @@ describe("consultations", () => {
     });
   });
 
+  it("should persist a doubt classified as a room choice", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    const { id } = store.openConsultation("thread-1", "Isto vale no app?");
+
+    store.answerConsultation(id, {
+      status: "precisa-sala",
+      question: "O rollout inclui o app?",
+      recommendation: "Começar pela web.",
+      evidence: ["core-api · src/order.ts"],
+      options: [{ label: "Só web", description: "Menor risco." }],
+      allowFreeText: true,
+    });
+    store.close();
+
+    const reopened = open(file);
+    expect(reopened.lastConsultation("thread-1")).toMatchObject({
+      status: "precisa-sala",
+      question: "O rollout inclui o app?",
+      recommendation: "Começar pela web.",
+      evidence: ["core-api · src/order.ts"],
+      options: [{ label: "Só web", description: "Menor risco." }],
+      allowFreeText: true,
+    });
+  });
+
   it("should keep the failure of a consultation that never got an answer", () => {
     const store = open(dbPath());
     newSession(store);

@@ -52,6 +52,7 @@ export type {
   RefinementPhase,
   RefinementResolution,
   RefinementState,
+  RoomChoiceConsultation,
   SeedRefinementItemInput,
   SessionStatus,
   SignedDumpInputs,

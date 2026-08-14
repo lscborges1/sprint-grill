@@ -14,6 +14,9 @@ export const CLIENT_VERSION = "0.1.0";
 
 /** Ferramenta própria de HITL: superfície estável, sob nosso controle. */
 export const ASK_OPERATOR_TOOL_NAME = "ask_operator";
+export const COMPLETION_PROPOSAL_TOOL_NAME = "propose_refinement_completion";
+export const SPEC_SUBMISSION_TOOL_NAME = "submit_refinement_spec";
+export const TICKETS_SUBMISSION_TOOL_NAME = "submit_refinement_tickets";
 
 export type RequestId = number | string;
 
@@ -132,6 +135,10 @@ export interface DynamicToolCallResponse {
 const askOperatorQuestionSchema = z
   .object({
     id: z.string().min(1).describe("Identificador curto e único da pergunta."),
+    agendaItemId: z
+      .string()
+      .min(1)
+      .describe("Identificador do item persistido da Agenda que esta pergunta resolve."),
     header: z.string().describe("Rótulo do assunto, poucas palavras."),
     question: z.string(),
     // Obrigatória de propósito: sem recomendação a pergunta é um fato que
@@ -170,8 +177,7 @@ const askOperatorQuestionSchema = z
 export const askOperatorArgumentsSchema = z.object({
   questions: z
     .array(askOperatorQuestionSchema)
-    .min(1)
-    .max(3)
+    .length(1)
     .superRefine((questions, ctx) => {
       const seen = new Set<string>();
       for (const [index, question] of questions.entries()) {
@@ -210,10 +216,65 @@ export const askOperatorToolSpec = {
   name: ASK_OPERATOR_TOOL_NAME,
   description:
     "Pergunta à sala (squad + PO) quando uma decisão depende de gente, não de código. " +
-    "Faça de 1 a 3 perguntas por chamada, cada uma com `recommendation` e ao menos uma `evidence` " +
+    "Faça exatamente uma pergunta por chamada, vinculada por `agendaItemId`, com `recommendation` e ao menos uma `evidence` " +
     "(ambas obrigatórias), ids únicos, e um jeito de responder: opções e/ou `allowFreeText: true`. " +
     "Fato que o código responde você busca sozinho — se você não consegue recomendar nada, " +
     "não é decisão da sala. Prefira perguntar a assumir: decisão assumida em silêncio é o que " +
     "o produto existe para evitar.",
   inputSchema: z.toJSONSchema(askOperatorArgumentsSchema, { io: "input", target: "draft-7" }),
+} as const;
+
+export const completionProposalArgumentsSchema = z.object({
+  summary: z.string().min(1).describe("Resumo curto de por que a Agenda está encerrada."),
+});
+
+export const completionProposalToolSpec = {
+  type: "function",
+  name: COMPLETION_PROPOSAL_TOOL_NAME,
+  description:
+    "Propõe explicitamente encerrar a etapa Refinar. O sistema confere a Agenda; terminar o turno não encerra nada.",
+  inputSchema: z.toJSONSchema(completionProposalArgumentsSchema, {
+    io: "input",
+    target: "draft-7",
+  }),
+} as const;
+
+export const refinementSpecSubmissionSchema = z.object({
+  problem: z.string().min(1),
+  solution: z.string().min(1),
+  expectedBehaviors: z.array(z.string().min(1)),
+  implementationDecisions: z.array(z.string().min(1)),
+  testStrategy: z.array(z.string().min(1)),
+  outOfScope: z.array(z.string().min(1)),
+  traceability: z.array(z.string().min(1)),
+});
+
+export const refinementSpecSubmissionToolSpec = {
+  type: "function",
+  name: SPEC_SUBMISSION_TOOL_NAME,
+  description: "Submete uma Spec estruturada para o gate de revisão da cerimônia.",
+  inputSchema: z.toJSONSchema(refinementSpecSubmissionSchema, { io: "input", target: "draft-7" }),
+} as const;
+
+export const refinementTicketSubmissionSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  specUrl: z.string().url(),
+  blockedBy: z.array(z.string().min(1)),
+});
+
+export const refinementTicketsSubmissionSchema = z.object({
+  tickets: z.array(refinementTicketSubmissionSchema).min(1),
+});
+
+export const refinementTicketsSubmissionToolSpec = {
+  type: "function",
+  name: TICKETS_SUBMISSION_TOOL_NAME,
+  description: "Submete Tickets estruturados para o gate de revisão da cerimônia.",
+  inputSchema: z.toJSONSchema(refinementTicketsSubmissionSchema, {
+    io: "input",
+    target: "draft-7",
+  }),
 } as const;

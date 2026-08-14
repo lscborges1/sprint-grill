@@ -49,6 +49,8 @@ export interface CeremonyQuestionOption {
  */
 export interface CeremonyQuestion {
   readonly id: string;
+  /** Item da Agenda que receberá a Resolução desta escolha. */
+  readonly agendaItemId?: string;
   readonly header: string;
   readonly question: string;
   readonly recommendation: string;
@@ -60,6 +62,7 @@ export interface CeremonyQuestion {
 /** A pergunta como ela volta do store, com a identidade persistida da linha. */
 export interface PersistedCeremonyQuestion extends CeremonyQuestion {
   readonly questionSeq: number;
+  readonly agendaItemId: string;
 }
 
 /** Registro de decisão: o artefato que a cerimônia existe para produzir. */
@@ -174,6 +177,14 @@ export type ConsultationOutcome =
       readonly citations: readonly CeremonyCitation[];
       readonly motivo: string;
     }
+  | {
+      readonly status: "precisa-sala";
+      readonly question: string;
+      readonly recommendation: string;
+      readonly evidence: readonly string[];
+      readonly options: readonly CeremonyQuestionOption[];
+      readonly allowFreeText: boolean;
+    }
   | { readonly status: "falhou"; readonly message: string };
 
 interface ConsultationAsked {
@@ -209,6 +220,11 @@ export type UnresolvedConsultation = Extract<
 export type VerifiedConsultation = Extract<
   CeremonyConsultation,
   { readonly status: "respondida" }
+>;
+
+export type RoomChoiceConsultation = Extract<
+  CeremonyConsultation,
+  { readonly status: "precisa-sala" }
 >;
 
 /** O transcript. Deltas de mensagem não entram: ruído não é registro. */

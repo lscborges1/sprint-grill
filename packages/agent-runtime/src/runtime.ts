@@ -5,14 +5,23 @@ import { connectAppServer } from "./codex/app-server";
 import type { DynamicToolCallResponse, RequestId } from "./codex/protocol";
 import {
   ASK_OPERATOR_TOOL_NAME,
+  COMPLETION_PROPOSAL_TOOL_NAME,
+  SPEC_SUBMISSION_TOOL_NAME,
+  TICKETS_SUBMISSION_TOOL_NAME,
   agentMessageDeltaSchema,
   approvalParamsSchema,
   askOperatorArgumentsSchema,
   askOperatorToolSpec,
+  completionProposalArgumentsSchema,
+  completionProposalToolSpec,
   dynamicToolCallParamsSchema,
   errorNotificationSchema,
   itemCompletedSchema,
   requestUserInputParamsSchema,
+  refinementSpecSubmissionSchema,
+  refinementSpecSubmissionToolSpec,
+  refinementTicketsSubmissionSchema,
+  refinementTicketsSubmissionToolSpec,
   threadResponseSchema,
   turnCompletedSchema,
   turnStartResponseSchema,
@@ -26,6 +35,8 @@ import type {
   AgentRuntime,
   AgentSession,
   ApprovalDecision,
+  AgentSubmissionVerdict,
+  PendingAgentSubmission,
   PendingQuestion,
   StartSessionOptions,
 } from "./types";
@@ -254,6 +265,7 @@ export async function createAgentRuntime(
 
     const questions: AgentQuestion[] = parsed.data.questions.map((question) => ({
       id: question.id,
+      agendaItemId: null,
       header: question.header,
       question: question.question,
       recommendation: null,
@@ -282,6 +294,33 @@ export async function createAgentRuntime(
       return;
     }
 
+    if (parsed.data.tool === COMPLETION_PROPOSAL_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        completionProposalArgumentsSchema,
+        "completion-proposal",
+        (proposal) => ({ type: "completion-proposal", proposal }),
+      );
+    }
+    if (parsed.data.tool === SPEC_SUBMISSION_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        refinementSpecSubmissionSchema,
+        "spec-submission",
+        (submission) => ({ type: "spec-submission", submission }),
+      );
+    }
+    if (parsed.data.tool === TICKETS_SUBMISSION_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        refinementTicketsSubmissionSchema,
+        "tickets-submission",
+        (submission) => ({ type: "tickets-submission", submission }),
+      );
+    }
     if (parsed.data.tool !== ASK_OPERATOR_TOOL_NAME) {
       logger.warn({ tool: parsed.data.tool }, "ferramenta desconhecida chamada pelo agente");
       respond(request.id, toolFailure(`a ferramenta ${parsed.data.tool} não existe neste runtime.`));
@@ -294,8 +333,8 @@ export async function createAgentRuntime(
       respond(
         request.id,
         toolFailure(
-          `argumentos inválidos para ${ASK_OPERATOR_TOOL_NAME}: informe de 1 a 3 perguntas com ` +
-            `id único, header, question, recommendation e ao menos uma evidence; e deixe a sala ` +
+          `argumentos inválidos para ${ASK_OPERATOR_TOOL_NAME}: informe exatamente uma pergunta com ` +
+            `id, agendaItemId, header, question, recommendation e ao menos uma evidence; e deixe a sala ` +
             `responder (opções e/ou allowFreeText). Sem recommendation a pergunta é um fato que ` +
             `você mesmo tem que buscar no código — não é decisão da sala.`,
         ),
@@ -309,6 +348,48 @@ export async function createAgentRuntime(
       reply: (answers) => respond(request.id, toolAnswer(formatAnswers(questions, answers))),
       decline: () => respond(request.id, toolFailure("a sala não respondeu.")),
     });
+  }
+
+  function registerSubmission<TSubmission>(
+    request: ServerRequest,
+    origin: {
+      readonly threadId: string;
+      readonly turnId: string;
+      readonly tool: string;
+      readonly arguments: unknown;
+    },
+    schema: { safeParse(value: unknown): { success: true; data: TSubmission } | { success: false } },
+    kind: "completion-proposal" | "spec-submission" | "tickets-submission",
+    event: (submission: PendingAgentSubmission<TSubmission>) => AgentEvent,
+  ): void {
+    const parsed = schema.safeParse(origin.arguments);
+    if (!parsed.success) {
+      logger.warn({ tool: origin.tool }, "submissão estruturada inválida");
+      respond(request.id, toolFailure(`argumentos inválidos para ${origin.tool}.`));
+      return;
+    }
+
+    const active = activeTurnOf(origin.threadId, origin.turnId);
+    if (!active) {
+      respond(request.id, toolFailure("o turno que fez a submissão não está mais ativo."));
+      return;
+    }
+
+    const pending: PendingAgentSubmission<TSubmission> = {
+      submission: parsed.data,
+      async respond(verdict: AgentSubmissionVerdict) {
+        consumePending(active, request.id);
+        respond(
+          request.id,
+          verdict.accepted ? toolAnswer(verdict.message) : toolFailure(verdict.message),
+        );
+      },
+    };
+    active.pending.set(request.id, {
+      decline: () => respond(request.id, toolFailure("a cerimônia não avaliou a submissão.")),
+    });
+    active.logger.info({ turnId: active.turnId, kind }, "agente enviou submissão estruturada");
+    active.queue.push(event(pending));
   }
 
   function registerQuestion(
@@ -527,7 +608,12 @@ export async function createAgentRuntime(
           // A Investigação lê repositórios; escrita no ADO é do `ado-client`.
           sandbox: "read-only",
           approvalPolicy: "on-request",
-          dynamicTools: [askOperatorToolSpec],
+          dynamicTools: [
+            askOperatorToolSpec,
+            completionProposalToolSpec,
+            refinementSpecSubmissionToolSpec,
+            refinementTicketsSubmissionToolSpec,
+          ],
           ...(sessionOptions.instructions === undefined
             ? {}
             : { developerInstructions: sessionOptions.instructions }),

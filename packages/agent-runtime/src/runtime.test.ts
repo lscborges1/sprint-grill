@@ -179,6 +179,7 @@ describe("createAgentRuntime", () => {
             questions: [
               {
                 id: "q1",
+                agendaItemId: "gap-1",
                 header: "Escopo",
                 question: "Vale para o app mobile?",
                 recommendation: "Só web: o mobile não consome esse endpoint.",
@@ -201,6 +202,7 @@ describe("createAgentRuntime", () => {
         questions: [
           {
             id: "q1",
+            agendaItemId: "gap-1",
             header: "Escopo",
             allowFreeText: true,
             recommendation: "Só web: o mobile não consome esse endpoint.",
@@ -218,6 +220,96 @@ describe("createAgentRuntime", () => {
     await runtime.close();
   });
 
+  it("should surface an explicit completion proposal and return the ceremony verdict", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "propose_refinement_completion",
+          arguments: { summary: "Todos os itens da agenda foram resolvidos." },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession();
+    const events: AgentEvent[] = [];
+
+    for await (const event of session.send("grelhe")) {
+      events.push(event);
+      if (event.type === "completion-proposal") {
+        await event.proposal.respond({ accepted: false, message: "Ainda há itens abertos." });
+      }
+    }
+
+    expect(events[0]).toMatchObject({
+      type: "completion-proposal",
+      proposal: { submission: { summary: "Todos os itens da agenda foram resolvidos." } },
+    });
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{ type: "inputText", text: "Ainda há itens abertos." }],
+    });
+    await runtime.close();
+  });
+
+  it("should transport structured Spec and Ticket submissions without applying phase rules", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "submit_refinement_spec",
+          arguments: {
+            problem: "A comissão não tem regra de arredondamento.",
+            solution: "Aplicar a regra bancária.",
+            expectedBehaviors: ["Valores são arredondados em duas casas."],
+            implementationDecisions: ["Reutilizar o módulo de folha."],
+            testStrategy: ["Cobrir os limites de meia unidade."],
+            outOfScope: [],
+            traceability: ["agenda:investigacao-1"],
+          },
+        }),
+        serverRequest("item/tool/call", {
+          tool: "submit_refinement_tickets",
+          arguments: {
+            tickets: [
+              {
+                id: "ticket-1",
+                title: "Aplicar arredondamento",
+                description: "Slice vertical do cálculo.",
+                acceptanceCriteria: ["A API devolve duas casas decimais."],
+                specUrl: "https://dev.azure.com/org/project/_workitems/edit/42",
+                blockedBy: [],
+              },
+            ],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession();
+    const submissions: AgentEvent["type"][] = [];
+
+    for await (const event of session.send("submeta os artefatos")) {
+      if (event.type !== "spec-submission" && event.type !== "tickets-submission") continue;
+      submissions.push(event.type);
+      await event.submission.respond({ accepted: false, message: "Fase incorreta." });
+    }
+
+    expect(submissions).toEqual(["spec-submission", "tickets-submission"]);
+    expect(responsesIn(transcript)).toEqual(
+      expect.arrayContaining([
+        {
+          success: false,
+          contentItems: [{ type: "inputText", text: "Fase incorreta." }],
+        },
+      ]),
+    );
+    await runtime.close();
+  });
+
   it("should refuse an ask_operator question that comes with no recommendation", async () => {
     const transcript = transcriptPath();
     const { runtime } = await runtimeWith(
@@ -229,6 +321,7 @@ describe("createAgentRuntime", () => {
             questions: [
               {
                 id: "q1",
+                agendaItemId: "gap-1",
                 header: "Cache",
                 question: "Onde o cache invalida?",
                 evidence: ["core-api · src/cache.ts"],
@@ -269,6 +362,7 @@ describe("createAgentRuntime", () => {
             questions: [
               {
                 id: "q1",
+                agendaItemId: "gap-1",
                 header: "Cache",
                 question: "Onde o cache invalida?",
                 recommendation: "Na escrita.",
@@ -724,7 +818,12 @@ describe("createAgentRuntime", () => {
       params: {
         sandbox: "read-only",
         developerInstructions: "você investiga User Stories",
-        dynamicTools: [{ name: "ask_operator" }],
+        dynamicTools: [
+          { name: "ask_operator" },
+          { name: "propose_refinement_completion" },
+          { name: "submit_refinement_spec" },
+          { name: "submit_refinement_tickets" },
+        ],
       },
     });
     await runtime.close();

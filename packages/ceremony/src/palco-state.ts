@@ -22,6 +22,7 @@ const decisionSchema = z.object({
 const questionSchema = z.object({
   questionSeq: z.number(),
   id: z.string(),
+  agendaItemId: z.string(),
   header: z.string(),
   question: z.string(),
   recommendation: z.string(),
@@ -55,6 +56,15 @@ const consultationSchema: z.ZodType<CeremonyConsultation> = z.discriminatedUnion
     motivo: z.string(),
   }),
   z.object({ ...answeredSchema, status: z.literal("falhou"), message: z.string() }),
+  z.object({
+    ...answeredSchema,
+    status: z.literal("precisa-sala"),
+    question: z.string(),
+    recommendation: z.string(),
+    evidence: z.array(z.string()),
+    options: z.array(z.object({ label: z.string(), description: z.string() })),
+    allowFreeText: z.boolean(),
+  }),
 ]);
 
 /**

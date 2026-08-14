@@ -120,6 +120,7 @@ function liveQuestionRuntime(): AgentRuntime {
               question: {
                 questions: [{
                   id: "q1",
+                  agendaItemId: "investigacao-1",
                   header: "Arredondamento",
                   question: "A comissão arredonda para cima?",
                   recommendation: "Seguir a regra bancária.",
@@ -165,6 +166,7 @@ function questioningRuntime(): {
   let sessions = 0;
   const question: AgentQuestion = {
     id: "q1",
+    agendaItemId: "investigacao-1",
     header: "Arredondamento",
     question: "A comissão arredonda para cima?",
     recommendation: "Seguir a regra bancária.",
@@ -524,7 +526,6 @@ describe("CeremonyLifecycle", () => {
       sessionId: session.id,
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO + squad",
     });
     const consultation = await lifecycle.consult({
       sessionId: session.id,

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { askOperatorArgumentsSchema } from "./protocol";
+import {
+  askOperatorArgumentsSchema,
+  completionProposalArgumentsSchema,
+} from "./protocol";
 
 const baseQuestion = {
   id: "q1",
+  agendaItemId: "gap-1",
   header: "Escopo",
   question: "Vale para o mobile?",
   recommendation: "Só web: o mobile não consome esse endpoint.",
@@ -41,5 +45,30 @@ describe("askOperatorArgumentsSchema", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it("should refuse more than one room question in the same call", () => {
+    const parsed = askOperatorArgumentsSchema.safeParse({
+      questions: [baseQuestion, { ...baseQuestion, id: "q2", agendaItemId: "gap-2" }],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("should require the agenda item identity", () => {
+    const { agendaItemId: _agendaItemId, ...withoutAgendaItem } = baseQuestion;
+
+    expect(askOperatorArgumentsSchema.safeParse({ questions: [withoutAgendaItem] }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("completionProposalArgumentsSchema", () => {
+  it("should accept an explicit completion summary", () => {
+    expect(
+      completionProposalArgumentsSchema.safeParse({ summary: "Todos os furos foram resolvidos." })
+        .success,
+    ).toBe(true);
   });
 });

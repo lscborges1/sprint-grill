@@ -78,13 +78,12 @@ const question = (overrides: Partial<CeremonyQuestion> = {}): CeremonyQuestion =
   ...overrides,
 });
 
-function decide(store: CeremonyStore, decidedBy = "PO + squad"): void {
+function decide(store: CeremonyStore): void {
   store.askQuestions("thread-1", [question()]);
   store.recordDecision({
     sessionId: "thread-1",
     questionId: "q1",
     answer: "Regra bancária",
-    decidedBy,
   });
 }
 
@@ -99,7 +98,7 @@ describe("readDossie", () => {
     decide(store);
 
     expect(readDossie(store, "thread-1")?.decisions).toMatchObject([
-      { answer: "Regra bancária", decidedBy: "PO + squad" },
+      { answer: "Regra bancária" },
     ]);
   });
 
@@ -339,7 +338,7 @@ describe("readDossie", () => {
     const generated = readDossie(store, "thread-1")?.spec.generated ?? "";
 
     expect(generated).toContain("# Spec da US #4242 — Exportar relatório de comissões");
-    expect(generated).toContain("Decidido por PO + squad");
+    expect(generated).not.toContain("Decidido por");
     expect(generated).toContain(`## ${SPEC_SECTIONS.impact.heading}`);
   });
 

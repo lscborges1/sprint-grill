@@ -600,6 +600,29 @@ describe("resume", () => {
     expect(prompts[1]).toContain("Regra bancária");
   });
 
+  it("should resume a stopped Spec review at the current artifact gate", async () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: 4242,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    const fake = fakeRuntime([[{ type: "complete" }]]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    await ceremony.resume(SESSION_ID);
+
+    expect(fake.prompts[0]).toContain("Submeta agora a Spec estruturada");
+  });
+
   it("should record the decision and resume when the turn died with the process", async () => {
     const store = newStore();
     store.createSession({

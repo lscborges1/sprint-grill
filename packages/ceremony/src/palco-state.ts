@@ -93,6 +93,7 @@ export const palcoStateSchema: z.ZodType<PalcoState> = z.object({
   current: z.discriminatedUnion("phase", [
     z.object({ phase: z.literal("perguntando"), question: questionSchema }),
     z.object({ phase: z.literal("pensando") }),
+    z.object({ phase: z.literal("revisao-humana") }),
     z.object({ phase: z.literal("retomavel") }),
     z.object({ phase: z.literal("encerrada") }),
     z.object({ phase: z.literal("falhou"), message: z.string() }),

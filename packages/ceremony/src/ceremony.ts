@@ -531,6 +531,8 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
   }
 
   async function resumeFrom(sessionId: string): Promise<void> {
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
     const deadAgentQuestions = store
       .listOpenQuestions(sessionId)
       .filter((question) => question.source === "agent");
@@ -552,10 +554,14 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     sessionLogger(sessionId)?.info("cerimônia retomada");
     kick(
       agentSession,
-      ceremonyResumePrompt(
-        store.listDecisions(sessionId),
-        store.listRefinementItems(sessionId),
-      ),
+      session.refinement.phase === "revisando-spec"
+        ? "Submeta agora a Spec estruturada com todos os campos obrigatórios."
+        : session.refinement.phase === "revisando-tickets"
+          ? "Submeta agora os Tickets estruturados como slices verticais completos."
+          : ceremonyResumePrompt(
+              store.listDecisions(sessionId),
+              store.listRefinementItems(sessionId),
+            ),
     );
   }
 

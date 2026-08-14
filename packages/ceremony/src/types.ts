@@ -288,6 +288,7 @@ export interface TranscriptEntry {
 export type PalcoPhase =
   | { readonly phase: "perguntando"; readonly question: PersistedCeremonyQuestion }
   | { readonly phase: "pensando" }
+  | { readonly phase: "revisao-humana" }
   | { readonly phase: "retomavel" }
   | { readonly phase: "encerrada" }
   | { readonly phase: "falhou"; readonly message: string };

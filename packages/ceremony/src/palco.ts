@@ -1,4 +1,5 @@
 import type { CeremonyStore } from "./store";
+import type { RefinementArtifactState } from "./artifact-workflow";
 import type { CeremonySession, PalcoState, PersistedCeremonyQuestion } from "./types";
 
 /**
@@ -18,12 +19,14 @@ export function readPalco(
 
   const decisions = store.listDecisions(sessionId);
   const pendingQuestions = store.listOpenQuestions(sessionId);
+  const completionProposal = store.getRefinementCompletionProposal(sessionId);
+  const artifacts = store.getArtifactState(sessionId);
 
   return {
     sessionId,
     story: { id: session.storyId, title: session.storyTitle, url: session.storyUrl },
     refinement: session.refinement,
-    completionProposal: store.getRefinementCompletionProposal(sessionId),
+    completionProposal,
     agenda: store.listRefinementItems(sessionId),
     decisionCount: decisions.length,
     decisions,
@@ -35,7 +38,7 @@ export function readPalco(
       question: asked.question,
     })),
     live,
-    current: phaseOf(session, live, pendingQuestions[0]),
+    current: phaseOf(session, live, pendingQuestions[0], artifacts, completionProposal?.proposedAt),
   };
 }
 
@@ -43,6 +46,8 @@ function phaseOf(
   session: CeremonySession,
   live: boolean,
   currentQuestion: PersistedCeremonyQuestion | undefined,
+  artifacts: RefinementArtifactState,
+  proposedAt: number | undefined,
 ): PalcoState["current"] {
   if (session.status === "falhou") {
     return { phase: "falhou", message: session.failureMessage ?? "A cerimônia parou." };
@@ -50,6 +55,20 @@ function phaseOf(
   if (session.status === "encerrada") return { phase: "encerrada" };
 
   if (currentQuestion) return { phase: "perguntando", question: currentQuestion };
+
+  const currentArtifactSubmittedAt = session.refinement.phase === "revisando-spec"
+    ? artifacts.spec?.submittedAt
+    : session.refinement.phase === "revisando-tickets"
+      ? artifacts.tickets?.submittedAt
+      : undefined;
+  if (
+    !live &&
+    proposedAt !== undefined &&
+    currentArtifactSubmittedAt !== undefined &&
+    currentArtifactSubmittedAt >= proposedAt
+  ) {
+    return { phase: "revisao-humana" };
+  }
 
   return live ? { phase: "pensando" } : { phase: "retomavel" };
 }

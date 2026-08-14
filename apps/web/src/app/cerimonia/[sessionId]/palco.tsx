@@ -413,6 +413,30 @@ function formatCitation(citation: CeremonyCitation): string {
   return citation.symbol === undefined ? file : `${file} → ${citation.symbol}`;
 }
 function Stage({ state }: { state: PalcoState }) {
+  if (state.current.phase === "falhou") {
+    return (
+      <div
+        role="alert"
+        className="flex flex-col gap-3 rounded-lg border border-red-600/50 bg-red-600/5 px-6 py-5"
+      >
+        <p className="text-2xl font-medium tracking-tight">O Refinamento parou por um erro</p>
+        <p className="text-base text-muted">{state.current.message}</p>
+      </div>
+    );
+  }
+  if (
+    state.current.phase === "retomavel" &&
+    (state.refinement.phase === "revisando-spec" || state.refinement.phase === "revisando-tickets")
+  ) {
+    return (
+      <Waiting
+        heading="O Refinamento está parado"
+        action={<ResumeButton sessionId={state.sessionId} />}
+      >
+        O agente terminou sem submeter o artefato desta etapa. Retomar continua do gate atual.
+      </Waiting>
+    );
+  }
   if (state.refinement.phase === "aguardando-confirmacao") {
     return <ConfirmationGate state={state} />;
   }
@@ -455,6 +479,9 @@ function Stage({ state }: { state: PalcoState }) {
         </Waiting>
       );
 
+    case "revisao-humana":
+      return <ReviewStage state={state} artifact="artefato" />;
+
     case "retomavel":
       return (
         <Waiting
@@ -474,16 +501,6 @@ function Stage({ state }: { state: PalcoState }) {
         </Waiting>
       );
 
-    case "falhou":
-      return (
-        <div
-          role="alert"
-          className="flex flex-col gap-3 rounded-lg border border-red-600/50 bg-red-600/5 px-6 py-5"
-        >
-          <p className="text-2xl font-medium tracking-tight">O Refinamento parou por um erro</p>
-          <p className="text-base text-muted">{state.current.message}</p>
-        </div>
-      );
   }
 }
 

@@ -151,7 +151,6 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
               question: decision.question,
               answer: decision.answer,
               recommendation: decision.recommendation,
-              decidedBy: decision.decidedBy,
               decidedAt: decision.decidedAt,
             });
             store.attachDecisionRecord({

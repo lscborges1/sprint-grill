@@ -9,6 +9,20 @@ export type { CeremonyDumpState, SignedDumpInputs } from "./dump-state";
 
 export type SessionStatus = "ativa" | "encerrada" | "falhou";
 
+export type RefinementPhase =
+  | "refinando"
+  | "aguardando-confirmacao"
+  | "revisando-spec"
+  | "revisando-tickets"
+  | "pronto-para-publicar"
+  | "publicado";
+
+export interface RefinementState {
+  readonly phase: RefinementPhase;
+  /** Revisão monotônica de qualquer mudança no refinamento persistido. */
+  readonly revision: number;
+}
+
 export interface CeremonySession {
   readonly id: string;
   readonly storyId: number;
@@ -19,6 +33,7 @@ export interface CeremonySession {
   readonly createdAt: number;
   readonly status: SessionStatus;
   readonly failureMessage: string | null;
+  readonly refinement: RefinementState;
   readonly dump: CeremonyDumpState;
 }
 
@@ -55,7 +70,6 @@ export interface CeremonyDecision {
   readonly question: string;
   readonly recommendation: string;
   readonly answer: string;
-  readonly decidedBy: string;
   readonly decidedAt: number;
   /** Referência opcional ao Registro de decisão que o despejo gravou no ADO. */
   readonly recordId?: number | undefined;
@@ -79,6 +93,72 @@ export interface CeremonyCitation {
   /** `| undefined` explícito: é o que `exactOptionalPropertyTypes` exige do zod. */
   readonly symbol?: string | undefined;
 }
+
+interface RefinementItemBase {
+  /** Identidade estável do furo dentro da sessão. */
+  readonly id: string;
+  readonly question: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export type RefinementResolution =
+  | {
+      readonly kind: "fato";
+      readonly answer: string;
+      readonly citations: readonly CeremonyCitation[];
+      readonly resolvedAt: number;
+    }
+  | {
+      readonly kind: "escolha";
+      readonly answer: string;
+      readonly recommendation: string;
+      readonly resolvedAt: number;
+    }
+  | {
+      readonly kind: "fora-de-escopo";
+      readonly justification: string;
+      readonly resolvedAt: number;
+    };
+
+export type RefinementItem = RefinementItemBase &
+  (
+    | { readonly status: "aberto" | "pesquisando" | "aguardando-sala" }
+    | {
+        readonly status: "resolvido";
+        readonly resolution: Extract<RefinementResolution, { readonly kind: "fato" | "escolha" }>;
+      }
+    | {
+        readonly status: "fora-de-escopo";
+        readonly resolution: Extract<RefinementResolution, { readonly kind: "fora-de-escopo" }>;
+      }
+  );
+
+export interface SeedRefinementItemInput {
+  readonly id: string;
+  readonly question: string;
+}
+
+export type RefinementItemTransition =
+  | {
+      readonly itemId: string;
+      readonly status: "aberto" | "pesquisando" | "aguardando-sala";
+    }
+  | {
+      readonly itemId: string;
+      readonly status: "resolvido";
+      readonly resolution:
+        | Omit<Extract<RefinementResolution, { readonly kind: "fato" }>, "resolvedAt">
+        | Omit<Extract<RefinementResolution, { readonly kind: "escolha" }>, "resolvedAt">;
+    }
+  | {
+      readonly itemId: string;
+      readonly status: "fora-de-escopo";
+      readonly resolution: Omit<
+        Extract<RefinementResolution, { readonly kind: "fora-de-escopo" }>,
+        "resolvedAt"
+      >;
+    };
 
 /** Como uma Consulta termina. `buscando` é o único estado que não está aqui. */
 export type ConsultationOutcome =
@@ -106,8 +186,8 @@ interface ConsultationAsked {
  * Consulta: dúvida **factual** que surge na sala e o agente resolve ao vivo,
  * lendo o código. É o mecanismo que mata o "alguém verifica depois".
  *
- * Nada disto é Registro de decisão: consulta não tem `decidedBy` porque não há
- * o que decidir — quem responde é o repositório, não a sala.
+ * Nada disto é Registro de decisão: não há o que decidir — quem responde é o
+ * repositório, não a sala.
  */
 export type CeremonyConsultation =
   | (ConsultationAsked & { readonly status: "buscando" })
@@ -144,7 +224,6 @@ export type TranscriptEvent =
       readonly kind: "decisao";
       readonly questionId: string;
       readonly answer: string;
-      readonly decidedBy: string;
     }
   | { readonly kind: "pergunta-recusada"; readonly question: string; readonly motivo: string }
   | { readonly kind: "consulta"; readonly consultationId: string; readonly question: string }

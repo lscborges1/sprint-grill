@@ -7,7 +7,7 @@ import { SCHEMA_VERSION } from "./schema";
 import { SPEC_SECTIONS } from "./spec-vocabulary";
 import { openCeremonyStore } from "./store";
 import type { CeremonyStore } from "./store";
-import type { CeremonyQuestion } from "./types";
+import type { CeremonyQuestion, RefinementItemTransition } from "./types";
 
 const opened: CeremonyStore[] = [];
 
@@ -78,6 +78,35 @@ function beginDump(
 }
 
 describe("openCeremonyStore", () => {
+  it("should persist the initial refinement phase and advance it with a guarded revision", () => {
+    const file = dbPath();
+    const first = open(file);
+
+    expect(newSession(first).refinement).toEqual({ phase: "refinando", revision: 0 });
+    expect(
+      first.updateRefinementPhase({
+        sessionId: "thread-1",
+        phase: "aguardando-confirmacao",
+        expectedRevision: 0,
+      }),
+    ).toEqual({ phase: "aguardando-confirmacao", revision: 1 });
+    first.close();
+    opened.pop();
+
+    const reopened = open(file);
+    expect(reopened.getSession("thread-1")?.refinement).toEqual({
+      phase: "aguardando-confirmacao",
+      revision: 1,
+    });
+    expect(() =>
+      reopened.updateRefinementPhase({
+        sessionId: "thread-1",
+        phase: "revisando-spec",
+        expectedRevision: 0,
+      }),
+    ).toThrow(/revisão.*1/i);
+  });
+
   it("should expose only valid dump states through the full lifecycle", () => {
     const store = open(dbPath());
 
@@ -128,6 +157,24 @@ describe("openCeremonyStore", () => {
     );
   });
 
+  it("should reject an impossible persisted refinement state with an actionable error", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    store.close();
+    opened.pop();
+
+    const database = new Database(file);
+    database
+      .prepare("UPDATE sessions SET refinement_phase = ?, refinement_revision = ? WHERE id = ?")
+      .run("fase-inventada", -1, "thread-1");
+    database.close();
+
+    expect(() => open(file).getSession("thread-1")).toThrow(
+      /thread-1.*estado de refinamento inconsistente.*Apague o banco/s,
+    );
+  });
+
   it("should return the same ceremony when the store is reopened on the same file", () => {
     const file = dbPath();
 
@@ -138,7 +185,6 @@ describe("openCeremonyStore", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
     first.askQuestions("thread-1", [question({ id: "q2", question: "Entra nesta sprint?" })]);
     first.close();
@@ -321,6 +367,133 @@ describe("openCeremonyStore", () => {
   });
 });
 
+describe("refinement agenda", () => {
+  it("should persist every agenda state as a discriminated domain item", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+
+    expect(
+      first.seedRefinementItems("thread-1", [
+        { id: "rounding", question: "Qual regra de arredondamento vale?" },
+        { id: "audit", question: "A operação precisa de trilha de auditoria?" },
+        { id: "scope", question: "O relatório histórico entra nesta entrega?" },
+      ]),
+    ).toMatchObject([
+      { id: "rounding", status: "aberto" },
+      { id: "audit", status: "aberto" },
+      { id: "scope", status: "aberto" },
+    ]);
+
+    expect(
+      first.transitionRefinementItem({
+        sessionId: "thread-1",
+        itemId: "audit",
+        expectedRevision: 1,
+        status: "pesquisando",
+      }),
+    ).toMatchObject({ id: "audit", status: "pesquisando" });
+    expect(
+      first.transitionRefinementItem({
+        sessionId: "thread-1",
+        itemId: "audit",
+        expectedRevision: 2,
+        status: "aguardando-sala",
+      }),
+    ).toMatchObject({ id: "audit", status: "aguardando-sala" });
+
+    const transitions = [
+      {
+        itemId: "rounding",
+        status: "resolvido",
+        resolution: {
+          kind: "fato",
+          answer: "O cálculo usa regra bancária.",
+          citations: [{ repo: "core-api", path: "src/payroll/rounding.ts" }],
+        },
+      },
+      {
+        itemId: "audit",
+        status: "resolvido",
+        resolution: {
+          kind: "escolha",
+          answer: "Registrar toda alteração.",
+          recommendation: "Reutilizar o log imutável existente.",
+        },
+      },
+      {
+        itemId: "scope",
+        status: "fora-de-escopo",
+        resolution: {
+          kind: "fora-de-escopo",
+          justification: "A US cobre somente relatórios gerados após a ativação.",
+        },
+      },
+    ] satisfies readonly RefinementItemTransition[];
+
+    for (const transition of transitions) {
+      const revision = first.getSession("thread-1")?.refinement.revision;
+      if (revision === undefined) throw new Error("sessão de teste desapareceu");
+      first.transitionRefinementItem({
+        sessionId: "thread-1",
+        expectedRevision: revision,
+        ...transition,
+      });
+    }
+    first.close();
+    opened.pop();
+
+    const items = open(file).listRefinementItems("thread-1");
+    expect(items).toMatchObject([
+      {
+        id: "rounding",
+        status: "resolvido",
+        resolution: {
+          kind: "fato",
+          answer: "O cálculo usa regra bancária.",
+          citations: [{ repo: "core-api", path: "src/payroll/rounding.ts" }],
+          resolvedAt: expect.any(Number),
+        },
+      },
+      {
+        id: "audit",
+        status: "resolvido",
+        resolution: {
+          kind: "escolha",
+          answer: "Registrar toda alteração.",
+          recommendation: "Reutilizar o log imutável existente.",
+          resolvedAt: expect.any(Number),
+        },
+      },
+      {
+        id: "scope",
+        status: "fora-de-escopo",
+        resolution: {
+          kind: "fora-de-escopo",
+          justification: "A US cobre somente relatórios gerados após a ativação.",
+          resolvedAt: expect.any(Number),
+        },
+      },
+    ]);
+  });
+
+  it("should reject a stale agenda transition without changing the item", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.seedRefinementItems("thread-1", [{ id: "rounding", question: "Qual regra vale?" }]);
+
+    expect(() =>
+      store.transitionRefinementItem({
+        sessionId: "thread-1",
+        itemId: "rounding",
+        expectedRevision: 0,
+        status: "pesquisando",
+      }),
+    ).toThrow(/revisão.*1/i);
+    expect(store.listRefinementItems("thread-1")[0]).toMatchObject({ status: "aberto" });
+  });
+});
+
 describe("askQuestions", () => {
   it("should hand out questions in the order they were asked", () => {
     const store = open(dbPath());
@@ -353,7 +526,6 @@ describe("askQuestions", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
 
     expect(store.currentQuestion("thread-1")?.id).toBe("q2");
@@ -361,7 +533,7 @@ describe("askQuestions", () => {
 });
 
 describe("recordDecision", () => {
-  it("should record who decided and when", () => {
+  it("should record an authorless room choice with an automatic timestamp", () => {
     const store = open(dbPath());
     newSession(store);
     store.askQuestions("thread-1", [question()]);
@@ -370,7 +542,6 @@ describe("recordDecision", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO + squad",
     });
 
     expect(decision).toMatchObject({
@@ -378,8 +549,8 @@ describe("recordDecision", () => {
       question: question().question,
       recommendation: question().recommendation,
       answer: "Regra bancária",
-      decidedBy: "PO + squad",
     });
+    expect(decision).not.toHaveProperty("decidedBy");
     expect(decision.decidedAt).toBeGreaterThan(0);
     expect(store.lastDecision("thread-1")).toEqual(decision);
   });
@@ -393,7 +564,6 @@ describe("recordDecision", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
       recordId: 99,
       recordUrl: "https://dev.azure.com/org/proj/_workitems/edit/99",
     });
@@ -416,7 +586,6 @@ describe("recordDecision", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
 
     store.attachDecisionRecord({
@@ -437,22 +606,6 @@ describe("recordDecision", () => {
     ).toThrow(/já tem Registro/i);
   });
 
-  it("should refuse a decision with no one behind it", () => {
-    const store = open(dbPath());
-    newSession(store);
-    store.askQuestions("thread-1", [question()]);
-
-    expect(() =>
-      store.recordDecision({
-        sessionId: "thread-1",
-        questionId: "q1",
-        answer: "Regra bancária",
-        decidedBy: "   ",
-      }),
-    ).toThrow(/quem decidiu/i);
-    expect(store.countDecisions("thread-1")).toBe(0);
-  });
-
   it("should refuse an empty answer", () => {
     const store = open(dbPath());
     newSession(store);
@@ -463,7 +616,6 @@ describe("recordDecision", () => {
         sessionId: "thread-1",
         questionId: "q1",
         answer: "  ",
-        decidedBy: "PO",
       }),
     ).toThrow(/resposta/i);
   });
@@ -477,7 +629,6 @@ describe("recordDecision", () => {
         sessionId: "thread-1",
         questionId: "fantasma",
         answer: "Sim",
-        decidedBy: "PO",
       }),
     ).toThrow(/pergunta/i);
   });
@@ -491,12 +642,11 @@ describe("recordDecision", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
 
     expect(store.listTranscript("thread-1").map((entry) => entry.event)).toEqual([
       { kind: "pergunta", questionId: "q1", question: question().question, recommendation: question().recommendation },
-      { kind: "decisao", questionId: "q1", answer: "Regra bancária", decidedBy: "PO" },
+      { kind: "decisao", questionId: "q1", answer: "Regra bancária" },
     ]);
   });
 });
@@ -527,7 +677,6 @@ describe("unansweredQuestions", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
 
     expect(store.unansweredQuestions("thread-1").map((asked) => asked.question)).toEqual([
@@ -578,7 +727,6 @@ describe("unansweredQuestions", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "O novo comportamento",
-      decidedBy: "PO",
     });
 
     store.askQuestions("thread-1", [question({ id: "q1", question: wording })]);
@@ -597,7 +745,6 @@ describe("unansweredQuestions", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
 
     expect(store.unansweredQuestions("thread-1")).toHaveLength(0);
@@ -789,7 +936,6 @@ describe("saveSpecDraft", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
     const signed = validSpec("Spec assinada").replace(
       "_Nenhuma decisão foi registrada._",
@@ -947,7 +1093,6 @@ describe("dump freeze", () => {
         sessionId: "thread-1",
         questionId: "q1",
         answer: "Regra bancária",
-        decidedBy: "PO",
       }),
     ).toThrow(/despejo/i);
   });
@@ -978,7 +1123,6 @@ describe("dump freeze", () => {
         sessionId: "thread-1",
         questionId: "q1",
         answer: "Regra bancária",
-        decidedBy: "PO",
       }),
     ).toThrow(/despejo/i);
     expect(() =>
@@ -995,7 +1139,6 @@ describe("dump freeze", () => {
       sessionId: "thread-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
     store.beginDump("thread-1", {
       dumpId: "dump-fingerprint",

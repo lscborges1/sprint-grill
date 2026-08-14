@@ -28,7 +28,6 @@ const decision = (overrides: Partial<CeremonyDecision> = {}): CeremonyDecision =
   question: "A comissão arredonda para cima?",
   recommendation: "Seguir a regra bancária.",
   answer: "Regra bancária",
-  decidedBy: "PO",
   decidedAt: 1_700_000_000_000,
   ...overrides,
 });
@@ -118,14 +117,13 @@ describe("ceremonyResumePrompt", () => {
   it("should replay the decisions already taken so the agent does not ask them again", () => {
     const prompt = ceremonyResumePrompt([
       decision(),
-      decision({ questionId: "q2", question: "Entra nesta sprint?", answer: "Sim", decidedBy: "squad" }),
+      decision({ questionId: "q2", question: "Entra nesta sprint?", answer: "Sim" }),
     ]);
 
     expect(prompt).toContain("A comissão arredonda para cima?");
     expect(prompt).toContain("Regra bancária");
-    expect(prompt).toContain("PO");
     expect(prompt).toContain("Entra nesta sprint?");
-    expect(prompt).toContain("squad");
+    expect(prompt).not.toContain("decidido por");
   });
 
   it("should tell the agent the ceremony is starting over with nothing decided", () => {

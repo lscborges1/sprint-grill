@@ -16,7 +16,6 @@ const decisionSchema = z.object({
   question: z.string(),
   recommendation: z.string(),
   answer: z.string(),
-  decidedBy: z.string(),
   decidedAt: z.number(),
 });
 

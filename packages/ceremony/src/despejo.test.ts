@@ -196,7 +196,6 @@ function createFixture(options: {
       sessionId: "session-1",
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO + squad",
     });
   }
   if (!options.active) store.finishSession("session-1", { status: "encerrada" });
@@ -755,7 +754,6 @@ describe("CeremonyDump", () => {
       sessionId: fixture.dossie.sessionId,
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     }))).rejects.toThrow(/despejo/i);
 
     release();

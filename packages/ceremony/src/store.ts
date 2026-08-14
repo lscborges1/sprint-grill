@@ -15,6 +15,7 @@ import {
   decisions,
   events,
   questions,
+  refinementItems,
   sessions,
   specDrafts,
 } from "./schema";
@@ -24,6 +25,11 @@ import type {
   CeremonyDecision,
   CeremonyQuestion,
   PersistedCeremonyQuestion,
+  RefinementItem,
+  RefinementItemTransition,
+  RefinementPhase,
+  RefinementState,
+  SeedRefinementItemInput,
   CeremonySession,
   ConsultationOutcome,
   SignedDumpInputs,
@@ -55,11 +61,21 @@ export interface RecordDecisionInput {
   readonly sessionId: string;
   readonly questionId: string;
   readonly answer: string;
-  readonly decidedBy: string;
   /** Referência preenchida quando o Registro de decisão é despejado no ADO. */
   readonly recordId?: number | null;
   readonly recordUrl?: string | null;
 }
+
+export interface UpdateRefinementPhaseInput {
+  readonly sessionId: string;
+  readonly phase: RefinementPhase;
+  readonly expectedRevision: number;
+}
+
+export type TransitionRefinementItemInput = {
+  readonly sessionId: string;
+  readonly expectedRevision: number;
+} & RefinementItemTransition;
 
 export interface SaveSpecDraftInput {
   readonly sessionId: string;
@@ -92,10 +108,9 @@ export type FinishSessionOutcome =
   | { readonly status: "falhou"; readonly message: string };
 
 /**
- * A única porta do estado de cerimônia. `recordDecision` é a única escrita em
- * `decisions` do repositório inteiro — e ela exige `decidedBy`, que só o
- * formulário do Palco tem. É assim que "nenhum Registro de decisão sem humano"
- * deixa de ser promessa de prompt e vira tipo.
+ * A única porta do estado de cerimônia. O estado do Refina pertence à sessão:
+ * toda mudança de fase ou agenda avança uma revisão monotônica para que ações
+ * baseadas numa tela velha falhem em vez de sobrescrever trabalho novo.
  */
 export interface CeremonyStore {
   createSession(input: CreateSessionInput): CeremonySession;
@@ -103,6 +118,13 @@ export interface CeremonyStore {
   findOpenSessionByStory(storyId: number): CeremonySession | undefined;
   /** Sessão cujo despejo começou e ainda não concluiu — bloqueia nova cerimônia da mesma US. */
   findIncompleteDumpByStory(storyId: number): CeremonySession | undefined;
+  updateRefinementPhase(input: UpdateRefinementPhaseInput): RefinementState;
+  seedRefinementItems(
+    sessionId: string,
+    items: readonly SeedRefinementItemInput[],
+  ): readonly RefinementItem[];
+  listRefinementItems(sessionId: string): readonly RefinementItem[];
+  transitionRefinementItem(input: TransitionRefinementItemInput): RefinementItem;
   finishSession(sessionId: string, outcome: FinishSessionOutcome): void;
   askQuestions(sessionId: string, asked: readonly CeremonyQuestion[]): void;
   currentQuestion(sessionId: string): PersistedCeremonyQuestion | undefined;
@@ -127,9 +149,8 @@ export interface CeremonyStore {
   lastDecision(sessionId: string): CeremonyDecision | undefined;
   listDecisions(sessionId: string): readonly CeremonyDecision[];
   /**
-   * Abre uma Consulta factual. Não tem `decidedBy` porque não é decisão: quem
-   * responde é o repositório. É a contraparte de `recordDecision`, e as duas
-   * escritas nunca se cruzam.
+   * Abre uma Consulta factual: quem responde é o repositório. É a contraparte
+   * de `recordDecision`, e as duas escritas nunca se cruzam.
    */
   openConsultation(sessionId: string, question: string): CeremonyConsultation;
   answerConsultation(consultationId: string, outcome: ConsultationOutcome): void;
@@ -153,6 +174,17 @@ const optionsSchema = z.array(z.object({ label: z.string(), description: z.strin
 const citationsSchema: z.ZodType<readonly CeremonyCitation[]> = z.array(
   z.object({ repo: z.string(), path: z.string(), symbol: z.string().optional() }),
 );
+const refinementStateSchema: z.ZodType<RefinementState> = z.object({
+  phase: z.enum([
+    "refinando",
+    "aguardando-confirmacao",
+    "revisando-spec",
+    "revisando-tickets",
+    "pronto-para-publicar",
+    "publicado",
+  ]),
+  revision: z.number().int().nonnegative(),
+});
 
 const ORPHANED_CONSULTATION_MESSAGE =
   "A consulta foi interrompida porque o processo foi reiniciado. Pergunte de novo.";
@@ -170,7 +202,6 @@ const transcriptEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("decisao"),
     questionId: z.string(),
     answer: z.string(),
-    decidedBy: z.string(),
   }),
   z.object({ kind: z.literal("pergunta-recusada"), question: z.string(), motivo: z.string() }),
   z.object({ kind: z.literal("consulta"), consultationId: z.string(), question: z.string() }),
@@ -274,6 +305,27 @@ export function openCeremonyStore(
     }
   }
 
+  function staleRevision(sessionId: string, expectedRevision: number): CeremonyError {
+    const actual = store.getSession(sessionId)?.refinement.revision;
+    return new CeremonyError(
+      actual === undefined
+        ? `cerimônia ${sessionId} não existe.`
+        : `a revisão do refinamento mudou para ${actual}; recarregue antes de continuar ` +
+            `(a ação usava a revisão ${expectedRevision}).`,
+    );
+  }
+
+  function bumpRefinementRevision(sessionId: string, expectedRevision: number): void {
+    const result = db
+      .update(sessions)
+      .set({ refinementRevision: expectedRevision + 1 })
+      .where(
+        and(eq(sessions.id, sessionId), eq(sessions.refinementRevision, expectedRevision)),
+      )
+      .run();
+    if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
+  }
+
   const store: CeremonyStore = {
     createSession(input) {
       const session: SessionRow = {
@@ -281,6 +333,8 @@ export function openCeremonyStore(
         createdAt: Date.now(),
         status: "ativa",
         failureMessage: null,
+        refinementPhase: "refinando",
+        refinementRevision: 0,
         dumpStartedAt: null,
         dumpId: null,
         dumpMarkdown: null,
@@ -319,6 +373,111 @@ export function openCeremonyStore(
         .orderBy(desc(sessions.createdAt))
         .get();
       return row && toCeremonySession(row);
+    },
+
+    updateRefinementPhase({ sessionId, phase, expectedRevision }) {
+      assertDossieMutable(sessionId);
+      const result = db
+        .update(sessions)
+        .set({ refinementPhase: phase, refinementRevision: expectedRevision + 1 })
+        .where(
+          and(eq(sessions.id, sessionId), eq(sessions.refinementRevision, expectedRevision)),
+        )
+        .run();
+      if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
+      return { phase, revision: expectedRevision + 1 };
+    },
+
+    seedRefinementItems(sessionId, items) {
+      assertDossieMutable(sessionId);
+      if (items.length === 0) return store.listRefinementItems(sessionId);
+
+      const normalized = items.map((item) => ({
+        id: requiredText(item.id, "o item da agenda precisa de um id."),
+        question: requiredText(item.question, "o item da agenda precisa descrever o furo."),
+      }));
+      if (new Set(normalized.map((item) => item.id)).size !== normalized.length) {
+        throw new CeremonyError("a agenda não aceita dois itens com o mesmo id.");
+      }
+
+      const seed = sqlite.transaction(() => {
+        const session = requireSession(sessionId);
+        const existing = db
+          .select({ itemId: refinementItems.itemId })
+          .from(refinementItems)
+          .where(eq(refinementItems.sessionId, sessionId))
+          .all();
+        const existingIds = new Set(existing.map((item) => item.itemId));
+        const duplicate = normalized.find((item) => existingIds.has(item.id));
+        if (duplicate) {
+          throw new CeremonyError(`o item ${duplicate.id} já existe na agenda desta sessão.`);
+        }
+
+        const createdAt = Date.now();
+        for (const item of normalized) {
+          db.insert(refinementItems)
+            .values({
+              sessionId,
+              itemId: item.id,
+              question: item.question,
+              status: "aberto",
+              createdAt,
+              updatedAt: createdAt,
+            })
+            .run();
+        }
+        bumpRefinementRevision(sessionId, session.refinement.revision);
+      });
+      seed.immediate();
+      return store.listRefinementItems(sessionId);
+    },
+
+    listRefinementItems(sessionId) {
+      return db
+        .select()
+        .from(refinementItems)
+        .where(eq(refinementItems.sessionId, sessionId))
+        .orderBy(asc(refinementItems.seq))
+        .all()
+        .map(toRefinementItem);
+    },
+
+    transitionRefinementItem(input) {
+      assertDossieMutable(input.sessionId);
+      const transition = sqlite.transaction((): RefinementItem => {
+        const session = requireSession(input.sessionId);
+        if (session.refinement.revision !== input.expectedRevision) {
+          throw staleRevision(input.sessionId, input.expectedRevision);
+        }
+        const current = db
+          .select()
+          .from(refinementItems)
+          .where(
+            and(
+              eq(refinementItems.sessionId, input.sessionId),
+              eq(refinementItems.itemId, input.itemId),
+            ),
+          )
+          .get();
+        if (!current) {
+          throw new CeremonyError(`o item ${input.itemId} não existe na agenda desta sessão.`);
+        }
+
+        const updatedAt = Date.now();
+        const resolution = refinementResolutionColumns(input, updatedAt);
+        const updated = db
+          .update(refinementItems)
+          .set({ status: input.status, updatedAt, ...resolution })
+          .where(eq(refinementItems.seq, current.seq))
+          .returning()
+          .get();
+        if (!updated) {
+          throw new CeremonyError(`não foi possível atualizar o item ${input.itemId} da agenda.`);
+        }
+        bumpRefinementRevision(input.sessionId, input.expectedRevision);
+        return toRefinementItem(updated);
+      });
+      return transition.immediate();
     },
 
     finishSession(sessionId, outcome) {
@@ -415,11 +574,8 @@ export function openCeremonyStore(
         .run();
     },
 
-    recordDecision({ sessionId, questionId, answer, decidedBy, recordId, recordUrl }) {
+    recordDecision({ sessionId, questionId, answer, recordId, recordUrl }) {
       assertDossieMutable(sessionId);
-
-      const who = decidedBy.trim();
-      if (who === "") throw new CeremonyError("registre quem decidiu antes de gravar a decisão.");
 
       const chosen = answer.trim();
       if (chosen === "") throw new CeremonyError("a resposta da sala não pode ser vazia.");
@@ -447,7 +603,6 @@ export function openCeremonyStore(
         question: pending.question,
         recommendation: pending.recommendation,
         answer: chosen,
-        decidedBy: who,
         decidedAt: Date.now(),
         ...(recordId == null ? {} : { recordId }),
         ...(recordUrl == null ? {} : { recordUrl }),
@@ -463,7 +618,6 @@ export function openCeremonyStore(
             question: decision.question,
             recommendation: decision.recommendation,
             answer: decision.answer,
-            decidedBy: decision.decidedBy,
             decidedAt: decision.decidedAt,
             recordId: recordId ?? null,
             recordUrl: recordUrl ?? null,
@@ -478,7 +632,6 @@ export function openCeremonyStore(
               kind: "decisao",
               questionId,
               answer: decision.answer,
-              decidedBy: decision.decidedBy,
             } satisfies TranscriptEvent),
           })
           .run();
@@ -955,10 +1108,13 @@ function toCeremonySession(row: SessionRow): CeremonySession {
     dumpTasksMarkdown,
     dumpEstimate,
     dumpedAt,
+    refinementPhase,
+    refinementRevision,
     ...session
   } = row;
   return {
     ...session,
+    refinement: toRefinementState(row.id, refinementPhase, refinementRevision),
     dump: toDumpState(row.id, {
       dumpStartedAt,
       dumpId,
@@ -968,6 +1124,19 @@ function toCeremonySession(row: SessionRow): CeremonySession {
       dumpedAt,
     }),
   };
+}
+
+function toRefinementState(
+  sessionId: string,
+  phase: SessionRow["refinementPhase"],
+  revision: number,
+): RefinementState {
+  const parsed = refinementStateSchema.safeParse({ phase, revision });
+  if (parsed.success) return parsed.data;
+  throw new CeremonyError(
+    `a cerimônia ${sessionId} tem estado de refinamento inconsistente no banco local. ` +
+      "Apague o banco de cerimônias antes de continuar.",
+  );
 }
 
 function toDumpState(
@@ -1039,6 +1208,7 @@ function applySchema(sqlite: Database.Database, dbPath: string, logger?: Logger)
 type QuestionRow = typeof questions.$inferSelect;
 type DecisionRow = typeof decisions.$inferSelect;
 type ConsultationRow = typeof consultations.$inferSelect;
+type RefinementItemRow = typeof refinementItems.$inferSelect;
 type ParsedTranscriptEvent = z.infer<typeof transcriptEventSchema>;
 
 const LEGACY_UNVERIFIED_REASON = "a citação não fechou com o código.";
@@ -1081,6 +1251,125 @@ function toQuestion(row: QuestionRow): PersistedCeremonyQuestion {
     options: optionsSchema.parse(JSON.parse(row.options)),
     allowFreeText: row.allowFreeText,
   };
+}
+
+type RefinementResolutionColumns = Pick<
+  RefinementItemRow,
+  "resolutionKind" | "answer" | "recommendation" | "citations" | "justification" | "resolvedAt"
+>;
+
+function requiredText(value: string, message: string): string {
+  const normalized = value.trim();
+  if (normalized === "") throw new CeremonyError(message);
+  return normalized;
+}
+
+function refinementResolutionColumns(
+  transition: RefinementItemTransition,
+  resolvedAt: number,
+): RefinementResolutionColumns {
+  if (!("resolution" in transition)) {
+    return {
+      resolutionKind: null,
+      answer: null,
+      recommendation: null,
+      citations: null,
+      justification: null,
+      resolvedAt: null,
+    };
+  }
+
+  if (transition.resolution.kind === "fato") {
+    return {
+      resolutionKind: "fato",
+      answer: requiredText(transition.resolution.answer, "a resolução factual precisa de resposta."),
+      recommendation: null,
+      citations: JSON.stringify(citationsSchema.parse(transition.resolution.citations)),
+      justification: null,
+      resolvedAt,
+    };
+  }
+  if (transition.resolution.kind === "escolha") {
+    return {
+      resolutionKind: "escolha",
+      answer: requiredText(transition.resolution.answer, "a escolha da sala precisa de resposta."),
+      recommendation: requiredText(
+        transition.resolution.recommendation,
+        "a escolha da sala precisa preservar a recomendação do agente.",
+      ),
+      citations: null,
+      justification: null,
+      resolvedAt,
+    };
+  }
+  return {
+    resolutionKind: "fora-de-escopo",
+    answer: null,
+    recommendation: null,
+    citations: null,
+    justification: requiredText(
+      transition.resolution.justification,
+      "um item fora de escopo precisa de justificativa.",
+    ),
+    resolvedAt,
+  };
+}
+
+function toRefinementItem(row: RefinementItemRow): RefinementItem {
+  const base = {
+    id: row.itemId,
+    question: row.question,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+  if (row.status === "aberto" || row.status === "pesquisando" || row.status === "aguardando-sala") {
+    return { ...base, status: row.status };
+  }
+
+  const resolvedAt = row.resolvedAt;
+  if (resolvedAt === null) throw invalidRefinementItem(row);
+  if (row.status === "fora-de-escopo") {
+    if (row.resolutionKind !== "fora-de-escopo" || row.justification === null) {
+      throw invalidRefinementItem(row);
+    }
+    return {
+      ...base,
+      status: "fora-de-escopo",
+      resolution: { kind: "fora-de-escopo", justification: row.justification, resolvedAt },
+    };
+  }
+  if (row.resolutionKind === "fato" && row.answer !== null && row.citations !== null) {
+    return {
+      ...base,
+      status: "resolvido",
+      resolution: {
+        kind: "fato",
+        answer: row.answer,
+        citations: citationsSchema.parse(JSON.parse(row.citations)),
+        resolvedAt,
+      },
+    };
+  }
+  if (row.resolutionKind === "escolha" && row.answer !== null && row.recommendation !== null) {
+    return {
+      ...base,
+      status: "resolvido",
+      resolution: {
+        kind: "escolha",
+        answer: row.answer,
+        recommendation: row.recommendation,
+        resolvedAt,
+      },
+    };
+  }
+  throw invalidRefinementItem(row);
+}
+
+function invalidRefinementItem(row: RefinementItemRow): CeremonyError {
+  return new CeremonyError(
+    `o item ${row.itemId} da agenda tem resolução inconsistente no banco local. ` +
+      "Apague o banco de cerimônias antes de continuar.",
+  );
 }
 
 /**
@@ -1142,7 +1431,6 @@ function toDecision(row: DecisionRow): CeremonyDecision {
     question: row.question,
     recommendation: row.recommendation,
     answer: row.answer,
-    decidedBy: row.decidedBy,
     decidedAt: row.decidedAt,
     ...(row.recordId == null ? {} : { recordId: row.recordId }),
     ...(row.recordUrl == null ? {} : { recordUrl: row.recordUrl }),

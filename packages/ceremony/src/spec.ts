@@ -132,8 +132,7 @@ export function readSpecSection(markdown: string, heading: string): string {
 
 /**
  * Uma decisão como ela precisa circular: o que a sala respondeu, o que o agente
- * tinha recomendado, e a assinatura — quem decidiu e quando. Sem a assinatura
- * isto vira ata anônima, que é exatamente o que o Registro de decisão substitui.
+ * tinha recomendado e quando a resolução coletiva foi registrada.
  */
 function decisionEntry(decision: CeremonyDecision, timeZone: string): string {
   const record = decision.recordUrl
@@ -145,7 +144,7 @@ function decisionEntry(decision: CeremonyDecision, timeZone: string): string {
   return [
     `- **${decision.question}** — ${decision.answer}`,
     `  - Recomendação do agente: ${decision.recommendation}`,
-    `  - ${italic(`Decidido por ${decision.decidedBy} em ${formatDecisionWhen(decision.decidedAt, timeZone)}.`)}`,
+    `  - ${italic(`Resolução registrada em ${formatDecisionWhen(decision.decidedAt, timeZone)}.`)}`,
     record,
   ].filter((line): line is string => line !== undefined).join("\n");
 }

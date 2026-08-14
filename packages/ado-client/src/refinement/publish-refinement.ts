@@ -56,7 +56,6 @@ export interface DecisionRecordToPublish {
   readonly question: string;
   readonly answer: string;
   readonly recommendation: string;
-  readonly decidedBy: string;
   readonly decidedAt: number;
 }
 
@@ -140,7 +139,6 @@ export function renderDecisionRecordMarkdown(record: Omit<DecisionRecordToPublis
     `**Pergunta:** ${record.question}`,
     `**Decisão:** ${record.answer}`,
     `**Recomendação do agente:** ${record.recommendation}`,
-    `**Decidido por:** ${record.decidedBy}`,
     `**Quando:** ${new Date(record.decidedAt).toISOString()}`,
   ].join("\n\n");
 }

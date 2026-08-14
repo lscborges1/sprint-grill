@@ -177,8 +177,7 @@ export function ceremonyResumePrompt(taken: readonly CeremonyDecision[]): string
     ...(taken.length === 0
       ? ["(nenhuma decisão registrada ainda)"]
       : taken.map(
-          (decision) =>
-            `- ${decision.question}\n  → ${decision.answer} (decidido por ${decision.decidedBy})`,
+          (decision) => `- ${decision.question}\n  → ${decision.answer}`,
         )),
     "",
     "Faça a próxima pergunta em aberto, ou feche a cerimônia se não houver mais nenhuma.",

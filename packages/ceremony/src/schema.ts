@@ -1,9 +1,9 @@
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
  * Estado de cerimônia, e só ele ([ADR 0003](../../../docs/adr/0003-azure-devops-como-fonte-da-verdade.md)):
- * sessão, perguntas, Registros de decisão e transcript. Nada aqui é fonte da
- * verdade — depois do despejo o arquivo pode sumir sem perda.
+ * sessão, agenda, perguntas, Registros de decisão e transcript. Nada aqui é
+ * fonte da verdade — depois do despejo o arquivo pode sumir sem perda.
  */
 
 export const sessions = sqliteTable("sessions", {
@@ -16,6 +16,17 @@ export const sessions = sqliteTable("sessions", {
   createdAt: integer("created_at").notNull(),
   status: text("status", { enum: ["ativa", "encerrada", "falhou"] }).notNull(),
   failureMessage: text("failure_message"),
+  refinementPhase: text("refinement_phase", {
+    enum: [
+      "refinando",
+      "aguardando-confirmacao",
+      "revisando-spec",
+      "revisando-tickets",
+      "pronto-para-publicar",
+      "publicado",
+    ],
+  }).notNull(),
+  refinementRevision: integer("refinement_revision").notNull(),
   dumpStartedAt: integer("dump_started_at"),
   /** Fingerprint do despejo: sobrevive ao abort para o retry não criar Tasks duplicadas. */
   dumpId: text("dump_id"),
@@ -58,12 +69,38 @@ export const decisions = sqliteTable(
     question: text("question").notNull(),
     recommendation: text("recommendation").notNull(),
     answer: text("answer").notNull(),
-    decidedBy: text("decided_by").notNull(),
     decidedAt: integer("decided_at").notNull(),
     recordId: integer("record_id"),
     recordUrl: text("record_url"),
   },
   (table) => [index("decisions_por_sessao").on(table.sessionId)],
+);
+
+export const refinementItems = sqliteTable(
+  "refinement_items",
+  {
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    sessionId: text("session_id").notNull(),
+    itemId: text("item_id").notNull(),
+    question: text("question").notNull(),
+    status: text("status", {
+      enum: ["aberto", "pesquisando", "aguardando-sala", "resolvido", "fora-de-escopo"],
+    }).notNull(),
+    resolutionKind: text("resolution_kind", {
+      enum: ["fato", "escolha", "fora-de-escopo"],
+    }),
+    answer: text("answer"),
+    recommendation: text("recommendation"),
+    citations: text("citations"),
+    justification: text("justification"),
+    resolvedAt: integer("resolved_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("refinement_items_por_sessao_id").on(table.sessionId, table.itemId),
+    index("refinement_items_por_sessao_status").on(table.sessionId, table.status),
+  ],
 );
 
 /**
@@ -123,7 +160,7 @@ export const events = sqliteTable(
  * recusada na abertura, mandando apagar o arquivo — descobrir a divergência no
  * meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -144,6 +181,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   status TEXT NOT NULL,
   failure_message TEXT,
+  refinement_phase TEXT NOT NULL,
+  refinement_revision INTEGER NOT NULL,
   dump_started_at INTEGER,
   dump_id TEXT,
   dump_markdown TEXT,
@@ -175,12 +214,31 @@ CREATE TABLE IF NOT EXISTS decisions (
   question TEXT NOT NULL,
   recommendation TEXT NOT NULL,
   answer TEXT NOT NULL,
-  decided_by TEXT NOT NULL,
   decided_at INTEGER NOT NULL,
   record_id INTEGER,
   record_url TEXT
 );
 CREATE INDEX IF NOT EXISTS decisions_por_sessao ON decisions (session_id);
+
+CREATE TABLE IF NOT EXISTS refinement_items (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  session_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  question TEXT NOT NULL,
+  status TEXT NOT NULL,
+  resolution_kind TEXT,
+  answer TEXT,
+  recommendation TEXT,
+  citations TEXT,
+  justification TEXT,
+  resolved_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS refinement_items_por_sessao_id
+  ON refinement_items (session_id, item_id);
+CREATE INDEX IF NOT EXISTS refinement_items_por_sessao_status
+  ON refinement_items (session_id, status);
 
 CREATE TABLE IF NOT EXISTS consultations (
   seq INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,

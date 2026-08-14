@@ -39,7 +39,6 @@ const REFINED: DossieDocument = {
       question: "O TTL vira configurável por cliente ou global?",
       recommendation: "Global: nenhum cliente pediu valor próprio.",
       answer: "Global",
-      decidedBy: "PO + squad",
       decidedAt: Date.UTC(2026, 7, 6, 14, 30),
     },
   ],
@@ -61,11 +60,12 @@ describe("renderSpecMarkdown", () => {
     expect(renderSpecMarkdown(REFINED)).toContain(REFINED.story.url);
   });
 
-  it("should record each decision with what was decided, by whom and when", () => {
+  it("should record each collective resolution with its automatic timestamp", () => {
     const markdown = renderSpecMarkdown(REFINED);
 
     expect(markdown).toContain("**O TTL vira configurável por cliente ou global?** — Global");
-    expect(markdown).toContain("_Decidido por PO + squad em 06/08/2026 às 14:30._");
+    expect(markdown).toContain("_Resolução registrada em 06/08/2026 às 14:30._");
+    expect(markdown).not.toContain("Decidido por");
   });
 
   it("should render the persisted timezone independently of the host timezone", () => {
@@ -74,7 +74,7 @@ describe("renderSpecMarkdown", () => {
     vi.stubEnv("TZ", "America/Los_Angeles");
 
     expect(renderSpecMarkdown(REFINED, "America/Sao_Paulo")).toBe(saoPaulo);
-    expect(saoPaulo).toContain("_Decidido por PO + squad em 06/08/2026 às 11:30._");
+    expect(saoPaulo).toContain("_Resolução registrada em 06/08/2026 às 11:30._");
   });
 
   it("should keep the agent recommendation next to the decision it produced", () => {
@@ -101,7 +101,6 @@ describe("renderSpecMarkdown", () => {
           question: "O TTL vira configurável por cliente ou global?",
           recommendation: "Global",
           answer: "Global",
-          decidedBy: "PO",
           decidedAt: Date.UTC(2026, 7, 6, 14, 30),
           recordId: 99,
           recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/99",
@@ -336,7 +335,6 @@ describe("appendDecisionTraceability", () => {
       question: "A integração fica síncrona?",
       recommendation: "Sim",
       answer: "Sim",
-      decidedBy: "PO",
       decidedAt: Date.UTC(2026, 7, 6, 14, 30),
       recordId,
       recordUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",

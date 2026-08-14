@@ -29,6 +29,8 @@ export type {
   DiscardSpecDraftInput,
   RecordDecisionInput,
   SaveSpecDraftInput,
+  TransitionRefinementItemInput,
+  UpdateRefinementPhaseInput,
 } from "./store";
 export type {
   CeremonyCitation,
@@ -45,6 +47,12 @@ export type {
   DossieState,
   PalcoPhase,
   PalcoState,
+  RefinementItem,
+  RefinementItemTransition,
+  RefinementPhase,
+  RefinementResolution,
+  RefinementState,
+  SeedRefinementItemInput,
   SessionStatus,
   SignedDumpInputs,
   SpecDraft,

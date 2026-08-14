@@ -12,13 +12,19 @@ import type {
   SaveSpecDraftActionState,
 } from "./spec-draft-action-state";
 import {
-  askFact,
+  addDoubt,
+  approveSpec,
+  approveTickets,
+  artifactGateSchema,
+  confirmRefinement,
   consultationSchema,
+  continueRefining,
   decisionSchema,
   discardSpecDraft,
   discardSpecDraftSchema,
   dumpCeremony,
   dumpCeremonySchema,
+  reopenRefinement,
   resumeCeremony,
   saveSpecDraft,
   sessionIdSchema,
@@ -31,7 +37,7 @@ import { logger } from "@/lib/logger";
 
 /**
  * Abre o Palco de uma US investigada. Espera só a sessão nascer — o turno do
- * grilling segue solto, como a Investigação.
+ * Refinamento segue solto, como a Investigação.
  */
 export async function startCeremonyAction(formData: FormData): Promise<void> {
   const storyId = storyIdSchema.parse(formData.get("storyId"));
@@ -54,7 +60,6 @@ export async function submitDecisionAction(
     questionId: formData.get("questionId"),
     // O botão da opção manda `answer`; o campo aberto, `answerLivre`.
     answer: formData.get("answer") ?? formData.get("answerLivre") ?? "",
-    decidedBy: formData.get("decidedBy") ?? "",
   });
 
   if (!parsed.success) {
@@ -75,7 +80,7 @@ export async function submitDecisionAction(
  * A dúvida de fato que surgiu na sala. Nada aqui vira Registro de decisão: o
  * agente vai ler o código e a resposta entra no transcript como fato.
  */
-export async function askFactAction(
+export async function addDoubtAction(
   _previous: string | null,
   formData: FormData,
 ): Promise<string | null> {
@@ -89,12 +94,12 @@ export async function askFactAction(
   }
 
   try {
-    await askFact(parsed.data);
+    await addDoubt(parsed.data);
     return null;
   } catch (error) {
     // Agente fora do ar é erro de sala, não tela branca: o Operador tenta de novo.
     if (!(error instanceof CeremonyError) && !(error instanceof AgentRuntimeError)) throw error;
-    logger.error({ err: error, sessionId: parsed.data.sessionId }, "consulta factual recusada");
+    logger.error({ err: error, sessionId: parsed.data.sessionId }, "dúvida recusada");
     return error.message;
   }
 }
@@ -167,11 +172,7 @@ export async function dumpCeremonyAction(
 ): Promise<DumpActionState> {
   const parsed = dumpCeremonySchema.safeParse({
     sessionId: formData.get("sessionId"),
-    markdown: formData.get("markdown"),
-    base: formData.get("base"),
-    tasksMarkdown: formData.get("tasksMarkdown"),
     estimate: formData.get("estimate"),
-    confirmPending: formData.get("confirmPending") === "true",
   });
   if (!parsed.success) {
     return { status: "error", message: parsed.error.issues[0]?.message ?? "Despejo inválido." };
@@ -187,6 +188,64 @@ export async function dumpCeremonyAction(
     logger.error({ err: error, sessionId: parsed.data.sessionId }, "despejo da cerimônia recusado");
     return { status: "error", message: error.message };
   }
+}
+
+type RefinementGate = (input: z.infer<typeof artifactGateSchema>) => Promise<unknown>;
+
+async function runRefinementGate(
+  formData: FormData,
+  operation: RefinementGate,
+  logMessage: string,
+): Promise<string | null> {
+  const parsed = artifactGateSchema.safeParse({
+    sessionId: formData.get("sessionId"),
+    expectedRevision: formData.get("expectedRevision"),
+  });
+  if (!parsed.success) return parsed.error.issues[0]?.message ?? "Revisão inválida.";
+
+  try {
+    await operation(parsed.data);
+    return null;
+  } catch (error) {
+    if (!(error instanceof CeremonyError) && !(error instanceof AgentRuntimeError)) throw error;
+    logger.error({ err: error, sessionId: parsed.data.sessionId }, logMessage);
+    return error.message;
+  }
+}
+
+export async function confirmRefinementAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string | null> {
+  return runRefinementGate(formData, confirmRefinement, "confirmação do Refinamento recusada");
+}
+
+export async function continueRefiningAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string | null> {
+  return runRefinementGate(formData, continueRefining, "continuação do Refinamento recusada");
+}
+
+export async function approveSpecAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string | null> {
+  return runRefinementGate(formData, approveSpec, "aprovação da Spec recusada");
+}
+
+export async function approveTicketsAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string | null> {
+  return runRefinementGate(formData, approveTickets, "aprovação dos Tickets recusada");
+}
+
+export async function reopenRefinementAction(
+  _previous: string | null,
+  formData: FormData,
+): Promise<string | null> {
+  return runRefinementGate(formData, reopenRefinement, "reabertura do Refinamento recusada");
 }
 /** Retoma uma cerimônia cujo turno morreu com o processo. */
 export async function resumeCeremonyAction(

@@ -2,17 +2,32 @@ import { createLogger } from "@sprint-griller/core";
 import type { Logger } from "@sprint-griller/core";
 import type { AppServerClient, ServerRequest } from "./codex/app-server";
 import { connectAppServer } from "./codex/app-server";
-import type { DynamicToolCallResponse, RequestId } from "./codex/protocol";
+import type { AgentToolName, DynamicToolCallResponse, RequestId } from "./codex/protocol";
 import {
+  ADD_REFINEMENT_ITEM_TOOL_NAME,
+  AGENDA_RESOLUTION_TOOL_NAME,
   ASK_OPERATOR_TOOL_NAME,
+  COMPLETION_PROPOSAL_TOOL_NAME,
+  SPEC_SUBMISSION_TOOL_NAME,
+  TICKETS_SUBMISSION_TOOL_NAME,
+  addRefinementItemArgumentsSchema,
+  addRefinementItemToolSpec,
+  agendaResolutionArgumentsSchema,
+  agendaResolutionToolSpec,
   agentMessageDeltaSchema,
   approvalParamsSchema,
   askOperatorArgumentsSchema,
   askOperatorToolSpec,
+  completionProposalArgumentsSchema,
+  completionProposalToolSpec,
   dynamicToolCallParamsSchema,
   errorNotificationSchema,
   itemCompletedSchema,
   requestUserInputParamsSchema,
+  refinementSpecSubmissionSchema,
+  refinementSpecSubmissionToolSpec,
+  refinementTicketsSubmissionSchema,
+  refinementTicketsSubmissionToolSpec,
   threadResponseSchema,
   turnCompletedSchema,
   turnStartResponseSchema,
@@ -26,7 +41,10 @@ import type {
   AgentRuntime,
   AgentSession,
   ApprovalDecision,
+  AgentSubmissionVerdict,
+  PendingAgentSubmission,
   PendingQuestion,
+  ResumeSessionOptions,
   StartSessionOptions,
 } from "./types";
 
@@ -64,6 +82,7 @@ interface ActiveTurn {
 interface SessionState {
   readonly id: string;
   readonly logger: Logger;
+  readonly enabledTools: ReadonlySet<string>;
   activeTurn: ActiveTurn | null;
   /**
    * Turnos largados sem `turn/completed` — a interrupção pode ter falhado, ou o
@@ -238,7 +257,7 @@ export async function createAgentRuntime(
         logger.warn({ method: request.method }, "request do app-server sem tratamento");
         return connection.current?.respondError(
           request.id,
-          `sprint-griller não trata ${request.method}.`,
+          `Refina não trata ${request.method}.`,
         );
     }
   }
@@ -254,6 +273,7 @@ export async function createAgentRuntime(
 
     const questions: AgentQuestion[] = parsed.data.questions.map((question) => ({
       id: question.id,
+      agendaItemId: null,
       header: question.header,
       question: question.question,
       recommendation: null,
@@ -282,6 +302,60 @@ export async function createAgentRuntime(
       return;
     }
 
+    if (!sessions.get(parsed.data.threadId)?.enabledTools.has(parsed.data.tool)) {
+      logger.warn({ tool: parsed.data.tool }, "ferramenta indisponível nesta sessão");
+      respond(
+        request.id,
+        toolFailure(`a ferramenta ${parsed.data.tool} não está disponível nesta sessão.`),
+      );
+      return;
+    }
+
+    if (parsed.data.tool === COMPLETION_PROPOSAL_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        completionProposalArgumentsSchema,
+        "completion-proposal",
+        (proposal) => ({ type: "completion-proposal", proposal }),
+      );
+    }
+    if (parsed.data.tool === ADD_REFINEMENT_ITEM_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        addRefinementItemArgumentsSchema,
+        "agenda-item-submission",
+        (item) => ({ type: "agenda-item-submission", item }),
+      );
+    }
+    if (parsed.data.tool === AGENDA_RESOLUTION_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        agendaResolutionArgumentsSchema,
+        "agenda-resolution",
+        (resolution) => ({ type: "agenda-resolution", resolution }),
+      );
+    }
+    if (parsed.data.tool === SPEC_SUBMISSION_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        refinementSpecSubmissionSchema,
+        "spec-submission",
+        (submission) => ({ type: "spec-submission", submission }),
+      );
+    }
+    if (parsed.data.tool === TICKETS_SUBMISSION_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        refinementTicketsSubmissionSchema,
+        "tickets-submission",
+        (submission) => ({ type: "tickets-submission", submission }),
+      );
+    }
     if (parsed.data.tool !== ASK_OPERATOR_TOOL_NAME) {
       logger.warn({ tool: parsed.data.tool }, "ferramenta desconhecida chamada pelo agente");
       respond(request.id, toolFailure(`a ferramenta ${parsed.data.tool} não existe neste runtime.`));
@@ -294,8 +368,8 @@ export async function createAgentRuntime(
       respond(
         request.id,
         toolFailure(
-          `argumentos inválidos para ${ASK_OPERATOR_TOOL_NAME}: informe de 1 a 3 perguntas com ` +
-            `id único, header, question, recommendation e ao menos uma evidence; e deixe a sala ` +
+          `argumentos inválidos para ${ASK_OPERATOR_TOOL_NAME}: informe exatamente uma pergunta com ` +
+            `id, agendaItemId, header, question, recommendation e ao menos uma evidence; e deixe a sala ` +
             `responder (opções e/ou allowFreeText). Sem recommendation a pergunta é um fato que ` +
             `você mesmo tem que buscar no código — não é decisão da sala.`,
         ),
@@ -309,6 +383,53 @@ export async function createAgentRuntime(
       reply: (answers) => respond(request.id, toolAnswer(formatAnswers(questions, answers))),
       decline: () => respond(request.id, toolFailure("a sala não respondeu.")),
     });
+  }
+
+  function registerSubmission<TSubmission>(
+    request: ServerRequest,
+    origin: {
+      readonly threadId: string;
+      readonly turnId: string;
+      readonly tool: string;
+      readonly arguments: unknown;
+    },
+    schema: { safeParse(value: unknown): { success: true; data: TSubmission } | { success: false } },
+    kind:
+      | "agenda-item-submission"
+      | "agenda-resolution"
+      | "completion-proposal"
+      | "spec-submission"
+      | "tickets-submission",
+    event: (submission: PendingAgentSubmission<TSubmission>) => AgentEvent,
+  ): void {
+    const parsed = schema.safeParse(origin.arguments);
+    if (!parsed.success) {
+      logger.warn({ tool: origin.tool }, "submissão estruturada inválida");
+      respond(request.id, toolFailure(`argumentos inválidos para ${origin.tool}.`));
+      return;
+    }
+
+    const active = activeTurnOf(origin.threadId, origin.turnId);
+    if (!active) {
+      respond(request.id, toolFailure("o turno que fez a submissão não está mais ativo."));
+      return;
+    }
+
+    const pending: PendingAgentSubmission<TSubmission> = {
+      submission: parsed.data,
+      async respond(verdict: AgentSubmissionVerdict) {
+        consumePending(active, request.id);
+        respond(
+          request.id,
+          verdict.accepted ? toolAnswer(verdict.message) : toolFailure(verdict.message),
+        );
+      },
+    };
+    active.pending.set(request.id, {
+      decline: () => respond(request.id, toolFailure("a cerimônia não avaliou a submissão.")),
+    });
+    active.logger.info({ turnId: active.turnId, kind }, "agente enviou submissão estruturada");
+    active.queue.push(event(pending));
   }
 
   function registerQuestion(
@@ -403,10 +524,11 @@ export async function createAgentRuntime(
     onClose: handleClose,
   });
 
-  function registerSession(threadId: string): AgentSession {
+  function registerSession(threadId: string, enabledTools: readonly AgentToolName[]): AgentSession {
     const state: SessionState = {
       id: threadId,
       logger: logger.child({ sessionId: threadId }),
+      enabledTools: new Set(enabledTools),
       activeTurn: null,
       abandonedTurnIds: new Set(),
     };
@@ -521,13 +643,14 @@ export async function createAgentRuntime(
 
   return {
     async startSession(sessionOptions: StartSessionOptions = {}): Promise<AgentSession> {
+      const enabledTools = sessionOptions.tools ?? [];
       const threadId = readThreadId(
         await callAppServer("thread/start", {
           cwd: options.cwd,
           // A Investigação lê repositórios; escrita no ADO é do `ado-client`.
           sandbox: "read-only",
           approvalPolicy: "on-request",
-          dynamicTools: [askOperatorToolSpec],
+          dynamicTools: enabledTools.map(dynamicToolSpec),
           ...(sessionOptions.instructions === undefined
             ? {}
             : { developerInstructions: sessionOptions.instructions }),
@@ -536,20 +659,23 @@ export async function createAgentRuntime(
       );
 
       logger.info({ sessionId: threadId }, "sessão iniciada");
-      return registerSession(threadId);
+      return registerSession(threadId, enabledTools);
     },
 
     // `dynamicTools` só existe em `thread/start`, mas o codex persiste as
     // ferramentas na thread: verificado que a `ask_operator` continua disponível
     // depois de um `thread/resume` (codex-cli 0.146.1).
-    async resumeSession(sessionId: string): Promise<AgentSession> {
+    async resumeSession(
+      sessionId: string,
+      sessionOptions: ResumeSessionOptions = {},
+    ): Promise<AgentSession> {
       const threadId = readThreadId(
         await callAppServer("thread/resume", { threadId: sessionId, excludeTurns: true }),
         "thread/resume",
       );
 
       logger.info({ sessionId: threadId }, "sessão retomada");
-      return registerSession(threadId);
+      return registerSession(threadId, sessionOptions.tools ?? []);
     },
 
     async close(): Promise<void> {
@@ -557,6 +683,23 @@ export async function createAgentRuntime(
       sessions.clear();
     },
   };
+}
+
+function dynamicToolSpec(name: AgentToolName) {
+  switch (name) {
+    case ASK_OPERATOR_TOOL_NAME:
+      return askOperatorToolSpec;
+    case ADD_REFINEMENT_ITEM_TOOL_NAME:
+      return addRefinementItemToolSpec;
+    case AGENDA_RESOLUTION_TOOL_NAME:
+      return agendaResolutionToolSpec;
+    case COMPLETION_PROPOSAL_TOOL_NAME:
+      return completionProposalToolSpec;
+    case SPEC_SUBMISSION_TOOL_NAME:
+      return refinementSpecSubmissionToolSpec;
+    case TICKETS_SUBMISSION_TOOL_NAME:
+      return refinementTicketsSubmissionToolSpec;
+  }
 }
 
 function readThreadId(result: unknown, method: string): string {

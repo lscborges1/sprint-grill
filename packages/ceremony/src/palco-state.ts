@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { CeremonyConsultation, PalcoState } from "./types";
+import {
+  refinementCompletionProposalSchema,
+  refinementItemSchema,
+  refinementStateSchema,
+} from "./refinement-state";
 
 /**
  * O contrato do SSE, e o único módulo deste pacote que o browser importa —
@@ -16,13 +21,14 @@ const decisionSchema = z.object({
   question: z.string(),
   recommendation: z.string(),
   answer: z.string(),
-  decidedBy: z.string(),
   decidedAt: z.number(),
 });
 
 const questionSchema = z.object({
   questionSeq: z.number(),
   id: z.string(),
+  agendaItemId: z.string(),
+  source: z.enum(["agent", "room-doubt"]),
   header: z.string(),
   question: z.string(),
   recommendation: z.string(),
@@ -56,6 +62,15 @@ const consultationSchema: z.ZodType<CeremonyConsultation> = z.discriminatedUnion
     motivo: z.string(),
   }),
   z.object({ ...answeredSchema, status: z.literal("falhou"), message: z.string() }),
+  z.object({
+    ...answeredSchema,
+    status: z.literal("precisa-sala"),
+    question: z.string(),
+    recommendation: z.string(),
+    evidence: z.array(z.string()),
+    options: z.array(z.object({ label: z.string(), description: z.string() })),
+    allowFreeText: z.boolean(),
+  }),
 ]);
 
 /**
@@ -65,6 +80,9 @@ const consultationSchema: z.ZodType<CeremonyConsultation> = z.discriminatedUnion
 export const palcoStateSchema: z.ZodType<PalcoState> = z.object({
   sessionId: z.string(),
   story: z.object({ id: z.number(), title: z.string(), url: z.string() }),
+  refinement: refinementStateSchema,
+  completionProposal: refinementCompletionProposalSchema.nullable(),
+  agenda: z.array(refinementItemSchema),
   decisionCount: z.number(),
   decisions: z.array(decisionSchema),
   pendingQuestions: z.array(questionSchema),
@@ -75,6 +93,7 @@ export const palcoStateSchema: z.ZodType<PalcoState> = z.object({
   current: z.discriminatedUnion("phase", [
     z.object({ phase: z.literal("perguntando"), question: questionSchema }),
     z.object({ phase: z.literal("pensando") }),
+    z.object({ phase: z.literal("revisao-humana") }),
     z.object({ phase: z.literal("retomavel") }),
     z.object({ phase: z.literal("encerrada") }),
     z.object({ phase: z.literal("falhou"), message: z.string() }),

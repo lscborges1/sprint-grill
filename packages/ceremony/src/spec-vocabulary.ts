@@ -13,7 +13,7 @@ import { REPORT_SECTIONS } from "@sprint-griller/investigation/vocabulary";
 export const SPEC_SECTIONS = {
   decisions: {
     heading: "Decisões",
-    blurb: "O que a sala decidiu, com quem decidiu e quando.",
+    blurb: "O que a sala resolveu coletivamente, com a recomendação e o horário.",
     empty: "Nenhuma decisão registrada nesta cerimônia.",
   },
   impact: {
@@ -39,4 +39,4 @@ export const SPEC_SECTIONS = {
 } as const;
 
 export const SPEC_BLURB =
-  "Produzido no grilling coletivo. As decisões abaixo têm quem decidiu e quando.";
+  "Produzido no refinamento coletivo. As resoluções abaixo preservam recomendação e horário.";

@@ -29,11 +29,7 @@ export interface AssertCanStartCeremonyInput {
 
 export interface CeremonyDumpInput {
   readonly sessionId: string;
-  readonly markdown: string;
-  readonly base: string;
-  readonly tasksMarkdown: string;
   readonly estimate: number;
-  readonly confirmPending: boolean;
 }
 
 export interface CeremonyDump {
@@ -66,12 +62,12 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
       if (incompleteLocal) {
         throw new CeremonyError(
           `A US #${storyId} tem um despejo incompleto na cerimônia anterior. ` +
-            `Abra o Dossiê dessa cerimônia e conclua o retry antes de grelhar de novo.`,
+            `Abra o Dossiê dessa cerimônia e conclua o retry antes de refinar de novo.`,
         );
       }
       if (!investigationApproved) {
         throw new CeremonyError(
-          `A US #${storyId} ainda não tem Investigação aprovada — investigue antes de grelhar.`,
+          `A US #${storyId} ainda não tem Investigação aprovada — investigue antes de refinar.`,
         );
       }
       const ado = options.adoOptions();
@@ -151,7 +147,6 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
               question: decision.question,
               answer: decision.answer,
               recommendation: decision.recommendation,
-              decidedBy: decision.decidedBy,
               decidedAt: decision.decidedAt,
             });
             store.attachDecisionRecord({
@@ -214,13 +209,6 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
 
 function signedInputSignature(input: CeremonyDumpInput): string {
   return createHash("sha256")
-    .update(JSON.stringify({
-      sessionId: input.sessionId,
-      markdown: input.markdown,
-      base: input.base,
-      tasksMarkdown: input.tasksMarkdown,
-      estimate: input.estimate,
-      confirmPending: input.confirmPending,
-    }))
+    .update(JSON.stringify(input))
     .digest("hex");
 }

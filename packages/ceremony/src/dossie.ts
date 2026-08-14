@@ -60,10 +60,16 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
     sessionId,
     status: session.status,
     timeZone: session.timeZone,
-    taskPreview: taskPreviewFromTranscript(store.listTranscript(sessionId), session.storyUrl),
+    refinement: session.refinement,
+    completionProposal: store.getRefinementCompletionProposal(sessionId),
+    agenda: store.listRefinementItems(sessionId),
+    artifacts: store.getArtifactState(sessionId),
+    taskPreview: store.getArtifactState(sessionId).tickets?.markdown
+      ?? taskPreviewFromTranscript(store.listTranscript(sessionId), session.storyUrl),
     dump: session.dump,
     spec: {
-      generated: renderSpecMarkdown(document, session.timeZone),
+      generated: store.getArtifactState(sessionId).spec?.markdown
+        ?? renderSpecMarkdown(document, session.timeZone),
       draft: store.getSpecDraft(sessionId) ?? null,
     },
   };

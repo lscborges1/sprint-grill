@@ -13,7 +13,13 @@ import type {
 import Link from "next/link";
 import { useActionState } from "react";
 import { useLiveState } from "@/components/live-state";
-import { askFactAction, resumeCeremonyAction, submitDecisionAction } from "../actions";
+import {
+  addDoubtAction,
+  confirmRefinementAction,
+  continueRefiningAction,
+  resumeCeremonyAction,
+  submitDecisionAction,
+} from "../actions";
 
 /**
  * Modo Palco: o que a sala inteira acompanha, projetado. Tipografia legível a
@@ -40,7 +46,7 @@ export function Palco({ initial }: { initial: PalcoState }) {
         <header className="flex flex-col gap-5 border-b border-line pb-6">
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
-              Grilling coletivo · US #{state.story.id}
+              Refinamento coletivo · US #{state.story.id}
             </p>
             <Link
               href={`/investigacao/${state.story.id}`}
@@ -60,7 +66,7 @@ export function Palco({ initial }: { initial: PalcoState }) {
           <Progress state={state} />
           {!connected && (
             <p role="alert" className="text-sm text-muted">
-              Sem conexão com a cerimônia — o que está na tela pode estar
+              Sem conexão com o Refinamento — o que está na tela pode estar
               desatualizado. Reconectando…
             </p>
           )}
@@ -68,12 +74,12 @@ export function Palco({ initial }: { initial: PalcoState }) {
 
         <Stage state={state} />
 
-        <LiveFacts state={state} />
+        <Doubts state={state} />
 
         {state.lastDecision && (
           <footer className="mt-auto border-t border-line pt-5 text-sm text-muted">
-            Última decisão: <strong className="font-medium">{state.lastDecision.answer}</strong> —{" "}
-            {state.lastDecision.decidedBy}, {formatWhen(state.lastDecision.decidedAt)}
+            Última Resolução: <strong className="font-medium">{state.lastDecision.answer}</strong>
+            {" · "}{formatWhen(state.lastDecision.decidedAt)}
           </footer>
         )}
       </main>
@@ -127,12 +133,29 @@ function DecisionRail({ state }: { state: PalcoState }) {
 
       <section className="flex min-h-0 flex-1 flex-col gap-3" aria-labelledby="arvore-de-decisoes">
         <h3 id="arvore-de-decisoes" className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
-          Árvore de decisões
+          Agenda do refinamento
+        </h3>
+        {state.agenda.length === 0 ? (
+          <p className="text-sm text-muted">A Agenda do refinamento está vazia.</p>
+        ) : (
+          <ul className="flex flex-col gap-2" aria-label="Agenda do refinamento">
+            {state.agenda.map((item) => (
+              <li key={item.id} className="rounded-lg border border-line px-3 py-2.5 text-sm">
+                <p>{item.question}</p>
+                <p className="mt-1 text-xs uppercase tracking-wide text-muted">
+                  {agendaStatus(item.status)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+        <h3 className="mt-2 text-xs font-medium uppercase tracking-[0.18em] text-muted">
+          Resoluções da sala
         </h3>
         {tree.length === 0 ? (
           <p className="text-sm text-muted">O agente ainda não levantou decisões.</p>
         ) : (
-          <ol className="flex min-h-0 flex-col gap-2 overflow-y-auto" aria-label="Decisões da cerimônia">
+          <ol className="flex min-h-0 flex-col gap-2 overflow-y-auto" aria-label="Resoluções do Refinamento">
             {tree.map((node) =>
               node.status === "decidida" ? (
                 <DecidedNode key={node.key} decision={node.decision} />
@@ -149,11 +172,22 @@ function DecisionRail({ state }: { state: PalcoState }) {
       </section>
 
       <p className="border-t border-line pt-4 text-sm text-muted">
-        <strong className="font-medium text-foreground">{pendingCount}</strong>{" "}
-        {pendingCount === 1 ? "dúvida aberta" : "dúvidas abertas"}
+        <strong className="font-medium text-foreground">{state.agenda.length}</strong>{" "}
+        {state.agenda.length === 1 ? "item na Agenda" : "itens na Agenda"} ·{" "}
+        {pendingCount} {pendingCount === 1 ? "pergunta ativa" : "perguntas ativas"}
       </p>
     </aside>
   );
+}
+
+function agendaStatus(status: PalcoState["agenda"][number]["status"]): string {
+  return {
+    aberto: "Aberto",
+    pesquisando: "Em pesquisa",
+    "aguardando-sala": "Aguardando a sala",
+    resolvido: "Resolvido",
+    "fora-de-escopo": "Fora de escopo",
+  }[status];
 }
 
 function DecidedNode({ decision }: { decision: CeremonyDecision }) {
@@ -199,7 +233,7 @@ function Progress({ state }: { state: PalcoState }) {
   const tree = decisionTree(state);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2" aria-label="Progresso da cerimônia">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2" aria-label="Progresso do Refinamento">
       {tree.length > 0 && (
         <ol
           className="flex gap-1"
@@ -237,27 +271,27 @@ function currentQuestionIdOf(state: PalcoState): string | undefined {
  * decidindo continua projetada enquanto o fato é buscado, e a resposta **não**
  * é Registro de decisão — ninguém decidiu nada, o repositório respondeu.
  */
-function LiveFacts({ state }: { state: PalcoState }) {
-  const over = state.current.phase === "encerrada" || state.current.phase === "falhou";
+function Doubts({ state }: { state: PalcoState }) {
+  const over = state.refinement.phase === "publicado" || state.current.phase === "falhou";
   if (over && !state.consultation) return null;
 
   return (
     <section
-      aria-labelledby="fato-ao-vivo"
+      aria-labelledby="adicionar-duvida"
       className="flex flex-col gap-5 rounded-xl border border-line px-6 py-5"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 id="fato-ao-vivo" className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
-          Fato ao vivo
+        <h2 id="adicionar-duvida" className="text-xs font-medium uppercase tracking-[0.18em] text-muted">
+          Adicionar dúvida
         </h2>
         <p className="text-sm text-muted">
-          O agente lê o código agora — a resposta é fato, não decisão da sala.
+          O agente classifica a dúvida: fato verificável ou escolha para a Agenda.
         </p>
       </div>
 
       {state.consultation && <Consultation consultation={state.consultation} />}
       {!over && (
-        <FactForm
+        <DoubtForm
           // Consulta nova é campo limpo: sem a `key`, a dúvida anterior fica no input.
           key={state.consultation?.id ?? "primeira"}
           sessionId={state.sessionId}
@@ -285,6 +319,15 @@ function Consultation({ consultation }: { consultation: CeremonyConsultation }) 
         <p role="alert" className="text-lg text-red-600">
           A consulta não voltou: {consultation.message}
         </p>
+      )}
+
+      {consultation.status === "precisa-sala" && (
+        <div role="status" className="flex flex-col gap-2 border-l-[3px] border-accent pl-4">
+          <p className="text-lg">Esta dúvida é uma escolha da sala e entrou na Agenda.</p>
+          <p className="text-sm text-muted">
+            Recomendação do agente: {consultation.recommendation}
+          </p>
+        </div>
       )}
 
       {(consultation.status === "respondida" || consultation.status === "sem-lastro") && (
@@ -318,7 +361,7 @@ function Consultation({ consultation }: { consultation: CeremonyConsultation }) 
   );
 }
 
-function FactForm({
+function DoubtForm({
   sessionId,
   looking,
 }: {
@@ -326,14 +369,14 @@ function FactForm({
   /** Já tem consulta em voo — o submit fica fechado até ela terminar. */
   looking: boolean;
 }) {
-  const [error, ask, pending] = useActionState(askFactAction, null);
+  const [error, ask, pending] = useActionState(addDoubtAction, null);
   const blocked = pending || looking;
 
   return (
     <form action={ask} className="flex flex-wrap items-end gap-3">
       <input type="hidden" name="sessionId" value={sessionId} />
       <label className="flex flex-1 flex-col gap-1.5 text-sm text-muted">
-        Dúvida de fato da sala
+        Dúvida da sala
         <input
           type="text"
           name="question"
@@ -370,6 +413,50 @@ function formatCitation(citation: CeremonyCitation): string {
   return citation.symbol === undefined ? file : `${file} → ${citation.symbol}`;
 }
 function Stage({ state }: { state: PalcoState }) {
+  if (state.current.phase === "falhou") {
+    return (
+      <div
+        role="alert"
+        className="flex flex-col gap-3 rounded-lg border border-red-600/50 bg-red-600/5 px-6 py-5"
+      >
+        <p className="text-2xl font-medium tracking-tight">O Refinamento parou por um erro</p>
+        <p className="text-base text-muted">{state.current.message}</p>
+      </div>
+    );
+  }
+  if (
+    state.current.phase === "retomavel" &&
+    (state.refinement.phase === "revisando-spec" || state.refinement.phase === "revisando-tickets")
+  ) {
+    return (
+      <Waiting
+        heading="O Refinamento está parado"
+        action={<ResumeButton sessionId={state.sessionId} />}
+      >
+        O agente terminou sem submeter o artefato desta etapa. Retomar continua do gate atual.
+      </Waiting>
+    );
+  }
+  if (state.refinement.phase === "aguardando-confirmacao") {
+    return <ConfirmationGate state={state} />;
+  }
+  if (state.refinement.phase === "revisando-spec") {
+    return <ReviewStage state={state} artifact="Spec" />;
+  }
+  if (state.refinement.phase === "revisando-tickets") {
+    return <ReviewStage state={state} artifact="Tickets" />;
+  }
+  if (state.refinement.phase === "pronto-para-publicar") {
+    return <ReviewStage state={state} artifact="publicação" />;
+  }
+  if (state.refinement.phase === "publicado") {
+    return (
+      <Waiting heading="Refinamento publicado">
+        A Spec e os Tickets aprovados estão no Azure DevOps.
+      </Waiting>
+    );
+  }
+
   switch (state.current.phase) {
     case "perguntando":
       return (
@@ -392,10 +479,13 @@ function Stage({ state }: { state: PalcoState }) {
         </Waiting>
       );
 
+    case "revisao-humana":
+      return <ReviewStage state={state} artifact="artefato" />;
+
     case "retomavel":
       return (
         <Waiting
-          heading="A cerimônia está parada"
+          heading="O Refinamento está parado"
           action={<ResumeButton sessionId={state.sessionId} />}
         >
           O turno do agente não está mais rodando neste processo — as decisões já
@@ -405,23 +495,98 @@ function Stage({ state }: { state: PalcoState }) {
 
     case "encerrada":
       return (
-        <Waiting heading="Cerimônia encerrada">
+        <Waiting heading="Refinamento encerrado">
           O agente não tem mais decisões a levantar. Foram {state.decisionCount}{" "}
           {state.decisionCount === 1 ? "decisão registrada" : "decisões registradas"}.
         </Waiting>
       );
 
-    case "falhou":
-      return (
-        <div
-          role="alert"
-          className="flex flex-col gap-3 rounded-lg border border-red-600/50 bg-red-600/5 px-6 py-5"
-        >
-          <p className="text-2xl font-medium tracking-tight">A cerimônia parou por um erro</p>
-          <p className="text-base text-muted">{state.current.message}</p>
-        </div>
-      );
   }
+}
+
+function ConfirmationGate({ state }: { state: PalcoState }) {
+  const [confirmError, confirm, confirming] = useActionState(confirmRefinementAction, null);
+  const [continueError, continueAction, continuing] = useActionState(continueRefiningAction, null);
+  const busy = confirming || continuing;
+
+  return (
+    <section className="flex flex-1 flex-col justify-center gap-6" aria-labelledby="confirmar-refinamento">
+      <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent">Gate coletivo</p>
+      <h2 id="confirmar-refinamento" className="font-serif text-3xl tracking-tight">
+        A sala confirma que o Refinamento está concluído?
+      </h2>
+      <p className="max-w-[62ch] text-lg text-muted">
+        {state.completionProposal?.summary ?? "O agente propôs encerrar a Agenda do refinamento."}
+      </p>
+      <div className="flex flex-wrap gap-3">
+        <GateForm
+          action={confirm}
+          label={confirming ? "Confirmando…" : "Confirmar e revisar Spec"}
+          disabled={busy}
+          state={state}
+          primary
+        />
+        <GateForm
+          action={continueAction}
+          label={continuing ? "Retomando…" : "Continuar Refinamento"}
+          disabled={busy}
+          state={state}
+        />
+      </div>
+      {(confirmError ?? continueError) && (
+        <p role="alert" className="text-sm text-red-600">{confirmError ?? continueError}</p>
+      )}
+    </section>
+  );
+}
+
+function GateForm({
+  action,
+  label,
+  disabled,
+  state,
+  primary = false,
+}: {
+  action: (formData: FormData) => void;
+  label: string;
+  disabled: boolean;
+  state: PalcoState;
+  primary?: boolean;
+}) {
+  return (
+    <form action={action}>
+      <input type="hidden" name="sessionId" value={state.sessionId} />
+      <input type="hidden" name="expectedRevision" value={state.refinement.revision} />
+      <button
+        type="submit"
+        disabled={disabled}
+        className={`rounded-xl border px-6 py-3.5 text-base font-medium disabled:opacity-50 ${
+          primary ? "border-foreground bg-foreground text-background" : "border-line"
+        }`}
+      >
+        {label}
+      </button>
+    </form>
+  );
+}
+
+function ReviewStage({ state, artifact }: { state: PalcoState; artifact: string }) {
+  return (
+    <Waiting
+      heading={`Revisar ${artifact}`}
+      action={(
+        <Link
+          href={`/cerimonia/${state.sessionId}/dossie`}
+          target="_blank"
+          className="self-start rounded-xl border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background"
+        >
+          Abrir revisão no Dossiê
+        </Link>
+      )}
+    >
+      O Refinamento coletivo está aguardando a revisão humana deste gate.
+    </Waiting>
+  );
 }
 
 function Decision({
@@ -503,18 +668,6 @@ function Decision({
             </label>
           )}
 
-          <label className="flex flex-col gap-1.5 text-sm text-muted">
-            Quem decidiu
-            <input
-              type="text"
-              name="decidedBy"
-              required
-              defaultValue={state.lastDecision?.decidedBy ?? ""}
-              placeholder="PO, squad, PO + squad…"
-              className="w-56 rounded-lg border border-line bg-transparent px-4 py-2.5 text-base text-foreground"
-            />
-          </label>
-
           <button
             type="submit"
             disabled={pending}
@@ -527,7 +680,7 @@ function Decision({
         {stalled && (
           <p className="text-sm text-muted">
             O turno do agente caiu. A decisão é registrada do mesmo jeito e retoma a
-            cerimônia de onde parou.
+            sessão de onde parou.
           </p>
         )}
         {error && (
@@ -551,7 +704,7 @@ function ResumeButton({ sessionId }: { sessionId: string }) {
         disabled={pending}
         className="self-start rounded-xl border border-foreground bg-foreground px-6 py-3.5 text-base font-medium text-background disabled:opacity-50"
       >
-        Retomar cerimônia
+        Retomar Refinamento
       </button>
       {error && (
         <p role="alert" className="text-sm text-red-600">

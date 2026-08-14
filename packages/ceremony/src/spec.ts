@@ -1,9 +1,80 @@
 import { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
 import { CeremonyError } from "./ceremony-error";
+import type { RefinementSpecSubmission } from "@sprint-griller/agent-runtime";
 import type { CeremonyDecision, DossieDocument } from "./types";
 
 const DECISION_TRACEABILITY_HEADING = "Rastreabilidade de decisões";
 const EMPTY_DECISION_TRACEABILITY = italic("Nenhuma decisão foi registrada.");
+
+export const STRUCTURED_SPEC_HEADINGS = [
+  "Problema",
+  "Solução",
+  "Comportamentos esperados",
+  "Decisões de implementação",
+  "Estratégia de testes",
+  "Fora de escopo",
+  "Rastreabilidade",
+] as const;
+
+/** Renderização canônica da submissão do agente; o modelo fornece dados, nunca a estrutura. */
+export function renderStructuredSpecMarkdown(spec: RefinementSpecSubmission): string {
+  return `${[
+    "# Spec da US",
+    structuredSection("Problema", spec.problem),
+    structuredSection("Solução", spec.solution),
+    structuredSection("Comportamentos esperados", bulletList(spec.expectedBehaviors)),
+    structuredSection("Decisões de implementação", bulletList(spec.implementationDecisions)),
+    structuredSection("Estratégia de testes", bulletList(spec.testStrategy)),
+    structuredSection("Fora de escopo", bulletList(spec.outOfScope)),
+    structuredSection("Rastreabilidade", bulletList(spec.traceability)),
+  ].join("\n\n")}\n`;
+}
+
+/** Gate da assinatura humana: todas as seções canônicas precisam existir uma vez e ter conteúdo. */
+export function assertValidStructuredSpecMarkdown(markdown: string): void {
+  const occurrences = findCanonicalSections(markdown, STRUCTURED_SPEC_HEADINGS);
+  const errors = STRUCTURED_SPEC_HEADINGS.flatMap((heading) => {
+    const matching = occurrences.filter((section) => section.heading === heading);
+    if (matching.length === 0) return [`${heading}: seção ausente.`];
+    if (matching.length > 1) return [`${heading}: seção aparece mais de uma vez.`];
+    const section = matching[0]!;
+    return markdown.slice(section.bodyStart, section.bodyEnd).trim() === ""
+      ? [`${heading}: seção vazia.`]
+      : [];
+  });
+  if (errors.length > 0) {
+    throw new CeremonyError(
+      `a Spec estruturada precisa preservar as seções obrigatórias:\n${errors.map((error) => `- ${error}`).join("\n")}`,
+    );
+  }
+}
+
+/** Compatibilidade de leitura: dumps antigos continuam válidos; novas aprovações usam o contrato estruturado. */
+export function assertValidPublicationSpecMarkdown(
+  markdown: string,
+  decisions?: readonly CeremonyDecision[],
+): void {
+  const structuredOnlyHeadings = STRUCTURED_SPEC_HEADINGS.filter(
+    (heading) => !Object.values(SPEC_SECTIONS).some((legacy) => legacy.heading === heading),
+  );
+  const isStructured = /^# Spec da US\s*$/m.test(markdown)
+    || findCanonicalSections(markdown, structuredOnlyHeadings).length > 0;
+
+  if (isStructured) {
+    assertValidStructuredSpecMarkdown(markdown);
+    return;
+  }
+
+  assertValidSpecMarkdown(markdown, decisions);
+}
+
+function structuredSection(heading: typeof STRUCTURED_SPEC_HEADINGS[number], body: string): string {
+  return `## ${heading}\n\n${body.trim()}`;
+}
+
+function bulletList(items: readonly string[]): string {
+  return items.map((item) => `- ${item.trim()}`).join("\n");
+}
 
 interface SpecSectionOccurrence {
   readonly heading: string;
@@ -132,8 +203,7 @@ export function readSpecSection(markdown: string, heading: string): string {
 
 /**
  * Uma decisão como ela precisa circular: o que a sala respondeu, o que o agente
- * tinha recomendado, e a assinatura — quem decidiu e quando. Sem a assinatura
- * isto vira ata anônima, que é exatamente o que o Registro de decisão substitui.
+ * tinha recomendado e quando a resolução coletiva foi registrada.
  */
 function decisionEntry(decision: CeremonyDecision, timeZone: string): string {
   const record = decision.recordUrl
@@ -145,7 +215,7 @@ function decisionEntry(decision: CeremonyDecision, timeZone: string): string {
   return [
     `- **${decision.question}** — ${decision.answer}`,
     `  - Recomendação do agente: ${decision.recommendation}`,
-    `  - ${italic(`Decidido por ${decision.decidedBy} em ${formatDecisionWhen(decision.decidedAt, timeZone)}.`)}`,
+    `  - ${italic(`Resolução registrada em ${formatDecisionWhen(decision.decidedAt, timeZone)}.`)}`,
     record,
   ].filter((line): line is string => line !== undefined).join("\n");
 }
@@ -166,6 +236,19 @@ export function appendDecisionTraceability(
   markdown: string,
   decisions: readonly CeremonyDecision[],
 ): string {
+  if (findCanonicalSections(markdown, ["Rastreabilidade"]).length === 1) {
+    const section = findCanonicalSections(markdown, ["Rastreabilidade"])[0]!;
+    const records = decisions.map((decision) => {
+      if (!decision.recordId || !decision.recordUrl) {
+        throw new CeremonyError(`a decisão ${decision.questionSeq} ainda não tem Registro no Azure DevOps.`);
+      }
+      const recordUrl = `${decision.recordUrl.replace(/#.*$/, "")}#discussion_${decision.recordId}`;
+      return `- [Registro #${decision.recordId}](${recordUrl}) — ${decision.question}: ${decision.answer}`;
+    });
+    if (records.length === 0) return markdown;
+    const separator = markdown.slice(section.bodyStart, section.bodyEnd).trim() === "" ? "" : "\n";
+    return `${markdown.slice(0, section.bodyEnd).trimEnd()}${separator}${records.join("\n")}\n${markdown.slice(section.bodyEnd).replace(/^\n*/, "")}`;
+  }
   const traceability = findDecisionTraceability(markdown, decisions);
   let published = markdown;
 

@@ -27,9 +27,22 @@ export interface RunConsultationOptions {
  * Investigação, e pela mesma razão — é a estrutura que torna a citação
  * verificável em vez de decorativa.
  */
-const consultationAnswerSchema = z.object({
-  answer: z.string().min(1, "responda a pergunta da sala"),
-});
+const consultationAnswerSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("fact"),
+    answer: z.string().min(1, "responda a pergunta da sala"),
+  }),
+  z.object({
+    kind: z.literal("room-choice"),
+    question: z.string().min(1),
+    recommendation: z.string().min(1),
+    evidence: z.array(z.string().min(1)).min(1),
+    options: z
+      .array(z.object({ label: z.string().min(1), description: z.string().min(1) }))
+      .default([]),
+    allowFreeText: z.boolean().default(true),
+  }),
+]);
 const consultationCitationsFieldSchema = z.object({ citations: z.unknown().optional() });
 const consultationCitationsSchema = z.array(citationSchema);
 
@@ -41,7 +54,7 @@ const CONSULTATION_FAILURE_MESSAGE = "A consulta parou por um erro inesperado.";
  * Uma dúvida **factual** da sala resolvida ao vivo: o agente abre uma sessão
  * própria, lê os repos e volta com a resposta e as citações que a sustentam.
  *
- * Sessão separada da cerimônia de propósito: o turno do grilling está parado na
+ * Sessão separada da cerimônia de propósito: o turno do Refinamento está parado na
  * decisão da vez, e o codex só aceita um turno por sessão — perguntar por dentro
  * dele custaria a pergunta que está projetada na tela.
  *
@@ -123,6 +136,18 @@ function grade(
     return {
       status: "falhou",
       message: "O agente terminou sem devolver a resposta no formato combinado. Pergunte de novo.",
+    };
+  }
+
+  if (parsedAnswer.data.kind === "room-choice") {
+    logger?.info({ questionLength }, "dúvida classificada como escolha da sala");
+    return {
+      status: "precisa-sala",
+      question: parsedAnswer.data.question,
+      recommendation: parsedAnswer.data.recommendation,
+      evidence: parsedAnswer.data.evidence,
+      options: parsedAnswer.data.options,
+      allowFreeText: parsedAnswer.data.allowFreeText,
     };
   }
 

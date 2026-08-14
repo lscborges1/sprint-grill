@@ -19,6 +19,11 @@ const lifecycleSpies = vi.hoisted(() => ({
   decide: vi.fn(),
   consult: vi.fn(),
   resume: vi.fn(),
+  confirmRefinement: vi.fn(),
+  continueRefining: vi.fn(),
+  approveSpec: vi.fn(),
+  approveTickets: vi.fn(),
+  reopenRefinement: vi.fn(),
   saveSpecDraft: vi.fn(),
   discardSpecDraft: vi.fn(),
   dump: vi.fn(),
@@ -55,6 +60,7 @@ vi.stubEnv(
 );
 
 const {
+  artifactGateSchema,
   decisionSchema,
   dumpCeremonySchema,
   sessionIdSchema,
@@ -72,6 +78,7 @@ const startedSession: CeremonySession = {
   createdAt: 1,
   status: "ativa",
   failureMessage: null,
+  refinement: { phase: "refinando", revision: 0 },
   dump: { status: "not-started" },
 };
 
@@ -94,13 +101,20 @@ describe("ceremony input parsing", () => {
     expect(sessionIdSchema.parse("session-1")).toBe("session-1");
   });
 
-  it("should trim decision authors and answers", () => {
-    expect(decisionSchema.parse({
+  it("should accept an authorless room answer", () => {
+    const answer = decisionSchema.parse({
       sessionId: "session-1",
       questionId: "q1",
       answer: "  Sim  ",
-      decidedBy: "  PO  ",
-    })).toMatchObject({ answer: "Sim", decidedBy: "PO" });
+    });
+
+    expect(answer).toEqual({ sessionId: "session-1", questionId: "q1", answer: "Sim" });
+    expect(answer).not.toHaveProperty("decidedBy");
+  });
+
+  it("should coerce the guarded workflow revision", () => {
+    expect(artifactGateSchema.parse({ sessionId: "session-1", expectedRevision: "7" }))
+      .toEqual({ sessionId: "session-1", expectedRevision: 7 });
   });
 
   it("should coerce the Spec draft concurrency fields", () => {
@@ -113,18 +127,13 @@ describe("ceremony input parsing", () => {
     })).toMatchObject({ expectedSavedAt: null, overwrite: true });
   });
 
-  it("should coerce the dump estimate while preserving pending confirmation", () => {
-    expect(dumpCeremonySchema.parse({
+  it("should accept only the session and estimate for publication", () => {
+    const input = dumpCeremonySchema.parse({
       sessionId: "session-1",
-      markdown: "# Spec",
-      base: "# Base",
-      tasksMarkdown: "## Task",
       estimate: "5",
-      confirmPending: true,
-    })).toMatchObject({
-      estimate: 5,
-      confirmPending: true,
     });
+
+    expect(input).toEqual({ sessionId: "session-1", estimate: 5 });
   });
 });
 

@@ -1,16 +1,27 @@
 import type {
+  AgentEvent,
   AgentQuestion,
   AgentRuntime,
   AgentSession,
   PendingQuestion,
 } from "@sprint-griller/agent-runtime";
+import { AGENT_TOOL_NAMES } from "@sprint-griller/agent-runtime";
 import type { Logger, SquadConfig } from "@sprint-griller/core";
+import { verifyGrounding } from "@sprint-griller/investigation";
 import { CeremonyError } from "./ceremony-error";
 import { runConsultation } from "./consulta";
 import { readPalco } from "./palco";
-import { ceremonyInstructions, ceremonyOpeningPrompt, ceremonyResumePrompt } from "./prompt";
+import {
+  ceremonyContinuationPrompt,
+  ceremonyInstructions,
+  ceremonyOpeningPrompt,
+  ceremonyResumePrompt,
+  investigationAgenda,
+} from "./prompt";
 import type { CeremonyStory } from "./prompt";
 import type { CeremonyStore, RecordDecisionInput } from "./store";
+import type { ArtifactGateInput } from "./store";
+import type { ArtifactApproval, TicketArtifact } from "./artifact-workflow";
 import type {
   CeremonyConsultation,
   CeremonyDecision,
@@ -18,6 +29,7 @@ import type {
   CeremonySession,
   ConsultationOutcome,
   PalcoState,
+  RefinementItemTransition,
 } from "./types";
 
 export interface CreateCeremonyOptions {
@@ -49,6 +61,11 @@ export interface Ceremony {
    */
   consult(input: ConsultInput): CeremonyConsultation;
   resume(sessionId: string): Promise<void>;
+  confirmRefinement(input: ArtifactGateInput): Promise<void>;
+  continueRefining(input: ArtifactGateInput): Promise<void>;
+  approveSpec(input: ArtifactGateInput): Promise<ArtifactApproval>;
+  approveTickets(input: ArtifactGateInput): Promise<NonNullable<TicketArtifact["approval"]>>;
+  reopenRefinement(input: ArtifactGateInput): Promise<void>;
   palco(sessionId: string): PalcoState | undefined;
 }
 
@@ -57,11 +74,15 @@ export const NAO_E_DECISAO =
   "Isto não é decisão da sala: sem recomendação sua, é fato que você mesmo tem que " +
   "buscar nos repos. Leia o código e volte com a decisão e a recomendação.";
 
+const CEREMONY_AGENT_TOOLS = AGENT_TOOL_NAMES;
+
 /** Turno vivo neste processo. Some no crash — é o que separa `pensando` de `retomavel`. */
 interface LiveTurn {
   running: boolean;
   pending: PendingQuestion | undefined;
   answers: Record<string, readonly string[]>;
+  progressed: boolean;
+  noProgressCompletions: number;
 }
 
 /**
@@ -69,8 +90,8 @@ interface LiveTurn {
  * processo, várias sessões dentro dela.
  *
  * O agente nunca decide: ele só pergunta. `decide` é o único caminho que grava
- * Registro de decisão, e ele exige quem decidiu — do laço de eventos aqui de
- * dentro não dá para chegar nele.
+ * uma escolha coletiva da sala — do laço de eventos aqui de dentro não dá para
+ * chegar nele.
  */
 export function createCeremony(options: CreateCeremonyOptions): Ceremony {
   const { runtime, store, repos } = options;
@@ -116,11 +137,11 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     sessionId: string,
     consultation: CeremonyConsultation,
     outcome: ConsultationOutcome,
-  ): void {
+  ): ConsultationOutcome {
     try {
       store.answerConsultation(consultation.id, outcome);
       writeFailures.delete(sessionId);
-      return;
+      return outcome;
     } catch (error) {
       sessionLogger(sessionId)?.error({ err: error }, "não foi possível gravar a consulta");
     }
@@ -140,19 +161,27 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         message: failed.message,
       });
       writeFailures.delete(sessionId);
+      return { status: "falhou", message: failed.message };
     } catch (persistError) {
       sessionLogger(sessionId)?.error(
         { err: persistError },
         "consulta ficou sem estado terminal no banco — Palco usa falha em memória",
       );
       writeFailures.set(sessionId, failed);
+      return { status: "falhou", message: failed.message };
     }
   }
 
   /** Solta o turno: a request que dispara não espera a cerimônia inteira. */
   function kick(agentSession: AgentSession, prompt: string): void {
     const sessionId = agentSession.id;
-    const live: LiveTurn = { running: true, pending: undefined, answers: {} };
+    const live: LiveTurn = {
+      running: true,
+      pending: undefined,
+      answers: {},
+      progressed: false,
+      noProgressCompletions: 0,
+    };
     lives.set(sessionId, live);
 
     void consume(agentSession, prompt, live).catch((error: unknown) => {
@@ -176,38 +205,87 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     const logger = sessionLogger(sessionId);
 
     try {
-      for await (const event of agentSession.send(prompt)) {
-        switch (event.type) {
-          case "message-delta":
-            break;
+      let nextPrompt = prompt;
+      while (true) {
+        live.progressed = false;
+        let completed = false;
 
-          case "message":
-            store.appendEvent(sessionId, { kind: "mensagem", text: event.text });
-            changed(sessionId);
-            break;
+        for await (const event of agentSession.send(nextPrompt)) {
+          switch (event.type) {
+            case "message-delta":
+              break;
 
-          case "question":
-            await receiveQuestion(sessionId, live, event.question);
-            break;
+            case "message":
+              store.appendEvent(sessionId, { kind: "mensagem", text: event.text });
+              changed(sessionId);
+              break;
 
-          case "approval":
-            // A cerimônia é leitura: sair do sandbox nunca é decisão da sala.
-            logger?.warn({ kind: event.approval.kind }, "aprovação recusada na cerimônia");
-            await event.approval.decide("decline");
-            break;
+            case "question":
+              await receiveQuestion(sessionId, live, event.question);
+              break;
 
-          case "turn-completed":
-            store.appendEvent(sessionId, { kind: "turno-encerrado" });
-            store.finishSession(sessionId, { status: "encerrada" });
-            logger?.info("cerimônia encerrada pelo agente");
-            break;
+            case "completion-proposal":
+              if (await receiveCompletionProposal(sessionId, event.proposal)) {
+                live.progressed = true;
+              }
+              break;
 
-          case "turn-failed":
-            store.appendEvent(sessionId, { kind: "turno-falhou", message: event.error.message });
-            store.finishSession(sessionId, { status: "falhou", message: event.error.message });
-            logger?.error({ err: event.error }, "turno da cerimônia falhou");
-            break;
+            case "agenda-item-submission":
+              await receiveAgendaItemSubmission(sessionId, live, event.item);
+              break;
+
+            case "agenda-resolution":
+              if (await receiveAgendaResolution(sessionId, event.resolution)) {
+                live.progressed = true;
+              }
+              break;
+
+            case "spec-submission":
+              await receiveSpecSubmission(sessionId, event.submission);
+              break;
+            case "tickets-submission":
+              await receiveTicketsSubmission(sessionId, event.submission);
+              break;
+
+            case "approval":
+              // A cerimônia é leitura: sair do sandbox nunca é decisão da sala.
+              logger?.warn({ kind: event.approval.kind }, "aprovação recusada na cerimônia");
+              await event.approval.decide("decline");
+              break;
+
+            case "turn-completed":
+              store.appendEvent(sessionId, { kind: "turno-encerrado" });
+              completed = true;
+              break;
+
+            case "turn-failed":
+              store.appendEvent(sessionId, {
+                kind: "turno-falhou",
+                message: event.error.message,
+              });
+              store.finishSession(sessionId, { status: "falhou", message: event.error.message });
+              logger?.error({ err: event.error }, "turno da cerimônia falhou");
+              break;
+          }
         }
+
+        if (!completed || store.getSession(sessionId)?.refinement.phase !== "refinando") return;
+
+        if (live.progressed) live.noProgressCompletions = 0;
+        else live.noProgressCompletions += 1;
+
+        if (live.noProgressCompletions >= 2) {
+          store.appendEvent(sessionId, {
+            kind: "mensagem",
+            text:
+              "O agente terminou duas vezes sem avançar a Agenda. Retome a cerimônia para tentar de novo.",
+          });
+          logger?.warn("cerimônia ficou retomável após dois turnos sem progresso");
+          return;
+        }
+
+        logger?.info("turno terminou sem proposta aceita; continuação automática iniciada");
+        nextPrompt = ceremonyContinuationPrompt();
       }
     } finally {
       live.running = false;
@@ -216,17 +294,221 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     }
   }
 
+  async function receiveCompletionProposal(
+    sessionId: string,
+    proposal: Extract<AgentEvent, { readonly type: "completion-proposal" }>["proposal"],
+  ): Promise<boolean> {
+    const open = store
+      .listRefinementItems(sessionId)
+      .filter((item) => item.status !== "resolvido" && item.status !== "fora-de-escopo");
+    if (open.length > 0) {
+      await proposal.respond({
+        accepted: false,
+        message: `A conclusão foi recusada: ${open.length} item(ns) da Agenda continuam abertos.`,
+      });
+      return false;
+    }
+
+    const session = store.getSession(sessionId);
+    if (!session || session.refinement.phase !== "refinando") {
+      await proposal.respond({
+        accepted: false,
+        message: "A conclusão só pode ser proposta durante a fase Refinar.",
+      });
+      return false;
+    }
+
+    try {
+      store.proposeRefinementCompletion({
+        sessionId,
+        expectedRevision: session.refinement.revision,
+        summary: proposal.submission.summary,
+      });
+    } catch (error) {
+      if (!(error instanceof CeremonyError)) throw error;
+      await proposal.respond({ accepted: false, message: error.message });
+      return false;
+    }
+    await proposal.respond({
+      accepted: true,
+      message: "Agenda encerrada. A sala agora precisa confirmar o avanço.",
+    });
+    changed(sessionId);
+    return true;
+  }
+
+  async function receiveAgendaItemSubmission(
+    sessionId: string,
+    live: LiveTurn,
+    pending: Extract<AgentEvent, { readonly type: "agenda-item-submission" }>["item"],
+  ): Promise<void> {
+    try {
+      const item = store.addAgentRefinementItem(sessionId, pending.submission.question);
+      await pending.respond({
+        accepted: true,
+        message: `Item ${item.id} criado na Agenda. Use esse ID para perguntar ou resolver o furo.`,
+      });
+      live.progressed = true;
+      changed(sessionId);
+    } catch (error) {
+      if (error instanceof CeremonyError) {
+        await pending.respond({ accepted: false, message: error.message });
+        return;
+      }
+      await pending.respond({
+        accepted: false,
+        message: "Não foi possível adicionar o item à Agenda. Tente novamente.",
+      });
+      throw error;
+    }
+  }
+
+  async function receiveAgendaResolution(
+    sessionId: string,
+    pending: Extract<AgentEvent, { readonly type: "agenda-resolution" }>["resolution"],
+  ): Promise<boolean> {
+    const session = store.getSession(sessionId);
+    if (!session || session.refinement.phase !== "refinando") {
+      await pending.respond({
+        accepted: false,
+        message: "Itens da Agenda só podem ser resolvidos durante a fase Refinar.",
+      });
+      return false;
+    }
+
+    const item = store
+      .listRefinementItems(sessionId)
+      .find((candidate) => candidate.id === pending.submission.agendaItemId);
+    if (!item || item.status === "resolvido" || item.status === "fora-de-escopo") {
+      await pending.respond({
+        accepted: false,
+        message: "O agendaItemId não identifica um item aberto desta Agenda.",
+      });
+      return false;
+    }
+
+    const transition: RefinementItemTransition = pending.submission.kind === "fact"
+      ? {
+          itemId: item.id,
+          status: "resolvido",
+          resolution: {
+            kind: "fato",
+            answer: pending.submission.answer,
+            citations: pending.submission.citations,
+          },
+        }
+      : {
+          itemId: item.id,
+          status: "fora-de-escopo",
+          resolution: {
+            kind: "fora-de-escopo",
+            justification: pending.submission.justification,
+          },
+        };
+
+    if (pending.submission.kind === "fact") {
+      const grounding = verifyGrounding(
+        [{ claim: pending.submission.answer, citations: pending.submission.citations }],
+        [repos.primary, ...repos.related],
+      );
+      if (grounding.status === "reprovado") {
+        await pending.respond({
+          accepted: false,
+          message: `A resolução factual foi recusada: ${grounding.violations[0]?.detail ?? "evidência inválida."}`,
+        });
+        return false;
+      }
+    }
+
+    store.transitionRefinementItem({
+      sessionId,
+      expectedRevision: session.refinement.revision,
+      ...transition,
+    });
+    await pending.respond({ accepted: true, message: "Item da Agenda resolvido." });
+    changed(sessionId);
+    return true;
+  }
+
+  async function receiveSpecSubmission(
+    sessionId: string,
+    pending: Extract<AgentEvent, { readonly type: "spec-submission" }>["submission"],
+  ): Promise<void> {
+    if (store.getSession(sessionId)?.refinement.phase !== "revisando-spec") {
+      await pending.respond({ accepted: false, message: "A Spec só pertence à fase Revisar Spec." });
+      return;
+    }
+    try {
+      store.submitSpec(sessionId, pending.submission);
+      await pending.respond({ accepted: true, message: "Spec estruturada pronta para revisão humana." });
+      changed(sessionId);
+    } catch (error) {
+      if (!(error instanceof CeremonyError)) {
+        await pending.respond({
+          accepted: false,
+          message: "Não foi possível salvar a Spec. Tente novamente.",
+        });
+        throw error;
+      }
+      await pending.respond({
+        accepted: false,
+        message: error.message,
+      });
+    }
+  }
+
+  async function receiveTicketsSubmission(
+    sessionId: string,
+    pending: Extract<AgentEvent, { readonly type: "tickets-submission" }>["submission"],
+  ): Promise<void> {
+    if (store.getSession(sessionId)?.refinement.phase !== "revisando-tickets") {
+      await pending.respond({ accepted: false, message: "Os Tickets só pertencem à fase Revisar Tickets." });
+      return;
+    }
+    try {
+      store.submitTickets(sessionId, pending.submission);
+      await pending.respond({ accepted: true, message: "Tickets estruturados prontos para revisão humana." });
+      changed(sessionId);
+    } catch (error) {
+      if (!(error instanceof CeremonyError)) {
+        await pending.respond({
+          accepted: false,
+          message: "Não foi possível salvar os Tickets. Tente novamente.",
+        });
+        throw error;
+      }
+      await pending.respond({
+        accepted: false,
+        message: error.message,
+      });
+    }
+  }
+
+  async function startReviewTurn(sessionId: string, prompt: string): Promise<void> {
+    while (lives.get(sessionId)?.running) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    const agentSession = await runtime.resumeSession(sessionId, { tools: CEREMONY_AGENT_TOOLS });
+    kick(agentSession, prompt);
+  }
+
   async function receiveQuestion(
     sessionId: string,
     live: LiveTurn,
     pending: PendingQuestion,
   ): Promise<void> {
-    /**
-     * Rodada inteira ou nada: as duas origens de pergunta são homogêneas — a
-     * `ask_operator` só passa com recomendação (o zod do runtime recusa antes),
-     * e o HITL nativo do codex nunca tem onde carregar uma. Rodada misturada
-     * não existe, e tratar meia rodada seria maquinário para caso impossível.
-     */
+    if (pending.questions.length !== 1) {
+      await pending.answer(
+        Object.fromEntries(
+          pending.questions.map((question) => [
+            question.id,
+            ["Envie exatamente uma pergunta por vez para a sala."],
+          ]),
+        ),
+      );
+      return;
+    }
+    // A ask_operator já exige recomendação; o HITL nativo não tem esse campo.
     const semRecomendacao = pending.questions.filter((question) => question.recommendation === null);
 
     if (semRecomendacao.length > 0) {
@@ -247,32 +529,88 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       return;
     }
 
+    const agentQuestion = pending.questions[0];
+    if (!agentQuestion || agentQuestion.agendaItemId === null) {
+      await pending.answer({
+        [agentQuestion?.id ?? "pergunta"]: ["Vincule a pergunta a um agendaItemId persistido."],
+      });
+      return;
+    }
+
+    const agendaItem = store
+      .listRefinementItems(sessionId)
+      .find((item) => item.id === agentQuestion.agendaItemId);
+    if (!agendaItem || agendaItem.status === "resolvido" || agendaItem.status === "fora-de-escopo") {
+      await pending.answer({
+        [agentQuestion.id]: ["O agendaItemId não identifica um item aberto desta Agenda."],
+      });
+      return;
+    }
+    if (store.currentQuestion(sessionId)) {
+      await pending.answer({
+        [agentQuestion.id]: ["Já existe uma pergunta ativa. Espere a sala resolvê-la."],
+      });
+      return;
+    }
+
     // O filtro acima já provou que nenhuma é nula; aqui o tipo acompanha.
-    store.askQuestions(
+    const question = pending.questions
+      .filter((candidate): candidate is RecommendedQuestion => candidate.recommendation !== null)
+      .map(toCeremonyQuestion)[0];
+    if (!question) throw new CeremonyError("a pergunta da sala precisa de recomendação.");
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+    store.askAgendaQuestion({
       sessionId,
-      pending.questions
-        .filter((question): question is RecommendedQuestion => question.recommendation !== null)
-        .map(toCeremonyQuestion),
-    );
+      expectedRevision: session.refinement.revision,
+      question,
+    });
     live.pending = pending;
     live.answers = {};
+    live.progressed = true;
     changed(sessionId);
   }
 
   async function resumeFrom(sessionId: string): Promise<void> {
-    // As perguntas do turno morto morreram com ele: perguntar de novo é ruído na sala.
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+    const deadAgentQuestions = store
+      .listOpenQuestions(sessionId)
+      .filter((question) => question.source === "agent");
+    // A pergunta do turno morreu, mas seu item volta a aberto com a mesma identidade.
     store.abandonPendingQuestions(sessionId);
+    for (const question of deadAgentQuestions) {
+      const item = store
+        .listRefinementItems(sessionId)
+        .find((candidate) => candidate.id === question.agendaItemId);
+      if (item?.status === "aguardando-sala") {
+        transitionAgenda(sessionId, { itemId: item.id, status: "aberto" });
+      }
+    }
     store.appendEvent(sessionId, { kind: "retomada" });
 
-    const agentSession = await runtime.resumeSession(sessionId);
+    const agentSession = await runtime.resumeSession(sessionId, {
+      tools: CEREMONY_AGENT_TOOLS,
+    });
     sessionLogger(sessionId)?.info("cerimônia retomada");
-    kick(agentSession, ceremonyResumePrompt(store.listDecisions(sessionId)));
+    kick(
+      agentSession,
+      session.refinement.phase === "revisando-spec"
+        ? "Submeta agora a Spec estruturada com todos os campos obrigatórios."
+        : session.refinement.phase === "revisando-tickets"
+          ? "Submeta agora os Tickets estruturados como slices verticais completos."
+          : ceremonyResumePrompt(
+              store.listDecisions(sessionId),
+              store.listRefinementItems(sessionId),
+            ),
+    );
   }
 
   return {
     async start({ story, investigationMarkdown }) {
       const agentSession = await runtime.startSession({
         instructions: ceremonyInstructions(repos),
+        tools: CEREMONY_AGENT_TOOLS,
       });
 
       const session = store.createSession({
@@ -284,17 +622,29 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         timeZone: currentTimeZone(),
       });
 
+      const agenda = store.seedRefinementItems(
+        session.id,
+        investigationAgenda(investigationMarkdown),
+      );
+
       sessionLogger(session.id)?.info({ storyId: story.id }, "cerimônia iniciada");
-      kick(agentSession, ceremonyOpeningPrompt(story, investigationMarkdown));
-      return session;
+      kick(agentSession, ceremonyOpeningPrompt(story, investigationMarkdown, agenda));
+      const started = store.getSession(session.id);
+      if (!started) throw new CeremonyError(`cerimônia ${session.id} não existe.`);
+      return started;
     },
 
     async decide(input) {
-      const decision = store.recordDecision(input);
+      const asked = store.currentQuestion(input.sessionId);
+      if (!asked || asked.id !== input.questionId) {
+        throw new CeremonyError(`a pergunta ${input.questionId} não é a pergunta atual da sala.`);
+      }
+      const decision = store.recordAgendaDecision(input);
       const live = lives.get(input.sessionId);
+      if (live) live.progressed = true;
       changed(input.sessionId);
 
-      if (!live?.running || !live.pending) {
+      if (!live?.running) {
         // O turno que perguntou morreu com o processo: a decisão está gravada,
         // e é ela que volta para o agente na retomada. Se a retomada falhar, a
         // decisão não vai junto: perder o que a sala inteira decidiu é o único
@@ -311,7 +661,15 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         return decision;
       }
 
-      live.answers = { ...live.answers, [input.questionId]: [decision.answer] };
+      // Uma escolha vinda da Consulta pode ser respondida enquanto o agente principal pensa.
+      if (!live.pending) return decision;
+
+      const agentQuestion = live.pending.questions.find(
+        (question) => question.agendaItemId === asked?.agendaItemId,
+      );
+      if (!agentQuestion) return decision;
+
+      live.answers = { ...live.answers, [agentQuestion.id]: [decision.answer] };
       const round = live.pending;
       if (round.questions.every((question) => question.id in live.answers)) {
         const answers = live.answers;
@@ -344,7 +702,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       changed(sessionId);
 
       // Solta a busca: a sala vê "buscando" e a resposta chega pelo SSE. O turno
-      // do grilling continua parado na decisão da vez — é sessão à parte.
+      // do Refinamento continua parado na decisão da vez — é sessão à parte.
       const logger = sessionLogger(sessionId);
       void runConsultation({
         runtime,
@@ -361,7 +719,30 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
           } as const;
         })
         .then((outcome) => {
-          settleConsultation(sessionId, consultation, outcome);
+          const persisted = settleConsultation(sessionId, consultation, outcome);
+          try {
+            if (persisted.status === "precisa-sala") {
+              queueRoomChoice(sessionId, consultation.id, persisted);
+            } else {
+              settleDoubtAgenda(sessionId, consultation.id, persisted);
+            }
+          } catch (error) {
+            logger?.error(
+              { err: error, consultationId: consultation.id },
+              "não foi possível atualizar a Agenda depois da consulta",
+            );
+            try {
+              transitionAgenda(sessionId, {
+                itemId: `duvida-${consultation.id}`,
+                status: "aberto",
+              });
+            } catch (recoveryError) {
+              logger?.error(
+                { err: recoveryError, consultationId: consultation.id },
+                "não foi possível recuperar o item da Agenda depois da consulta",
+              );
+            }
+          }
           changed(sessionId);
         });
 
@@ -379,10 +760,124 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       await resumeFrom(sessionId);
     },
 
+    async confirmRefinement(input) {
+      const session = store.getSession(input.sessionId);
+      if (!session) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
+      if (session.refinement.phase !== "aguardando-confirmacao") {
+        throw new CeremonyError("a confirmação só pode ocorrer quando a sala está aguardando confirmação.");
+      }
+      const openAgenda = store.listRefinementItems(input.sessionId)
+        .filter((item) => item.status !== "resolvido" && item.status !== "fora-de-escopo");
+      if (openAgenda.length > 0) throw new CeremonyError("resolva toda a Agenda antes de confirmar.");
+      store.updateRefinementPhase({ ...input, phase: "revisando-spec" });
+      changed(input.sessionId);
+      await startReviewTurn(input.sessionId, "Submeta agora a Spec estruturada com todos os campos obrigatórios.");
+    },
+
+    async continueRefining(input) {
+      const session = store.getSession(input.sessionId);
+      if (session?.refinement.phase !== "aguardando-confirmacao") {
+        throw new CeremonyError("só é possível continuar enquanto a sala aguarda confirmação.");
+      }
+      store.updateRefinementPhase({ ...input, phase: "refinando" });
+      changed(input.sessionId);
+      await startReviewTurn(
+        input.sessionId,
+        ceremonyResumePrompt(store.listDecisions(input.sessionId), store.listRefinementItems(input.sessionId)),
+      );
+    },
+
+    async approveSpec(input) {
+      const approval = store.approveSpec(input);
+      changed(input.sessionId);
+      await startReviewTurn(
+        input.sessionId,
+        [
+          "A Spec abaixo foi aprovada pelo Operador e é a única fonte para gerar os Tickets:",
+          approval.markdown,
+          "Submeta agora os Tickets estruturados como slices verticais completos.",
+        ].join("\n\n"),
+      );
+      return approval;
+    },
+
+    async approveTickets(input) {
+      const approval = store.approveTickets(input);
+      changed(input.sessionId);
+      return approval;
+    },
+
+    async reopenRefinement(input) {
+      store.reopenRefinement(input);
+      changed(input.sessionId);
+      await startReviewTurn(
+        input.sessionId,
+        ceremonyResumePrompt(store.listDecisions(input.sessionId), store.listRefinementItems(input.sessionId)),
+      );
+    },
+
     palco(sessionId) {
       return sessionPalco(sessionId);
     },
   };
+
+  function queueRoomChoice(
+    sessionId: string,
+    consultationId: string,
+    outcome: Extract<ConsultationOutcome, { readonly status: "precisa-sala" }>,
+  ): void {
+    const itemId = `duvida-${consultationId}`;
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+    store.askAgendaQuestion({
+      sessionId,
+      expectedRevision: session.refinement.revision,
+      question: {
+        id: itemId,
+        agendaItemId: itemId,
+        source: "room-doubt",
+        header: "Dúvida da sala",
+        question: outcome.question,
+        recommendation: outcome.recommendation,
+        evidence: outcome.evidence,
+        options: outcome.options,
+        allowFreeText: outcome.allowFreeText,
+      },
+    });
+  }
+
+  function settleDoubtAgenda(
+    sessionId: string,
+    consultationId: string,
+    outcome: ConsultationOutcome,
+  ): void {
+    const itemId = `duvida-${consultationId}`;
+    if (outcome.status === "respondida") {
+      transitionAgenda(sessionId, {
+        itemId,
+        status: "resolvido",
+        resolution: { kind: "fato", answer: outcome.answer, citations: outcome.citations },
+      });
+      return;
+    }
+    if (outcome.status === "precisa-sala") {
+      transitionAgenda(sessionId, { itemId, status: "aguardando-sala" });
+      return;
+    }
+    transitionAgenda(sessionId, { itemId, status: "aberto" });
+  }
+
+  function transitionAgenda(sessionId: string, transition: RefinementItemTransition): void {
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+    store.transitionRefinementItem({
+      sessionId,
+      expectedRevision: session.refinement.revision,
+      ...transition,
+    });
+    const live = lives.get(sessionId);
+    if (live) live.progressed = true;
+  }
 }
 
 function currentTimeZone(): string {
@@ -396,9 +891,13 @@ function currentTimeZone(): string {
 /** Pergunta que já provou ter recomendação — a única que o Palco aceita exibir. */
 type RecommendedQuestion = AgentQuestion & { readonly recommendation: string };
 
-function toCeremonyQuestion(question: RecommendedQuestion): CeremonyQuestion {
+function toCeremonyQuestion(
+  question: RecommendedQuestion,
+): CeremonyQuestion & { readonly agendaItemId: string; readonly source: "agent" } {
   return {
     id: question.id,
+    agendaItemId: question.agendaItemId ?? question.id,
+    source: "agent",
     header: question.header,
     question: question.question,
     recommendation: question.recommendation,

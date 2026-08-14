@@ -14,6 +14,20 @@ export const CLIENT_VERSION = "0.1.0";
 
 /** Ferramenta própria de HITL: superfície estável, sob nosso controle. */
 export const ASK_OPERATOR_TOOL_NAME = "ask_operator";
+export const ADD_REFINEMENT_ITEM_TOOL_NAME = "add_refinement_item";
+export const AGENDA_RESOLUTION_TOOL_NAME = "resolve_refinement_item";
+export const COMPLETION_PROPOSAL_TOOL_NAME = "propose_refinement_completion";
+export const SPEC_SUBMISSION_TOOL_NAME = "submit_refinement_spec";
+export const TICKETS_SUBMISSION_TOOL_NAME = "submit_refinement_tickets";
+export const AGENT_TOOL_NAMES = [
+  ASK_OPERATOR_TOOL_NAME,
+  ADD_REFINEMENT_ITEM_TOOL_NAME,
+  AGENDA_RESOLUTION_TOOL_NAME,
+  COMPLETION_PROPOSAL_TOOL_NAME,
+  SPEC_SUBMISSION_TOOL_NAME,
+  TICKETS_SUBMISSION_TOOL_NAME,
+] as const;
+export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 
 export type RequestId = number | string;
 
@@ -132,6 +146,10 @@ export interface DynamicToolCallResponse {
 const askOperatorQuestionSchema = z
   .object({
     id: z.string().min(1).describe("Identificador curto e único da pergunta."),
+    agendaItemId: z
+      .string()
+      .min(1)
+      .describe("Identificador do item persistido da Agenda que esta pergunta resolve."),
     header: z.string().describe("Rótulo do assunto, poucas palavras."),
     question: z.string(),
     // Obrigatória de propósito: sem recomendação a pergunta é um fato que
@@ -170,8 +188,7 @@ const askOperatorQuestionSchema = z
 export const askOperatorArgumentsSchema = z.object({
   questions: z
     .array(askOperatorQuestionSchema)
-    .min(1)
-    .max(3)
+    .length(1)
     .superRefine((questions, ctx) => {
       const seen = new Set<string>();
       for (const [index, question] of questions.entries()) {
@@ -210,10 +227,114 @@ export const askOperatorToolSpec = {
   name: ASK_OPERATOR_TOOL_NAME,
   description:
     "Pergunta à sala (squad + PO) quando uma decisão depende de gente, não de código. " +
-    "Faça de 1 a 3 perguntas por chamada, cada uma com `recommendation` e ao menos uma `evidence` " +
+    "Faça exatamente uma pergunta por chamada, vinculada por `agendaItemId`, com `recommendation` e ao menos uma `evidence` " +
     "(ambas obrigatórias), ids únicos, e um jeito de responder: opções e/ou `allowFreeText: true`. " +
     "Fato que o código responde você busca sozinho — se você não consegue recomendar nada, " +
     "não é decisão da sala. Prefira perguntar a assumir: decisão assumida em silêncio é o que " +
     "o produto existe para evitar.",
   inputSchema: z.toJSONSchema(askOperatorArgumentsSchema, { io: "input", target: "draft-7" }),
+} as const;
+
+export const completionProposalArgumentsSchema = z.object({
+  summary: z.string().trim().min(1).describe("Resumo curto de por que a Agenda está encerrada."),
+});
+
+export const completionProposalToolSpec = {
+  type: "function",
+  name: COMPLETION_PROPOSAL_TOOL_NAME,
+  description:
+    "Propõe explicitamente encerrar a etapa Refinar. O sistema confere a Agenda; terminar o turno não encerra nada.",
+  inputSchema: z.toJSONSchema(completionProposalArgumentsSchema, {
+    io: "input",
+    target: "draft-7",
+  }),
+} as const;
+
+export const addRefinementItemArgumentsSchema = z.object({
+  question: z.string().trim().min(1),
+});
+
+export const addRefinementItemToolSpec = {
+  type: "function",
+  name: ADD_REFINEMENT_ITEM_TOOL_NAME,
+  description:
+    "Adiciona à Agenda um furo novo descoberto durante o Refinamento e devolve o ID persistido para perguntar ou resolver.",
+  inputSchema: z.toJSONSchema(addRefinementItemArgumentsSchema, {
+    io: "input",
+    target: "draft-7",
+  }),
+} as const;
+
+const refinementCitationSchema = z.object({
+  repo: z.string().trim().min(1),
+  path: z.string().trim().min(1),
+  symbol: z.string().trim().min(1).optional(),
+});
+
+export const agendaResolutionArgumentsSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("fact"),
+    agendaItemId: z.string().trim().min(1),
+    answer: z.string().trim().min(1),
+    citations: z.array(refinementCitationSchema).min(1),
+  }),
+  z.object({
+    kind: z.literal("out-of-scope"),
+    agendaItemId: z.string().trim().min(1),
+    justification: z.string().trim().min(1),
+  }),
+]);
+
+export const agendaResolutionToolSpec = {
+  type: "function",
+  name: AGENDA_RESOLUTION_TOOL_NAME,
+  description:
+    "Resolve um item aberto da Agenda como fato verificado ou justifica que ele está fora de escopo. " +
+    "Fatos exigem resposta e ao menos uma citação de arquivo; caminhos e símbolos serão conferidos mecanicamente.",
+  inputSchema: z.toJSONSchema(agendaResolutionArgumentsSchema, {
+    io: "input",
+    target: "draft-7",
+  }),
+} as const;
+
+const structuredSpecListEntrySchema = z.string().trim().min(1);
+
+export const refinementSpecSubmissionSchema = z.object({
+  problem: z.string().min(1),
+  solution: z.string().min(1),
+  expectedBehaviors: z.array(structuredSpecListEntrySchema),
+  implementationDecisions: z.array(structuredSpecListEntrySchema),
+  testStrategy: z.array(structuredSpecListEntrySchema),
+  outOfScope: z.array(structuredSpecListEntrySchema),
+  traceability: z.array(structuredSpecListEntrySchema),
+});
+
+export const refinementSpecSubmissionToolSpec = {
+  type: "function",
+  name: SPEC_SUBMISSION_TOOL_NAME,
+  description: "Submete uma Spec estruturada para o gate de revisão da cerimônia.",
+  inputSchema: z.toJSONSchema(refinementSpecSubmissionSchema, { io: "input", target: "draft-7" }),
+} as const;
+
+export const refinementTicketSubmissionSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  specUrl: z.string().url(),
+  blockedBy: z.array(z.string().min(1)),
+});
+
+export const refinementTicketsSubmissionSchema = z.object({
+  tickets: z.array(refinementTicketSubmissionSchema).min(1),
+});
+
+export const refinementTicketsSubmissionToolSpec = {
+  type: "function",
+  name: TICKETS_SUBMISSION_TOOL_NAME,
+  description: "Submete Tickets estruturados para o gate de revisão da cerimônia.",
+  inputSchema: z.toJSONSchema(refinementTicketsSubmissionSchema, {
+    io: "input",
+    target: "draft-7",
+  }),
 } as const;

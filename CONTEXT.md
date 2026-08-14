@@ -1,6 +1,7 @@
-# Glossário — Sprint Griller
+# Glossário — Refina
 
-Linguagem ubíqua do domínio de refinamento. Termos cristalizados nas sessões de grilling do esforço `.scratch/mvp-spec/`.
+Linguagem ubíqua do domínio de refinamento. Os identificadores internos
+`sprint-griller:*` permanecem por compatibilidade; a linguagem visível do produto é Refina.
 
 ## Termos
 
@@ -12,23 +13,29 @@ Linguagem ubíqua do domínio de refinamento. Termos cristalizados nas sessões 
 
 **Status de refinamento** — onde uma US está no fluxo: *sem Investigação*, *investigada* ou *refinada*. Não é estado da ferramenta: é o nome do artefato mais avançado que ela já gravou no Azure DevOps (a Investigação como comment, a Spec da US no despejo). Some do picker se alguém apagar o artefato — e é assim que tem que ser.
 
-**Grilling coletivo** — a cerimônia de refinamento reformulada: squad + PO grelham a US usando a Investigação como insumo, tomam as decisões ali, e tudo fica documentado e alinhado entre todos.
+**Refinamento coletivo** — a cerimônia em que squad + PO refinam a US usando a Investigação como insumo, resolvem cada furo e mantêm Spec e Tickets alinhados entre todos.
 
-**Registro de decisão** — artefato de primeira classe que documenta uma decisão tomada no grilling coletivo (pergunta, resposta, quem decidiu). O oposto de "ata perdida": é consultável e vinculado à US.
+**Agenda do refinamento** — lista persistida de todos os furos vindos da Investigação, da sala e do agente. Um item fica aberto, em pesquisa ou aguardando a sala até receber uma Resolução; nenhum item aberto pode avançar o fluxo para revisão da Spec.
 
-**Consulta** — dúvida *factual* levantada na sala durante o grilling coletivo e resolvida ao vivo: o agente lê o código na hora e responde citando o arquivo. É o oposto do Registro de decisão — não tem quem decidiu, porque não houve decisão: quem respondeu foi o repositório. Existe para matar o "alguém verifica depois", que é como uma dúvida de dez segundos vira Explosão três semanas depois.
+**Resolução** — encerramento explícito de um item da agenda: fato com resposta e citações verificadas, escolha coletiva com resposta e recomendação, ou fora de escopo com justificativa. Resoluções guardam horário automático e não atribuem a escolha a uma pessoa.
+
+**Registro de decisão** — artefato de primeira classe que documenta uma escolha coletiva do refinamento (pergunta, resposta, recomendação e horário). O oposto de "ata perdida": é consultável e vinculado à US, sem autoria individual.
+
+**Consulta** — dúvida *factual* levantada na sala durante o Refinamento coletivo e resolvida ao vivo: o agente lê o código na hora e responde citando o arquivo. É o oposto do Registro de decisão — não há atribuição individual, porque não houve decisão: a resposta veio do repositório. Existe para matar o "alguém verifica depois", que é como uma dúvida de dez segundos vira Explosão três semanas depois.
 
 **Explosão** — descoberta de dependência ou restrição técnica no meio da implementação, depois da US já estimada e em sprint: a estimativa dobra e a decisão final é tomada às pressas, sem o PO saber que houve uma decisão. É a consequência dominante que o produto existe para evitar.
 
-**US madura** — estado que uma US atinge quando o grilling coletivo não tem mais perguntas abertas: nuances mapeadas, decisões registradas, sem dúvidas silenciosamente assumidas.
+**Fase do refinamento** — estado persistido da sessão: *refinando*, *aguardando confirmação*, *revisando Spec*, *revisando Tickets*, *pronto para publicar* ou *publicado*. A revisão monotônica da sessão impede que uma ação baseada numa tela antiga sobrescreva trabalho novo.
 
-**Operador** — a pessoa que dispara a Investigação e conduz o grilling coletivo na cerimônia. No MVP há um único operador (o Lucas); a squad e o PO participam das decisões, mas não operam a ferramenta.
+**US madura** — estado que uma US atinge quando a Agenda do refinamento não tem mais itens abertos: nuances mapeadas, resoluções registradas, sem dúvidas silenciosamente assumidas.
 
-**UI de sessão** — a única superfície própria do produto: uma tela web que a sala inteira acompanha durante o grilling coletivo (pergunta atual, recomendação do agente, decisão capturada, árvore de decisões). Ao final da cerimônia, despeja os artefatos no Azure DevOps.
+**Operador** — a pessoa que dispara a Investigação e conduz o Refinamento coletivo. No MVP há um único operador (o Lucas); a squad e o PO participam das resoluções, mas não operam a ferramenta.
+
+**UI de sessão** — a única superfície própria do produto: uma tela web que a sala inteira acompanha durante o Refinamento coletivo (pergunta atual, recomendação do agente, decisão capturada, árvore de decisões). Ao final da cerimônia, despeja os artefatos no Azure DevOps.
 
 **Palco** — o modo da UI de sessão que a sala vê projetado: pergunta atual, recomendação do agente, evidências e a captura da decisão, em tipografia legível a distância. Tipografia editorial aqui é requisito, não estética. O outro modo é o **Dossiê**, a aba do Operador com o documento se formando e o preview do despejo.
 
-**Despejo** — o momento final da cerimônia em que a sessão grava tudo no Azure DevOps: spec da US, tasks filhas, estimativa e Registros de decisão. Passa pelo gate de maturidade: pendências abertas são mostradas e despejar com elas é escolha consciente do Operador.
+**Despejo** — o momento final em que a sessão grava tudo no Azure DevOps: Spec da US, Tickets filhos, estimativa e Registros de decisão. Agenda zerada, versões aprovadas e estimativa válida são gates obrigatórios; não existe override do Operador.
 
 **Spec da US** — artefato único de dupla audiência (humano + agente) que consolida o refinamento: decisões, contexto de impacto da Investigação, unknowns explícitos, fora-de-escopo. Vive na descrição da própria US; não existe "ata" separada.
 

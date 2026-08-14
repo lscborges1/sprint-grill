@@ -1,17 +1,11 @@
 import { createHash } from "node:crypto";
 import { CeremonyError } from "./ceremony-error";
-import {
-  findSignedDumpInputConflict,
-  signedDumpInputs,
-} from "./dump-state";
+import { signedDumpInputs } from "./dump-state";
 import type { SignedDumpInputs } from "./dump-state";
 import type { readDossie } from "./dossie";
 import type { CeremonyDumpInput } from "./despejo";
 import { isCeremonyEstimate } from "./estimate";
-import {
-  assertValidSpecMarkdown,
-  stripDecisionRecordLinks,
-} from "./spec";
+import { assertValidStructuredSpecMarkdown } from "./spec";
 import type { CeremonyStore } from "./store";
 import { parseTaskDraft } from "./task-draft";
 
@@ -36,36 +30,32 @@ export function reservePublication(
   input: CeremonyDumpInput,
 ): DumpPreparation {
   const frozenInputs = signedDumpInputs(dossie.dump);
-  if (frozenInputs !== undefined) assertFrozenInputsMatch(frozenInputs, input);
+  if (frozenInputs !== undefined && frozenInputs.estimate !== input.estimate) {
+    throw new CeremonyError(
+      "o despejo já começou com outra estimativa — use a estimativa assinada no retry.",
+    );
+  }
   if (dossie.dump.status === "completed") return { kind: "completed" };
-  if (dossie.status !== "encerrada") {
-    throw new CeremonyError("encerre a cerimônia antes de despejar.");
+  if (dossie.status === "falhou") {
+    throw new CeremonyError("a cerimônia falhou e não pode ser publicada.");
   }
-
-  const signed = frozenInputs?.markdown ?? dossie.spec.draft?.markdown ?? dossie.spec.generated;
-  if (input.markdown !== signed) {
-    throw new CeremonyError(
-      frozenInputs === undefined
-        ? "salve a edição do Dossiê antes de despejar."
-        : "o despejo já começou com outra Spec — use a Spec assinada no retry.",
-    );
+  if (dossie.refinement.phase !== "pronto-para-publicar") {
+    throw new CeremonyError("aprove a Spec e os Tickets antes de publicar.");
   }
-  if (
-    frozenInputs === undefined &&
-    stripDecisionRecordLinks(input.base) !== stripDecisionRecordLinks(dossie.spec.generated)
-  ) {
-    throw new CeremonyError(
-      "a cerimônia andou depois desta edição — regenere ou salve uma Spec atualizada antes de despejar.",
-    );
-  }
-  if (dossie.pending.length > 0 && !input.confirmPending) {
-    throw new CeremonyError("confirme que deseja despejar com as pendências abertas.");
+  const openAgenda = store.listRefinementItems(dossie.sessionId)
+    .filter((item) => item.status !== "resolvido" && item.status !== "fora-de-escopo");
+  if (openAgenda.length > 0) {
+    throw new CeremonyError("a Agenda precisa estar vazia antes de publicar.");
   }
   if (frozenInputs === undefined && !isCeremonyEstimate(input.estimate)) {
     throw new CeremonyError("a estimativa deve usar a escala Fibonacci da squad.");
   }
 
-  const tasksMarkdown = frozenInputs?.tasksMarkdown ?? input.tasksMarkdown;
+  const approved = store.getApprovedArtifacts(dossie.sessionId);
+  if (!approved) throw new CeremonyError("as aprovações atuais da Spec e dos Tickets não coincidem.");
+  assertValidStructuredSpecMarkdown(approved.spec.markdown);
+  const signed = frozenInputs?.markdown ?? approved.spec.markdown;
+  const tasksMarkdown = frozenInputs?.tasksMarkdown ?? approved.tickets.markdown;
   const tasks = parseTaskDraft(tasksMarkdown, dossie.story.url);
   const inputs = frozenInputs ?? {
     dumpId: fingerprint(dossie.sessionId, dossie.story.id, signed, tasks, input.estimate),
@@ -74,7 +64,7 @@ export function reservePublication(
     estimate: input.estimate,
   };
 
-  assertValidSpecMarkdown(inputs.markdown, dossie.decisions);
+  assertValidStructuredSpecMarkdown(inputs.markdown);
   store.beginDump(dossie.sessionId, inputs);
   return {
     kind: "publish",
@@ -82,33 +72,11 @@ export function reservePublication(
       sessionId: dossie.sessionId,
       storyId: dossie.story.id,
       decisions: dossie.decisions,
-      pendingCount: dossie.pending.length,
+      pendingCount: 0,
       inputs,
       tasks,
     },
   };
-}
-
-function assertFrozenInputsMatch(
-  frozen: SignedDumpInputs,
-  input: CeremonyDumpInput,
-): void {
-  switch (findSignedDumpInputConflict(frozen, input)) {
-    case "markdown":
-      throw new CeremonyError(
-        "o despejo já começou com outra Spec — use a Spec assinada no retry.",
-      );
-    case "estimate":
-      throw new CeremonyError(
-        "o despejo já começou com outra estimativa — use a estimativa assinada no retry.",
-      );
-    case "tasksMarkdown":
-      throw new CeremonyError(
-        "o despejo já começou com outras Tasks assinadas — use as mesmas Tasks no retry.",
-      );
-    case undefined:
-      return;
-  }
 }
 
 function fingerprint(

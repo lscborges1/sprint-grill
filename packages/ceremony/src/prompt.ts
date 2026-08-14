@@ -1,5 +1,6 @@
 import type { SquadConfig } from "@sprint-griller/core";
 import type { CeremonyDecision } from "./types";
+import type { RefinementItem, SeedRefinementItemInput } from "./types";
 import { TASK_DRAFT_END, TASK_DRAFT_START } from "./task-draft";
 
 /** A US como a cerimônia precisa dela — mesma forma do `StoryDetails` do ADO. */
@@ -24,7 +25,7 @@ function repoList(repos: SquadConfig["repos"]): string[] {
 }
 
 /**
- * O papel do agente no grilling coletivo. Vai como `developerInstructions` da
+ * O papel do agente no Refinamento coletivo. Vai como `developerInstructions` da
  * sessão, então vale para todos os turnos — inclusive os de retomada.
  *
  * A regra que sustenta a cerimônia inteira está aqui: fato o agente busca,
@@ -33,7 +34,7 @@ function repoList(repos: SquadConfig["repos"]): string[] {
  */
 export function ceremonyInstructions(repos: SquadConfig["repos"]): string {
   return [
-    "Você conduz o grilling coletivo de refinamento de uma User Story. Na sala estão",
+    "Você conduz o Refinamento coletivo de uma User Story. Na sala estão",
     "a squad e o PO, com a tela projetada. Escreva sempre em pt-BR, direto, sem floreio.",
     "",
     "## Repositórios da squad",
@@ -46,17 +47,22 @@ export function ceremonyInstructions(repos: SquadConfig["repos"]): string {
     "## O que você pergunta, e o que você não pergunta",
     "",
     "1. Fato você busca: qualquer coisa que o código responde — como algo funciona",
-    "   hoje, onde está, o que já existe — você vai ler nos repos acima. Nunca",
-    "   ocupe a sala com isso.",
-    "2. Decisão você pergunta: escolha que depende de gente (produto, prioridade,",
+    "   hoje, onde está, o que já existe — você vai ler nos repos acima e resolver",
+    "   o item com `resolve_refinement_item`, resposta e citações verificáveis. Nunca",
+    "   ocupe a sala com isso. Use a mesma ferramenta com justificativa quando um item",
+    "   estiver comprovadamente fora do escopo desta US.",
+    "2. Se ao ler o código você descobrir um furo que não está na Agenda, chame",
+    "   `add_refinement_item` primeiro. Use o ID devolvido para perguntar à sala com",
+    "   `ask_operator` ou resolver o item com `resolve_refinement_item`.",
+    "3. Decisão você pergunta: escolha que depende de gente (produto, prioridade,",
     "   trade-off, regra de negócio que não está escrita em lugar nenhum).",
-    "3. Toda pergunta vai pela ferramenta `ask_operator`, com `recommendation`",
+    "4. Toda pergunta vai pela ferramenta `ask_operator`, com `recommendation`",
     "   obrigatória: o que você recomenda e por quê. Se você não consegue",
     "   recomendar nada, é porque ainda não leu o suficiente — leia, não pergunte.",
-    "4. Em `evidence`, ao menos uma referência curta que sustenta a recomendação, no",
+    "5. Em `evidence`, ao menos uma referência curta que sustenta a recomendação, no",
     "   formato `repo · caminho/do/arquivo.ts`. Abra o arquivo antes de citá-lo.",
-    "5. Uma pergunta por vez, no máximo 3 quando forem irmãs. A sala responde uma,",
-    "   você absorve a decisão e segue.",
+    "6. Exatamente uma pergunta por chamada, sempre com o `agendaItemId` informado",
+    "   na Agenda persistida. A sala responde, você absorve a decisão e segue.",
     "",
     "## Como a cerimônia anda",
     "",
@@ -65,8 +71,9 @@ export function ceremonyInstructions(repos: SquadConfig["repos"]): string {
     "estimativa primeiro. Depois de cada decisão, verifique no código o que ela",
     "destrava e faça a próxima pergunta.",
     "",
-    "Quando não restar decisão aberta, pare de perguntar e feche o turno com um",
-    "resumo curto do que ficou decidido e do que continua em aberto. Em seguida,",
+    "Quando não restar item aberto, use `propose_refinement_completion` com um",
+    "resumo curto. Encerrar o turno nunca conclui a cerimônia. Depois da confirmação",
+    "da sala, a etapa seguinte pedirá a Spec estruturada. Em seguida,",
     "redija o preview das Tasks agent-ready dentro destes marcadores, uma por uma",
     "slice vertical autocontida, dimensionada para uma sessão de agente: título em ##,",
     "descrição curta, ### Critérios de aceite com ao menos",
@@ -89,9 +96,10 @@ export function ceremonyInstructions(repos: SquadConfig["repos"]): string {
 export function ceremonyOpeningPrompt(
   story: CeremonyStory,
   investigationMarkdown: string,
+  agenda: readonly RefinementItem[] = [],
 ): string {
   return [
-    `Comece o grilling da US #${story.id} — "${story.title}".`,
+    `Comece o Refinamento da US #${story.id} — "${story.title}".`,
     "",
     "Descrição no Azure DevOps (HTML, como o PO escreveu):",
     "",
@@ -101,12 +109,35 @@ export function ceremonyOpeningPrompt(
     "Cada Task do preview deve conter exatamente este link Markdown:",
     `[Spec da US](${story.url})`,
     "",
-    "## Investigação (insumo do grilling)",
+    "## Investigação (insumo do Refinamento)",
     "",
     investigationMarkdown,
     "",
+    "## Agenda persistida",
+    "",
+    ...(agenda.length === 0
+      ? ["(nenhum item aberto na Investigação)"]
+      : agenda.map((item) => `- \`${item.id}\` — ${item.question}`)),
+    "",
     "Faça a primeira pergunta à sala.",
   ].join("\n");
+}
+
+/** Extrai os furos renderizados pela Investigação para semear a Agenda uma única vez. */
+export function investigationAgenda(markdown: string): readonly SeedRefinementItemInput[] {
+  const heading = /^## Furos da US\s*$/m.exec(markdown);
+  if (!heading) return [];
+
+  const body = markdown.slice(heading.index + heading[0].length);
+  const end = /^## /m.exec(body)?.index;
+  const section = (end === undefined ? body : body.slice(0, end)).trim();
+  if (/^_?Nenhum furo aberto\.?_?$/i.test(section)) return [];
+
+  return section
+    .split("\n")
+    .map((line) => /^-\s+(?:\*\*)?(.+?)(?:\*\*)?(?:\s+—\s+.*)?$/.exec(line.trim())?.[1]?.trim())
+    .filter((question): question is string => question !== undefined && question !== "")
+    .map((question, index) => ({ id: `investigacao-${index + 1}`, question }));
 }
 
 /**
@@ -117,8 +148,8 @@ export function ceremonyOpeningPrompt(
  */
 export function consultationInstructions(repos: SquadConfig["repos"]): string {
   return [
-    "Uma sala de refinamento está parada esperando um fato sobre o código. Sua única",
-    "tarefa é lê-lo e responder. Escreva em pt-BR, direto, sem floreio.",
+    "Uma sala de refinamento trouxe uma dúvida. Sua tarefa é ler o código e classificar",
+    "se ele responde ou se resta uma escolha da sala. Escreva em pt-BR, direto, sem floreio.",
     "",
     "## Repositórios da squad",
     "",
@@ -128,11 +159,12 @@ export function consultationInstructions(repos: SquadConfig["repos"]): string {
     "",
     "## Regras",
     "",
-    "1. Não pergunte nada: ninguém vai responder. Abra os arquivos e descubra.",
-    "2. Não recomende, não opine, não proponha solução — a decisão é da sala.",
-    "3. Toda resposta se apoia em arquivo que você abriu. Sem citação, a resposta é",
+    "1. Não use ferramenta de pergunta: esta sessão auxiliar não tem ninguém para responder.",
+    "2. Se for fato, não recomende nem opine: responda só o que o código sustenta.",
+    "3. Se o código não bastar porque resta uma escolha de produto ou trade-off, classifique",
+    "   como escolha da sala e formule uma pergunta com recomendação e evidências.",
+    "4. Toda resposta factual se apoia em arquivo que você abriu. Sem citação, a resposta é",
     "   descartada como não verificada.",
-    "4. Se o código não responder, diga isso em `answer` e cite o que você olhou.",
     "5. Você roda em sandbox somente-leitura: pedido de escalar permissão é recusado.",
     "",
     "## Formato da resposta",
@@ -141,8 +173,22 @@ export function consultationInstructions(repos: SquadConfig["repos"]): string {
     "",
     "```json",
     "{",
+    '  "kind": "fact",',
     '  "answer": "a resposta em 1-3 frases, legível numa tela projetada",',
     '  "citations": [{ "repo": "nome-do-repo", "path": "caminho/relativo.ts", "symbol": "opcional" }]',
+    "}",
+    "```",
+    "",
+    "Ou, quando o código não decide:",
+    "",
+    "```json",
+    "{",
+    '  "kind": "room-choice",',
+    '  "question": "a escolha que a sala precisa fazer",',
+    '  "recommendation": "a opção recomendada e por quê",',
+    '  "evidence": ["repo · caminho/arquivo.ts"],',
+    '  "options": [{ "label": "opção", "description": "efeito da escolha" }],',
+    '  "allowFreeText": true',
     "}",
     "```",
     "",
@@ -151,16 +197,16 @@ export function consultationInstructions(repos: SquadConfig["repos"]): string {
   ].join("\n");
 }
 
-/** A dúvida de fato da sala, com a US só como contexto do que se está refinando. */
+/** A dúvida da sala, com a US só como contexto do que se está refinando. */
 export function consultationPrompt(story: ConsultationStory, question: string): string {
   return [
-    `A sala está refinando a US #${story.id} — "${story.title}" — e travou numa dúvida de fato.`,
+    `A sala está refinando a US #${story.id} — "${story.title}" — e trouxe uma dúvida.`,
     "",
     "Pergunta da sala:",
     "",
     question,
     "",
-    "Leia os repos e responda no formato combinado.",
+    "Leia os repos, classifique a dúvida e responda no formato combinado.",
   ].join("\n");
 }
 
@@ -169,7 +215,10 @@ export function consultationPrompt(story: ConsultationStory, question: string): 
  * agente perdeu as perguntas que estavam no ar. O que sobrevive é o que a sala
  * decidiu — e é isso que volta para ele.
  */
-export function ceremonyResumePrompt(taken: readonly CeremonyDecision[]): string {
+export function ceremonyResumePrompt(
+  taken: readonly CeremonyDecision[],
+  agenda: readonly RefinementItem[] = [],
+): string {
   return [
     "A cerimônia foi retomada depois de uma interrupção. Estas são as decisões já",
     "registradas com a sala — não pergunte de novo nada que elas resolvem:",
@@ -177,10 +226,24 @@ export function ceremonyResumePrompt(taken: readonly CeremonyDecision[]): string
     ...(taken.length === 0
       ? ["(nenhuma decisão registrada ainda)"]
       : taken.map(
-          (decision) =>
-            `- ${decision.question}\n  → ${decision.answer} (decidido por ${decision.decidedBy})`,
+          (decision) => `- ${decision.question}\n  → ${decision.answer}`,
         )),
     "",
-    "Faça a próxima pergunta em aberto, ou feche a cerimônia se não houver mais nenhuma.",
+    "Agenda persistida (preserve estes ids):",
+    "",
+    ...(agenda.length === 0
+      ? ["(nenhum item persistido)"]
+      : agenda.map((item) => `- \`${item.id}\` [${item.status}] — ${item.question}`)),
+    "",
+    "Faça a próxima pergunta em aberto; se a Agenda estiver encerrada, use `propose_refinement_completion`.",
+  ].join("\n");
+}
+
+export function ceremonyContinuationPrompt(): string {
+  return [
+    "O turno anterior terminou sem uma proposta explícita de conclusão.",
+    "Retome a Agenda persistida: resolva o próximo item, faça exatamente uma pergunta",
+    "pela `ask_operator`, ou use `propose_refinement_completion` quando todos estiverem encerrados.",
+    "Terminar o turno, por si só, não encerra o refinamento.",
   ].join("\n");
 }

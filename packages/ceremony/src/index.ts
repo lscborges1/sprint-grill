@@ -13,23 +13,38 @@ export { dossieStateSchema, signedDumpInputs } from "./session-state";
 export {
   appendDecisionTraceability,
   assertValidSpecMarkdown,
+  assertValidPublicationSpecMarkdown,
   readSpecSection,
   renderSpecMarkdown,
+  renderStructuredSpecMarkdown,
+  assertValidStructuredSpecMarkdown,
   stripDecisionRecordLinks,
 } from "./spec";
 export { SPEC_BLURB, SPEC_SECTIONS } from "./spec-vocabulary";
 export {
   parseTaskDraft,
+  renderStructuredTicketsMarkdown,
+  assertValidStructuredTickets,
   taskDraftTemplate,
   taskPreviewFromTranscript,
   validateTaskDraft,
 } from "./task-draft";
-export type { TaskDraft, TaskDraftValidation } from "./task-draft";
+export type { StructuredTicket, TaskDraft, TaskDraftValidation } from "./task-draft";
 export type {
+  ArtifactGateInput,
   DiscardSpecDraftInput,
   RecordDecisionInput,
   SaveSpecDraftInput,
+  TransitionRefinementItemInput,
+  UpdateRefinementPhaseInput,
 } from "./store";
+export type {
+  ApprovedRefinementArtifacts,
+  ArtifactApproval,
+  RefinementArtifactState,
+  SpecArtifact,
+  TicketArtifact,
+} from "./artifact-workflow";
 export type {
   CeremonyCitation,
   CeremonyConsultation,
@@ -45,6 +60,14 @@ export type {
   DossieState,
   PalcoPhase,
   PalcoState,
+  RefinementItem,
+  RefinementCompletionProposal,
+  RefinementItemTransition,
+  RefinementPhase,
+  RefinementResolution,
+  RefinementState,
+  RoomChoiceConsultation,
+  SeedRefinementItemInput,
   SessionStatus,
   SignedDumpInputs,
   SpecDraft,

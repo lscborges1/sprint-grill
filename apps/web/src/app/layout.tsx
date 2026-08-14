@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Sprint Griller",
+  title: "Refina",
   description:
-    "Investigação antes da cerimônia e grilling coletivo com decisões documentadas.",
+    "Investigação e Refinamento coletivo com Spec e Tickets aprovados.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

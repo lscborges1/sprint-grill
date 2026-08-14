@@ -65,7 +65,7 @@ export type ReportRun = Extract<
 /**
  * ponytail: as Investigações vivem na memória do processo do Operador — teto
  * aceito porque a persistência de cerimônia (SQLite) entra com a sessão de
- * grilling. Reiniciar o app perde os previews ainda não publicados no ADO.
+ * Refinamento. Reiniciar o app perde os previews ainda não publicados no ADO.
  * Pinado no globalThis para o HMR do `next dev` não zerar tudo a cada save.
  */
 const runs: Map<number, InvestigationRun> = ((

@@ -8,6 +8,7 @@ import type {
   AgentQuestion,
   AgentRuntime,
   AgentSession,
+  AgentSubmissionVerdict,
   StartSessionOptions,
 } from "@sprint-griller/agent-runtime";
 import { createLogger } from "@sprint-griller/core";
@@ -41,6 +42,7 @@ const story = {
 
 const agentQuestion = (overrides: Partial<AgentQuestion> = {}): AgentQuestion => ({
   id: "q1",
+  agendaItemId: "investigacao-1",
   header: "Arredondamento",
   question: "A comissão arredonda para cima?",
   recommendation: "Seguir a regra bancária, igual à folha.",
@@ -52,7 +54,22 @@ const agentQuestion = (overrides: Partial<AgentQuestion> = {}): AgentQuestion =>
 
 type Step =
   | { readonly type: "message"; readonly text: string }
+  | { readonly type: "add-item"; readonly question: string }
   | { readonly type: "ask"; readonly questions: readonly AgentQuestion[] }
+  | {
+      readonly type: "resolve-item";
+      readonly resolution:
+        | {
+            readonly kind: "fact";
+            readonly agendaItemId: string;
+            readonly answer: string;
+            readonly citations: readonly { readonly repo: string; readonly path: string; readonly symbol?: string }[];
+          }
+        | { readonly kind: "out-of-scope"; readonly agendaItemId: string; readonly justification: string };
+    }
+  | { readonly type: "propose-completion"; readonly summary?: string }
+  | { readonly type: "submit-spec" }
+  | { readonly type: "submit-tickets" }
   | { readonly type: "complete" }
   | { readonly type: "fail"; readonly message: string };
 
@@ -71,6 +88,9 @@ function fakeRuntime(
   const consultaPrompts: string[] = [];
   const answered: Record<string, readonly string[]>[] = [];
   const resumed: string[] = [];
+  const proposalVerdicts: { readonly accepted: boolean; readonly message: string }[] = [];
+  const resolutionVerdicts: { readonly accepted: boolean; readonly message: string }[] = [];
+  const submissionVerdicts: AgentSubmissionVerdict[] = [];
   let turn = 0;
   let sessions = 0;
 
@@ -98,6 +118,17 @@ function fakeRuntime(
             case "message":
               yield { type: "message", text: step.text } as const;
               break;
+            case "add-item":
+              yield {
+                type: "agenda-item-submission",
+                item: {
+                  submission: { question: step.question },
+                  respond: async (verdict: AgentSubmissionVerdict) => {
+                    submissionVerdicts.push(verdict);
+                  },
+                },
+              } as const;
+              break;
             case "ask": {
               let release: () => void = () => undefined;
               const gate = new Promise<void>((resolve) => {
@@ -116,6 +147,82 @@ function fakeRuntime(
               await gate;
               break;
             }
+            case "propose-completion": {
+              let release: () => void = () => undefined;
+              const gate = new Promise<void>((resolve) => {
+                release = resolve;
+              });
+              const summary = step.summary ?? "Todos os itens da agenda foram resolvidos.";
+              yield {
+                type: "completion-proposal",
+                proposal: {
+                  submission: { summary },
+                  respond: async (verdict: { readonly accepted: boolean; readonly message: string }) => {
+                    proposalVerdicts.push(verdict);
+                    release();
+                  },
+                },
+              } as const;
+              await gate;
+              break;
+            }
+            case "resolve-item": {
+              let release: () => void = () => undefined;
+              const gate = new Promise<void>((resolve) => {
+                release = resolve;
+              });
+              yield {
+                type: "agenda-resolution",
+                resolution: {
+                  submission: step.resolution,
+                  respond: async (verdict: { readonly accepted: boolean; readonly message: string }) => {
+                    resolutionVerdicts.push(verdict);
+                    release();
+                  },
+                },
+              } as const;
+              await gate;
+              break;
+            }
+            case "submit-spec":
+              yield {
+                type: "spec-submission",
+                submission: {
+                  submission: {
+                    problem: "Problema.",
+                    solution: "Solução.",
+                    expectedBehaviors: ["Comportamento."],
+                    implementationDecisions: ["Decisão."],
+                    testStrategy: ["Teste."],
+                    outOfScope: ["Fora."],
+                    traceability: ["Registro."],
+                  },
+                  respond: async (verdict: AgentSubmissionVerdict) => {
+                    submissionVerdicts.push(verdict);
+                  },
+                },
+              } as const;
+              break;
+            case "submit-tickets":
+              yield {
+                type: "tickets-submission",
+                submission: {
+                  submission: {
+                    tickets: [{
+                      id: "rounding",
+                      title: "Unificar arredondamento",
+                      description: "Entrega o cálculo compartilhado do relatório até a folha.",
+                      acceptanceCriteria: ["Relatório e folha exibem o mesmo valor."],
+                      specUrl: story.url,
+                      blockedBy: [],
+                    }],
+                  },
+                  respond: async (verdict: AgentSubmissionVerdict) => {
+                    submissionVerdicts.push(verdict);
+                  },
+                },
+              } as const;
+              break;
             case "complete":
               yield {
                 type: "turn-completed",
@@ -145,12 +252,22 @@ function fakeRuntime(
     close: async () => undefined,
   };
 
-  return { runtime, prompts, consultaPrompts, answered, resumed };
+  return {
+    runtime,
+    prompts,
+    consultaPrompts,
+    answered,
+    resumed,
+    proposalVerdicts,
+    resolutionVerdicts,
+    submissionVerdicts,
+  };
 }
 
 const stores: CeremonyStore[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   while (stores.length > 0) stores.pop()?.close();
 });
 
@@ -177,6 +294,139 @@ async function start(ceremony: ReturnType<typeof createCeremony>) {
 }
 
 describe("start", () => {
+  it("should persist a gap discovered by the main agent", async () => {
+    const { ceremony, submissionVerdicts } = ceremonyWith([[
+      { type: "add-item", question: "O cache distribuído expira junto?" },
+    ]]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)).toMatchObject({
+        agenda: [
+          expect.objectContaining({ id: "investigacao-1" }),
+          expect.objectContaining({
+            id: "agente-1",
+            question: "O cache distribuído expira junto?",
+            status: "aberto",
+          }),
+        ],
+      }),
+    );
+    expect(submissionVerdicts).toContainEqual({
+      accepted: true,
+      message:
+        "Item agente-1 criado na Agenda. Use esse ID para perguntar ou resolver o furo.",
+    });
+  });
+
+  it("should resolve a gap discovered by the main agent with its returned ID", async () => {
+    const { ceremony } = ceremonyWith([[
+      { type: "add-item", question: "O cache distribuído expira junto?" },
+      {
+        type: "resolve-item",
+        resolution: {
+          kind: "fact",
+          agendaItemId: "agente-1",
+          answer: "O cache expira junto com a chave de sessão.",
+          citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+        },
+      },
+    ]]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)).toMatchObject({
+        agenda: expect.arrayContaining([
+          expect.objectContaining({
+            id: "agente-1",
+            status: "resolvido",
+            resolution: expect.objectContaining({
+              kind: "fato",
+              answer: "O cache expira junto com a chave de sessão.",
+              citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+            }),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it("should ask the room about a gap discovered by the main agent with its returned ID", async () => {
+    const { ceremony } = ceremonyWith([[
+      { type: "add-item", question: "O cache distribuído expira junto?" },
+      {
+        type: "ask",
+        questions: [agentQuestion({ agendaItemId: "agente-1" })],
+      },
+    ]]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)).toMatchObject({
+        current: {
+          phase: "perguntando",
+          question: expect.objectContaining({ agendaItemId: "agente-1" }),
+        },
+        agenda: expect.arrayContaining([
+          expect.objectContaining({ id: "agente-1", status: "aguardando-sala" }),
+        ]),
+      }),
+    );
+  });
+
+  it("should report an unexpected agent agenda item persistence failure without leaking it", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.addAgentRefinementItem = () => {
+      throw new Error("detalhe interno do SQLite");
+    };
+    const fake = fakeRuntime([[
+      { type: "add-item", question: "O cache distribuído expira junto?" },
+    ]]);
+    const ceremony = createCeremony({
+      runtime: fake.runtime,
+      store,
+      repos,
+      logger: createLogger({ destination, level: "info" }),
+    });
+
+    await ceremony.resume(SESSION_ID);
+
+    await vi.waitFor(() =>
+      expect({
+        verdict: fake.submissionVerdicts[0],
+        log: lines.find((line) => line.msg === "cerimônia morreu fora do fluxo de erro"),
+      }).toEqual({
+        verdict: {
+          accepted: false,
+          message: "Não foi possível adicionar o item à Agenda. Tente novamente.",
+        },
+        log: expect.objectContaining({
+          sessionId: SESSION_ID,
+          err: expect.any(Object),
+          msg: "cerimônia morreu fora do fluxo de erro",
+        }),
+      }),
+    );
+  });
+
   it("should persist the ceremony with the investigation as its input", async () => {
     const { ceremony, store, prompts } = ceremonyWith([[{ type: "ask", questions: [agentQuestion()] }]]);
 
@@ -189,6 +439,10 @@ describe("start", () => {
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       status: "ativa",
     });
+    expect(session.refinement).toEqual({ phase: "refinando", revision: 1 });
+    expect(store.listRefinementItems(SESSION_ID)).toEqual([
+      expect.objectContaining({ id: "investigacao-1", question: "Sem regra." }),
+    ]);
     await vi.waitFor(() => expect(prompts[0]).toContain("Sem regra."));
   });
 
@@ -199,9 +453,11 @@ describe("start", () => {
     await vi.waitFor(() =>
       expect(ceremony.palco(SESSION_ID)?.current).toEqual({
         phase: "perguntando",
-        question: {
-          questionSeq: 1,
-          id: "q1",
+          question: {
+            questionSeq: 1,
+            id: "q1",
+            agendaItemId: "investigacao-1",
+            source: "agent",
           header: "Arredondamento",
           question: "A comissão arredonda para cima?",
           recommendation: "Seguir a regra bancária, igual à folha.",
@@ -228,12 +484,219 @@ describe("start", () => {
     expect(store.listDecisions(SESSION_ID)).toEqual([]);
   });
 
-  it("should end the ceremony when the agent runs out of questions", async () => {
-    const { ceremony, store } = ceremonyWith([[{ type: "message", text: "sem furos" }, { type: "complete" }]]);
+  it("should continue once and remain resumable when normal turns make no progress", async () => {
+    const { ceremony, store, prompts } = ceremonyWith([
+      [{ type: "message", text: "sem furos" }, { type: "complete" }],
+      [{ type: "complete" }],
+    ]);
     await start(ceremony);
 
-    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "encerrada" }));
-    expect(store.getSession(SESSION_ID)?.status).toBe("encerrada");
+    await vi.waitFor(() => expect(prompts).toHaveLength(2));
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "retomavel" }));
+    expect(store.getSession(SESSION_ID)).toMatchObject({
+      status: "ativa",
+      refinement: { phase: "refinando" },
+    });
+    expect(store.listTranscript(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: expect.objectContaining({ kind: "mensagem", text: expect.stringMatching(/retom/i) }),
+        }),
+      ]),
+    );
+  });
+
+  it("should reject a completion proposal while an agenda item remains open", async () => {
+    const { ceremony, store, proposalVerdicts } = ceremonyWith([
+      [{ type: "propose-completion" }, { type: "complete" }],
+      [{ type: "complete" }],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(1));
+    expect(proposalVerdicts[0]).toMatchObject({ accepted: false, message: expect.stringMatching(/aberto/i) });
+    expect(store.getSession(SESSION_ID)?.refinement.phase).toBe("refinando");
+  });
+
+  it("should resolve an investigation item as a verified fact before proposing completion", async () => {
+    const { ceremony, store, proposalVerdicts, resolutionVerdicts } = ceremonyWith([
+      [
+        {
+          type: "resolve-item",
+          resolution: {
+            kind: "fact",
+            agendaItemId: "investigacao-1",
+            answer: "A regra já existe no checkout.",
+            citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+          },
+        },
+        { type: "propose-completion" },
+        { type: "complete" },
+      ],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(1));
+    expect(resolutionVerdicts).toEqual([expect.objectContaining({ accepted: true })]);
+    expect(store.listRefinementItems(SESSION_ID)).toEqual([
+      expect.objectContaining({
+        id: "investigacao-1",
+        status: "resolvido",
+        resolution: expect.objectContaining({ kind: "fato", answer: "A regra já existe no checkout." }),
+      }),
+    ]);
+    expect(store.getSession(SESSION_ID)?.refinement.phase).toBe("aguardando-confirmacao");
+  });
+
+  it("should reject a malformed completion proposal without failing the ceremony", async () => {
+    const { ceremony, store, proposalVerdicts } = ceremonyWith([[
+      {
+        type: "resolve-item",
+        resolution: {
+          kind: "fact",
+          agendaItemId: "investigacao-1",
+          answer: "A regra já existe no checkout.",
+          citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+        },
+      },
+      { type: "propose-completion", summary: "   " },
+    ]]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(1));
+    expect({
+      verdict: proposalVerdicts[0],
+      session: store.getSession(SESSION_ID),
+    }).toMatchObject({
+      verdict: { accepted: false, message: expect.stringMatching(/precisa de um resumo/i) },
+      session: { status: "ativa", refinement: { phase: "refinando" } },
+    });
+  });
+
+  it("should resolve an investigation item as justified out of scope", async () => {
+    const { ceremony, store, resolutionVerdicts } = ceremonyWith([
+      [
+        {
+          type: "resolve-item",
+          resolution: {
+            kind: "out-of-scope",
+            agendaItemId: "investigacao-1",
+            justification: "O aplicativo mobile terá uma US própria.",
+          },
+        },
+        { type: "complete" },
+      ],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(resolutionVerdicts).toHaveLength(1));
+    expect(store.listRefinementItems(SESSION_ID)).toEqual([
+      expect.objectContaining({
+        id: "investigacao-1",
+        status: "fora-de-escopo",
+        resolution: expect.objectContaining({
+          kind: "fora-de-escopo",
+          justification: "O aplicativo mobile terá uma US própria.",
+        }),
+      }),
+    ]);
+  });
+
+  it("should reject a factual resolution whose citations do not exist", async () => {
+    const { ceremony, store, resolutionVerdicts } = ceremonyWith([
+      [
+        {
+          type: "resolve-item",
+          resolution: {
+            kind: "fact",
+            agendaItemId: "investigacao-1",
+            answer: "A regra já existe.",
+            citations: [{ repo: "core-api", path: "src/missing.ts" }],
+          },
+        },
+        { type: "complete" },
+      ],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(resolutionVerdicts).toHaveLength(1));
+    expect(resolutionVerdicts[0]).toMatchObject({ accepted: false, message: expect.stringMatching(/não existe/i) });
+    expect(store.listRefinementItems(SESSION_ID)).toEqual([
+      expect.objectContaining({ id: "investigacao-1", status: "aberto" }),
+    ]);
+  });
+
+  it("should stop after two rejected completion proposals make no persisted progress", async () => {
+    const { ceremony, store, prompts, proposalVerdicts } = ceremonyWith([
+      [{ type: "propose-completion" }, { type: "complete" }],
+      [{ type: "propose-completion" }, { type: "complete" }],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(2));
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("retomavel"));
+    expect(prompts).toHaveLength(2);
+    expect(store.listTranscript(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: expect.objectContaining({ kind: "mensagem", text: expect.stringMatching(/duas vezes/i) }),
+        }),
+      ]),
+    );
+  });
+
+  it("should reset the no-progress count when an agenda question reaches the room", async () => {
+    const { ceremony, prompts } = ceremonyWith([
+      [{ type: "complete" }],
+      [{ type: "ask", questions: [agentQuestion()] }, { type: "complete" }],
+      [{ type: "complete" }],
+      [{ type: "complete" }],
+    ]);
+    await start(ceremony);
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+
+    await ceremony.decide({
+      sessionId: SESSION_ID,
+      questionId: "q1",
+      answer: "Regra bancária",
+    });
+
+    await vi.waitFor(() => expect(prompts).toHaveLength(4));
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("retomavel"));
+  });
+
+  it("should persist the confirmation gate after an explicit proposal with a resolved agenda", async () => {
+    const { ceremony, store, proposalVerdicts } = ceremonyWith([
+      [
+        { type: "ask", questions: [agentQuestion()] },
+        { type: "propose-completion" },
+        { type: "complete" },
+      ],
+    ]);
+    await start(ceremony);
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+
+    await ceremony.decide({
+      sessionId: SESSION_ID,
+      questionId: "q1",
+      answer: "Regra bancária",
+    });
+
+    await vi.waitFor(() => expect(proposalVerdicts).toEqual([
+      expect.objectContaining({ accepted: true }),
+    ]));
+    expect(store.getSession(SESSION_ID)?.refinement.phase).toBe("aguardando-confirmacao");
+    expect(store.getSession(SESSION_ID)?.status).toBe("ativa");
+    expect(ceremony.palco(SESSION_ID)?.completionProposal).toMatchObject({
+      summary: "Todos os itens da agenda foram resolvidos.",
+      proposedAt: expect.any(Number),
+    });
   });
 
   it("should surface a broken turn on the stage", async () => {
@@ -250,7 +713,7 @@ describe("start", () => {
 });
 
 describe("decide", () => {
-  it("should record who decided and hand the answer back to the agent", async () => {
+  it("should record the room choice without an author and hand it back to the agent", async () => {
     const { ceremony, store, answered } = ceremonyWith([
       [{ type: "ask", questions: [agentQuestion()] }, { type: "complete" }],
     ]);
@@ -261,15 +724,15 @@ describe("decide", () => {
       sessionId: SESSION_ID,
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO + squad",
     });
 
-    expect(decision).toMatchObject({ answer: "Regra bancária", decidedBy: "PO + squad" });
+    expect(decision).toMatchObject({ answer: "Regra bancária" });
+    expect(decision).not.toHaveProperty("decidedBy");
     expect(store.countDecisions(SESSION_ID)).toBe(1);
     expect(answered).toEqual([{ q1: ["Regra bancária"] }]);
   });
 
-  it("should hold the agent until every question of the round is decided", async () => {
+  it("should reject a batch before any question reaches the room", async () => {
     const { ceremony, answered } = ceremonyWith([
       [
         {
@@ -280,15 +743,13 @@ describe("decide", () => {
       ],
     ]);
     await start(ceremony);
-    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+    await vi.waitFor(() => expect(answered).toHaveLength(1));
 
-    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Sim", decidedBy: "PO" });
-
-    expect(answered).toEqual([]);
-
-    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q2", answer: "Não", decidedBy: "squad" });
-
-    expect(answered).toEqual([{ q1: ["Sim"], q2: ["Não"] }]);
+    expect(answered[0]).toEqual({
+      q1: ["Envie exatamente uma pergunta por vez para a sala."],
+      q2: ["Envie exatamente uma pergunta por vez para a sala."],
+    });
+    expect(ceremony.palco(SESSION_ID)?.pendingQuestions).toEqual([]);
   });
 
   it("should notify the stage on every change", async () => {
@@ -299,7 +760,7 @@ describe("decide", () => {
     await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(SESSION_ID));
 
     onChange.mockClear();
-    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Sim", decidedBy: "PO" });
+    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Sim" });
 
     expect(onChange).toHaveBeenCalledWith(SESSION_ID);
   });
@@ -354,13 +815,144 @@ describe("resume", () => {
     ]);
     await start(ceremony);
     await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
-    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Regra bancária", decidedBy: "PO" });
+    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Regra bancária" });
     store.appendEvent(SESSION_ID, { kind: "mensagem", text: "…" });
 
     await ceremony.resume(SESSION_ID);
 
     expect(resumed).toEqual([SESSION_ID]);
     expect(prompts[1]).toContain("Regra bancária");
+  });
+
+  it("should resume a stopped Spec review at the current artifact gate", async () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: 4242,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    const fake = fakeRuntime([[{ type: "complete" }]]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    await ceremony.resume(SESSION_ID);
+
+    expect(fake.prompts[0]).toContain("Submeta agora a Spec estruturada");
+  });
+
+  it("should report an unexpected Spec persistence failure without leaking it to the agent", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    store.submitSpec = () => {
+      throw new Error("detalhe interno do SQLite");
+    };
+    const fake = fakeRuntime([[{ type: "submit-spec" }]]);
+    const ceremony = createCeremony({
+      runtime: fake.runtime,
+      store,
+      repos,
+      logger: createLogger({ destination, level: "info" }),
+    });
+
+    await ceremony.resume(SESSION_ID);
+
+    await vi.waitFor(() =>
+      expect({
+        verdict: fake.submissionVerdicts[0],
+        log: lines.find((line) => line.msg === "cerimônia morreu fora do fluxo de erro"),
+      }).toEqual({
+        verdict: {
+          accepted: false,
+          message: "Não foi possível salvar a Spec. Tente novamente.",
+        },
+        log: expect.objectContaining({ sessionId: SESSION_ID, err: expect.any(Object) }),
+      }),
+    );
+  });
+
+  it("should report an unexpected Ticket persistence failure without leaking it to the agent", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    store.approveSpec({ sessionId: SESSION_ID, expectedRevision: 2 });
+    store.submitTickets = () => {
+      throw new Error("detalhe interno do SQLite");
+    };
+    const fake = fakeRuntime([[{ type: "submit-tickets" }]]);
+    const ceremony = createCeremony({
+      runtime: fake.runtime,
+      store,
+      repos,
+      logger: createLogger({ destination, level: "info" }),
+    });
+
+    await ceremony.resume(SESSION_ID);
+
+    await vi.waitFor(() =>
+      expect({
+        verdict: fake.submissionVerdicts[0],
+        log: lines.find((line) => line.msg === "cerimônia morreu fora do fluxo de erro"),
+      }).toEqual({
+        verdict: {
+          accepted: false,
+          message: "Não foi possível salvar os Tickets. Tente novamente.",
+        },
+        log: expect.objectContaining({ sessionId: SESSION_ID, err: expect.any(Object) }),
+      }),
+    );
   });
 
   it("should record the decision and resume when the turn died with the process", async () => {
@@ -391,7 +983,6 @@ describe("resume", () => {
       sessionId: SESSION_ID,
       questionId: "q1",
       answer: "Regra bancária",
-      decidedBy: "PO",
     });
 
     expect(store.countDecisions(SESSION_ID)).toBe(1);
@@ -461,7 +1052,6 @@ describe("resume", () => {
       sessionId: SESSION_ID,
       questionId: "q1",
       answer: "Só web",
-      decidedBy: "PO",
     });
 
     expect(decision.answer).toBe("Só web");
@@ -469,12 +1059,116 @@ describe("resume", () => {
     expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "retomavel" });
   });
 
+  it("should preserve and answer a queued room doubt after process recovery", async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "sprint-griller-choice-")), "cerimonias.db");
+    const previousStore = openCeremonyStore(file);
+    const roomChoice: AgentEvent = {
+      type: "message",
+      text: `\`\`\`json\n${JSON.stringify({
+        kind: "room-choice",
+        question: "O rollout inclui o app mobile?",
+        recommendation: "Começar pela web.",
+        evidence: ["core-api · src/order.ts"],
+        options: [{ label: "Só web", description: "Menor risco inicial." }],
+        allowFreeText: true,
+      })}\n\`\`\``,
+    };
+    const firstRuntime = fakeRuntime(
+      [[{ type: "ask", questions: [agentQuestion()] }]],
+      [roomChoice, {
+        type: "turn-completed",
+        turn: { id: "turn-consulta", status: "completed", durationMs: 1 },
+      }],
+    );
+    const firstCeremony = createCeremony({ runtime: firstRuntime.runtime, store: previousStore, repos });
+    await start(firstCeremony);
+    await vi.waitFor(() => expect(firstCeremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+    firstCeremony.consult({ sessionId: SESSION_ID, question: "Isto vale no app também?" });
+    await vi.waitFor(() => expect(previousStore.listOpenQuestions(SESSION_ID)).toHaveLength(2));
+    previousStore.close();
+
+    const recoveredStore = openCeremonyStore(file);
+    stores.push(recoveredStore);
+    const recoveredRuntime = fakeRuntime([[]]);
+    const recovered = createCeremony({ runtime: recoveredRuntime.runtime, store: recoveredStore, repos });
+
+    await recovered.resume(SESSION_ID);
+
+    expect(recoveredStore.currentQuestion(SESSION_ID)).toMatchObject({
+      id: "duvida-1",
+      agendaItemId: "duvida-1",
+      question: "O rollout inclui o app mobile?",
+    });
+    expect(recoveredStore.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "investigacao-1", status: "aberto" }),
+        expect.objectContaining({ id: "duvida-1", status: "aguardando-sala" }),
+      ]),
+    );
+    expect(recoveredRuntime.prompts[0]).toContain("investigacao-1");
+    expect(recoveredRuntime.prompts[0]).toContain("duvida-1");
+    await recovered.decide({
+      sessionId: SESSION_ID,
+      questionId: "duvida-1",
+      answer: "Só web",
+    });
+    expect(recoveredStore.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "duvida-1", status: "resolvido" }),
+      ]),
+    );
+  });
+
   it("should refuse to resume a ceremony that already ended", async () => {
-    const { ceremony } = ceremonyWith([[{ type: "complete" }]]);
+    const { ceremony, store } = ceremonyWith([]);
     await start(ceremony);
-    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("encerrada"));
+    store.finishSession(SESSION_ID, { status: "encerrada" });
 
     await expect(ceremony.resume(SESSION_ID)).rejects.toThrow(/encerrada/i);
+  });
+});
+
+describe("artifact gates", () => {
+  it("should give the agent the operator-approved Spec when generating Tickets", async () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    const submitted = store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    const approvedMarkdown = submitted.markdown.replace(
+      "- O relatório usa a mesma comissão da folha.",
+      "- O relatório também exibe a regra aplicada em cada linha.",
+    );
+    store.saveSpecDraft({
+      sessionId: SESSION_ID,
+      markdown: approvedMarkdown,
+      base: submitted.markdown,
+      expectedSavedAt: null,
+    });
+    const fake = fakeRuntime([[{ type: "complete" }]]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    await ceremony.approveSpec({ sessionId: SESSION_ID, expectedRevision: 2 });
+
+    expect(fake.prompts[0]).toContain(approvedMarkdown);
   });
 });
 
@@ -482,6 +1176,7 @@ describe("consult", () => {
   const factAnswer = (citations: unknown): AgentEvent => ({
     type: "message",
     text: `\`\`\`json\n${JSON.stringify({
+      kind: "fact",
       answer: "O createOrder só é chamado pelo checkout.",
       citations,
     })}\n\`\`\``,
@@ -559,7 +1254,7 @@ describe("consult", () => {
   });
 
   it("should answer live with the citation that sustains it", async () => {
-    const { ceremony } = await grilling([
+    const { ceremony, store } = await grilling([
       factAnswer([{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }]),
       TURN_DONE,
     ]);
@@ -572,6 +1267,15 @@ describe("consult", () => {
         answer: "O createOrder só é chamado pelo checkout.",
         citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
       }),
+    );
+    expect(store.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "duvida-1",
+          status: "resolvido",
+          resolution: expect.objectContaining({ kind: "fato" }),
+        }),
+      ]),
     );
   });
 
@@ -606,8 +1310,84 @@ describe("consult", () => {
     });
   });
 
+  it("should queue a classified room choice behind the active question", async () => {
+    const roomChoice: AgentEvent = {
+      type: "message",
+      text: `\`\`\`json\n${JSON.stringify({
+        kind: "room-choice",
+        question: "O rollout inclui o app mobile?",
+        recommendation: "Começar pela web.",
+        evidence: ["core-api · src/order.ts"],
+        options: [{ label: "Só web", description: "Menor risco inicial." }],
+        allowFreeText: true,
+      })}\n\`\`\``,
+    };
+    const { ceremony, store } = await grilling([roomChoice, TURN_DONE]);
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Isto vale no app também?" });
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.consultation?.status).toBe("precisa-sala"),
+    );
+    expect(ceremony.palco(SESSION_ID)?.current).toMatchObject({
+      phase: "perguntando",
+      question: { id: "q1" },
+    });
+    expect(store.listOpenQuestions(SESSION_ID)).toEqual([
+      expect.objectContaining({ id: "q1" }),
+      expect.objectContaining({ id: "duvida-1", agendaItemId: "duvida-1" }),
+    ]);
+    expect(store.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "duvida-1", status: "aguardando-sala" }),
+      ]),
+    );
+  });
+
+  it("should refuse a queued room choice until the current question is answered", async () => {
+    const roomChoice: AgentEvent = {
+      type: "message",
+      text: `\`\`\`json\n${JSON.stringify({
+        kind: "room-choice",
+        question: "O rollout inclui o app mobile?",
+        recommendation: "Começar pela web.",
+        evidence: ["core-api · src/order.ts"],
+        options: [{ label: "Só web", description: "Menor risco inicial." }],
+        allowFreeText: true,
+      })}\n\`\`\``,
+    };
+    const { ceremony, store } = await grilling([roomChoice, TURN_DONE]);
+    ceremony.consult({ sessionId: SESSION_ID, question: "Isto vale no app também?" });
+    await vi.waitFor(() => expect(store.listOpenQuestions(SESSION_ID)).toHaveLength(2));
+
+    await expect(
+      ceremony.decide({
+        sessionId: SESSION_ID,
+        questionId: "duvida-1",
+        answer: "Só web",
+      }),
+    ).rejects.toThrow(/pergunta atual/i);
+
+    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Regra bancária" });
+    expect(store.currentQuestion(SESSION_ID)?.id).toBe("duvida-1");
+    await ceremony.decide({
+      sessionId: SESSION_ID,
+      questionId: "duvida-1",
+      answer: "Só web",
+    });
+    expect(store.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "duvida-1",
+          status: "resolvido",
+          resolution: expect.objectContaining({ kind: "escolha", answer: "Só web" }),
+        }),
+      ]),
+    );
+  });
+
   it("should mark an answer whose citation does not exist as unsustained", async () => {
-    const { ceremony } = await grilling([
+    const { ceremony, store } = await grilling([
       factAnswer([{ repo: "core-api", path: "src/inventado.ts" }]),
       TURN_DONE,
     ]);
@@ -616,6 +1396,9 @@ describe("consult", () => {
 
     await vi.waitFor(() =>
       expect(ceremony.palco(SESSION_ID)?.consultation).toMatchObject({ status: "sem-lastro" }),
+    );
+    expect(store.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "duvida-1", status: "aberto" })]),
     );
   });
 
@@ -688,6 +1471,9 @@ describe("consult", () => {
         message: /não foi possível gravar/i,
       }),
     );
+    expect(store.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "duvida-1", status: "aberto" })]),
+    );
   });
 
   it("should keep the stage unstuck when even the failure cannot be written", async () => {
@@ -713,6 +1499,51 @@ describe("consult", () => {
     ).not.toThrow();
   });
 
+  it("should catch and log a later agenda transition failure", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    const fake = fakeRuntime(
+      [[{ type: "ask", questions: [agentQuestion()] }]],
+      [factAnswer([{ repo: "core-api", path: "src/order.ts" }]), TURN_DONE],
+    );
+    const ceremony = createCeremony({
+      runtime: fake.runtime,
+      store,
+      repos,
+      logger: createLogger({ destination, level: "info" }),
+    });
+    await start(ceremony);
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+    const transition = store.transitionRefinementItem.bind(store);
+    let doubtTransitions = 0;
+    store.transitionRefinementItem = (input) => {
+      if (input.itemId === "duvida-1" && ++doubtTransitions === 1) {
+        throw new Error("revisão concorrente");
+      }
+      return transition(input);
+    };
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.consultation?.status).toBe("respondida"),
+    );
+    await vi.waitFor(() =>
+      expect(lines).toContainEqual(
+        expect.objectContaining({
+          msg: "não foi possível atualizar a Agenda depois da consulta",
+          sessionId: SESSION_ID,
+        }),
+      ),
+    );
+  });
+
   it("should notify the stage when the consultation opens and when it answers", async () => {
     const { ceremony, onChange } = await grilling([
       factAnswer([{ repo: "core-api", path: "src/order.ts" }]),
@@ -735,9 +1566,9 @@ describe("consult", () => {
   });
 
   it("should refuse a consultation on a ceremony that already ended", async () => {
-    const { ceremony } = ceremonyWith([[{ type: "complete" }]]);
+    const { ceremony, store } = ceremonyWith([]);
     await start(ceremony);
-    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("encerrada"));
+    store.finishSession(SESSION_ID, { status: "encerrada" });
 
     expect(() => ceremony.consult({ sessionId: SESSION_ID, question: "e aí?" })).toThrow(
       /encerrada/i,
@@ -746,15 +1577,178 @@ describe("consult", () => {
 });
 
 describe("palco", () => {
+  it("should expose recovery when a Spec review ends without a submission", () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 0,
+      summary: "Agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 1,
+    });
+    const fake = fakeRuntime([]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "retomavel" });
+  });
+
+  it("should keep a submitted Spec in human review after its agent turn ends", () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 0,
+      summary: "Agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 1,
+    });
+    store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    const fake = fakeRuntime([]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "revisao-humana" });
+  });
+
+  it("should expose recovery when the only Spec predates the current review cycle", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(100);
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 0,
+      summary: "Agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 1,
+    });
+    now.mockReturnValue(200);
+    store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    store.reopenRefinement({ sessionId: SESSION_ID, expectedRevision: 3 });
+    now.mockReturnValue(300);
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 4,
+      summary: "Nova agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 5,
+    });
+    const fake = fakeRuntime([]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "retomavel" });
+  });
+
+  it("should keep submitted Tickets in human review after their agent turn ends", () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 0,
+      summary: "Agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 1,
+    });
+    store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    store.approveSpec({ sessionId: SESSION_ID, expectedRevision: 3 });
+    store.submitTickets(SESSION_ID, {
+      tickets: [{
+        id: "rounding",
+        title: "Unificar arredondamento",
+        description: "Entrega o cálculo compartilhado do relatório até a folha.",
+        acceptanceCriteria: ["Relatório e folha exibem o mesmo valor."],
+        specUrl: story.url,
+        blockedBy: [],
+      }],
+    });
+    const fake = fakeRuntime([]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "revisao-humana" });
+  });
+
   it("should keep repeated agent ids distinct with the persisted question sequence", async () => {
-    const { ceremony } = ceremonyWith([
+    const { ceremony, store } = ceremonyWith([
       [{ type: "ask", questions: [agentQuestion({ id: "q1" })] }],
-      [{ type: "ask", questions: [agentQuestion({ id: "q1" })] }],
+      [
+        {
+          type: "ask",
+          questions: [agentQuestion({ id: "q1", agendaItemId: "sala-2" })],
+        },
+      ],
     ]);
     await start(ceremony);
     await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
 
-    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Sim", decidedBy: "PO" });
+    store.seedRefinementItems(SESSION_ID, [{ id: "sala-2", question: "E o segundo contexto?" }]);
+    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Sim" });
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.live).toBe(false));
     await ceremony.resume(SESSION_ID);
 
     await vi.waitFor(() =>
@@ -777,21 +1771,25 @@ describe("palco", () => {
   });
 
   it("should count the decisions and keep the last one for the stage", async () => {
-    const { ceremony } = ceremonyWith([
+    const { ceremony, store } = ceremonyWith([
       [
         { type: "ask", questions: [agentQuestion({ id: "q1" })] },
-        { type: "ask", questions: [agentQuestion({ id: "q2" })] },
+        {
+          type: "ask",
+          questions: [agentQuestion({ id: "q2", agendaItemId: "sala-2" })],
+        },
       ],
     ]);
     await start(ceremony);
     await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
-    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Sim", decidedBy: "PO" });
+    store.seedRefinementItems(SESSION_ID, [{ id: "sala-2", question: "E o segundo contexto?" }]);
+    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Sim" });
 
     await vi.waitFor(() =>
       expect(ceremony.palco(SESSION_ID)).toMatchObject({
         decisionCount: 1,
-        lastDecision: { answer: "Sim", decidedBy: "PO" },
-        decisions: [{ questionId: "q1", answer: "Sim", decidedBy: "PO" }],
+        lastDecision: { answer: "Sim" },
+        decisions: [{ questionId: "q1", answer: "Sim" }],
         pendingQuestions: [{ id: "q2" }],
         live: true,
       }),

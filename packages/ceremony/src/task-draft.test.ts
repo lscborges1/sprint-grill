@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseTaskDraft,
+  renderStructuredTicketsMarkdown,
   taskDraftTemplate,
   taskPreviewFromTranscript,
   validateTaskDraft,
@@ -33,6 +34,20 @@ Mostra o resultado da exportação no fluxo existente do portal.
 - Criar endpoint de exportação`;
 
 describe("parseTaskDraft", () => {
+  it("should insert the exact current Spec link into every structured Ticket", () => {
+    const markdown = renderStructuredTicketsMarkdown(
+      [{
+        title: "Persistir idempotência",
+        description: "Entregar o slice da API até o banco.",
+        acceptanceCriteria: ["Dois reenvios criam um pedido."],
+        blockedBy: [],
+      }],
+      SPEC_URL,
+    );
+
+    expect(markdown).toContain(`[Spec da US](${SPEC_URL})`);
+    expect(validateTaskDraft(markdown, SPEC_URL)).toMatchObject({ valid: true });
+  });
   it("should preserve every signed Task section while extracting publication metadata", () => {
     const markdown = `## Criar endpoint
 

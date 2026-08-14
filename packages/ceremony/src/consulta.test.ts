@@ -62,6 +62,7 @@ function answerMessage(citations: unknown): AgentEvent {
   return {
     type: "message",
     text: `\`\`\`json\n${JSON.stringify({
+      kind: "fact",
       answer: "O createOrder só é chamado pelo checkout.",
       citations,
     })}\n\`\`\``,
@@ -72,12 +73,14 @@ interface FakeRuntime {
   readonly runtime: AgentRuntime;
   readonly prompts: string[];
   readonly instructions: (string | undefined)[];
+  readonly options: StartSessionOptions[];
 }
 
 /** Runtime de mentira: entrega um roteiro de eventos e anota o que recebeu. */
 function fakeRuntime(script: readonly AgentEvent[]): FakeRuntime {
   const prompts: string[] = [];
   const instructions: (string | undefined)[] = [];
+  const optionsSeen: StartSessionOptions[] = [];
 
   const session: AgentSession = {
     id: "consulta-1",
@@ -93,8 +96,10 @@ function fakeRuntime(script: readonly AgentEvent[]): FakeRuntime {
   return {
     prompts,
     instructions,
+    options: optionsSeen,
     runtime: {
       startSession: async (options: StartSessionOptions = {}) => {
+        optionsSeen.push(options);
         instructions.push(options.instructions);
         return session;
       },
@@ -130,6 +135,34 @@ describe("runConsultation", () => {
     });
   });
 
+  it("should classify a product choice for the room instead of inventing a fact", async () => {
+    const fake = fakeRuntime([
+      {
+        type: "message",
+        text: `\`\`\`json\n${JSON.stringify({
+          kind: "room-choice",
+          question: "O parcelamento também vale no app?",
+          recommendation: "Começar pela web para reduzir o risco do rollout.",
+          evidence: ["core-api · src/order.ts"],
+          options: [{ label: "Só web", description: "Entrega inicial menor." }],
+          allowFreeText: true,
+        })}\n\`\`\``,
+      },
+      TURN_COMPLETED,
+    ]);
+
+    const outcome = await consult(fake.runtime, "Isto vale no app também?");
+
+    expect(outcome).toEqual({
+      status: "precisa-sala",
+      question: "O parcelamento também vale no app?",
+      recommendation: "Começar pela web para reduzir o risco do rollout.",
+      evidence: ["core-api · src/order.ts"],
+      options: [{ label: "Só web", description: "Entrega inicial menor." }],
+      allowFreeText: true,
+    });
+  });
+
   it("should send the repo instructions and the room question to the agent", async () => {
     const fake = fakeRuntime([
       answerMessage([{ repo: "core-api", path: "src/order.ts" }]),
@@ -140,6 +173,7 @@ describe("runConsultation", () => {
 
     expect(fake.instructions[0]).toContain(REPOS.primary.path);
     expect(fake.prompts[0]).toContain("O contrato já tem campo de parcelas?");
+    expect(fake.options[0]?.tools).toBeUndefined();
   });
 
   it("should refuse to call an answer a fact when the cited file does not exist", async () => {
@@ -220,6 +254,7 @@ describe("runConsultation", () => {
           questions: [
             {
               id: "q1",
+              agendaItemId: null,
               header: "Escopo",
               question: "Que repo?",
               recommendation: null,

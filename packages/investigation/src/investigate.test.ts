@@ -114,6 +114,7 @@ function question(id: string, answers: Record<string, readonly string[]>[]): Age
       questions: [
         {
           id,
+          agendaItemId: null,
           header: "Escopo",
           question: "Vale para o mobile?",
           recommendation: null,

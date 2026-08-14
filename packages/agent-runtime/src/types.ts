@@ -1,3 +1,14 @@
+import type { z } from "zod";
+import type {
+  AgentToolName,
+  addRefinementItemArgumentsSchema,
+  agendaResolutionArgumentsSchema,
+  completionProposalArgumentsSchema,
+  refinementSpecSubmissionSchema,
+  refinementTicketSubmissionSchema,
+  refinementTicketsSubmissionSchema,
+} from "./codex/protocol";
+
 /**
  * Falha na fronteira do runtime de agente: o processo do agente morreu, o
  * protocolo devolveu erro, ou o turno falhou. Distinta de `ConfigError` — esta
@@ -10,6 +21,8 @@ export class AgentRuntimeError extends Error {
 /** Uma pergunta do agente para a sala. O `id` é a chave da resposta. */
 export interface AgentQuestion {
   readonly id: string;
+  /** Item persistido da Agenda do refinamento que esta pergunta destrava. */
+  readonly agendaItemId: string | null;
   /** Rótulo curto do assunto (ex.: "Escopo do cache"). */
   readonly header: string;
   readonly question: string;
@@ -36,7 +49,7 @@ export interface AgentQuestionOption {
  * chamado, o turno não anda.
  */
 export interface PendingQuestion {
-  /** De 1 a 3 perguntas, respondidas juntas. */
+  /** Uma única pergunta: a sala nunca divide atenção entre decisões concorrentes. */
   readonly questions: readonly AgentQuestion[];
   /** Respostas por `AgentQuestion.id`. Chamar duas vezes é erro. */
   answer(answers: Readonly<Record<string, readonly string[]>>): Promise<void>;
@@ -66,6 +79,23 @@ export interface TurnSummary {
   readonly durationMs: number | null;
 }
 
+export type AgentSubmissionVerdict =
+  | { readonly accepted: true; readonly message: string }
+  | { readonly accepted: false; readonly message: string };
+
+export interface PendingAgentSubmission<TSubmission> {
+  readonly submission: TSubmission;
+  /** Devolve ao agente o gate aplicado pela cerimônia. Chamar duas vezes é erro. */
+  respond(verdict: AgentSubmissionVerdict): Promise<void>;
+}
+
+export type CompletionProposal = z.infer<typeof completionProposalArgumentsSchema>;
+export type AddRefinementItemSubmission = z.infer<typeof addRefinementItemArgumentsSchema>;
+export type AgendaResolution = z.infer<typeof agendaResolutionArgumentsSchema>;
+export type RefinementSpecSubmission = z.infer<typeof refinementSpecSubmissionSchema>;
+export type RefinementTicketSubmission = z.infer<typeof refinementTicketSubmissionSchema>;
+export type RefinementTicketsSubmission = z.infer<typeof refinementTicketsSubmissionSchema>;
+
 /**
  * O que a sessão emite enquanto o agente trabalha. Vocabulário do domínio, não
  * do codex — a costura para outro runtime cabe atrás disto (ver ADR 0001).
@@ -75,6 +105,26 @@ export type AgentEvent =
   | { readonly type: "message"; readonly text: string }
   | { readonly type: "question"; readonly question: PendingQuestion }
   | { readonly type: "approval"; readonly approval: PendingApproval }
+  | {
+      readonly type: "completion-proposal";
+      readonly proposal: PendingAgentSubmission<CompletionProposal>;
+    }
+  | {
+      readonly type: "agenda-item-submission";
+      readonly item: PendingAgentSubmission<AddRefinementItemSubmission>;
+    }
+  | {
+      readonly type: "agenda-resolution";
+      readonly resolution: PendingAgentSubmission<AgendaResolution>;
+    }
+  | {
+      readonly type: "spec-submission";
+      readonly submission: PendingAgentSubmission<RefinementSpecSubmission>;
+    }
+  | {
+      readonly type: "tickets-submission";
+      readonly submission: PendingAgentSubmission<RefinementTicketsSubmission>;
+    }
   | { readonly type: "turn-completed"; readonly turn: TurnSummary }
   | { readonly type: "turn-failed"; readonly error: AgentRuntimeError };
 
@@ -95,7 +145,7 @@ export interface AgentSession {
 
 export interface AgentRuntime {
   startSession(options?: StartSessionOptions): Promise<AgentSession>;
-  resumeSession(sessionId: string): Promise<AgentSession>;
+  resumeSession(sessionId: string, options?: ResumeSessionOptions): Promise<AgentSession>;
   /** Encerra o processo do agente. Sessões abertas param de funcionar. */
   close(): Promise<void>;
 }
@@ -103,4 +153,8 @@ export interface AgentRuntime {
 export interface StartSessionOptions {
   /** Instruções de sistema para a sessão (ex.: o papel do agente na Investigação). */
   readonly instructions?: string;
+  /** Ferramentas dinâmicas disponíveis nesta sessão; vazio por padrão. */
+  readonly tools?: readonly AgentToolName[];
 }
+
+export type ResumeSessionOptions = Pick<StartSessionOptions, "tools">;

@@ -143,7 +143,7 @@ const answer = 42;
 });
 
 describe("publishDecisionRecord", () => {
-  it("should publish the deterministic human decision as a Markdown comment", async () => {
+  it("should publish the deterministic collective decision without individual attribution", async () => {
     const ado = fakeAdo((call) => call.init?.method === "GET" ? json({ comments: [] }) : json({ commentId: 91 }));
 
     await expect(
@@ -154,7 +154,6 @@ describe("publishDecisionRecord", () => {
         question: "O TTL é global?",
         answer: "Sim",
         recommendation: "Global",
-        decidedBy: "PO + squad",
         decidedAt: Date.UTC(2026, 7, 6, 14, 30),
       }),
     ).resolves.toEqual({
@@ -165,7 +164,7 @@ describe("publishDecisionRecord", () => {
     const call = ado.calls.at(-1);
     expect(call?.init?.method).toBe("POST");
     expect(call?.url).toContain("format=markdown");
-    expect(String(call?.init?.body)).toContain("**Decidido por:** PO + squad");
+    expect(String(call?.init?.body)).not.toContain("Decidido por");
     expect(String(call?.init?.body)).toContain("2026-08-06T14:30:00.000Z");
     expect(String(call?.init?.body)).toContain("sprint-griller:dump:dump-4211:decision:1");
   });
@@ -180,7 +179,6 @@ describe("publishDecisionRecord", () => {
       question: "O TTL é global?",
       answer: "Sim",
       recommendation: "Global",
-      decidedBy: "PO + squad",
       decidedAt: Date.UTC(2026, 7, 6, 14, 30),
     })).resolves.toEqual({
       commentId: 91,
@@ -216,7 +214,6 @@ describe("publishDecisionRecord", () => {
       question: "O TTL é global?",
       answer: "Sim",
       recommendation: "Global",
-      decidedBy: "PO + squad",
       decidedAt: Date.UTC(2026, 7, 6, 14, 30),
     })).resolves.toMatchObject({ commentId: 91 });
   });

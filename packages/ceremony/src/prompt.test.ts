@@ -6,6 +6,7 @@ import {
   ceremonyResumePrompt,
   consultationInstructions,
   consultationPrompt,
+  investigationAgenda,
 } from "./prompt";
 import { TASK_DRAFT_START } from "./task-draft";
 import type { CeremonyDecision } from "./types";
@@ -28,7 +29,6 @@ const decision = (overrides: Partial<CeremonyDecision> = {}): CeremonyDecision =
   question: "A comissão arredonda para cima?",
   recommendation: "Seguir a regra bancária.",
   answer: "Regra bancária",
-  decidedBy: "PO",
   decidedAt: 1_700_000_000_000,
   ...overrides,
 });
@@ -45,11 +45,19 @@ describe("ceremonyInstructions", () => {
     const instructions = ceremonyInstructions(repos);
 
     expect(instructions).toMatch(/fato.*(busque|você busca)/i);
+    expect(instructions).toContain("resolve_refinement_item");
     expect(instructions).toContain("ask_operator");
   });
 
   it("should require a recommendation on every question", () => {
     expect(ceremonyInstructions(repos)).toMatch(/recommendation/);
+  });
+
+  it("should tell the main agent to persist newly discovered gaps before progressing them", () => {
+    const instructions = ceremonyInstructions(repos);
+
+    expect(instructions).toContain("add_refinement_item");
+    expect(instructions).toMatch(/ID devolvido para perguntar[\s\S]*resolver/i);
   });
 
   it("should require a task preview when the agent closes the ceremony", () => {
@@ -62,7 +70,7 @@ describe("ceremonyInstructions", () => {
 });
 
 describe("ceremonyOpeningPrompt", () => {
-  it("should hand the investigation to the agent as the input of the grilling", () => {
+  it("should hand the investigation to the agent as the input of the refinement", () => {
     const prompt = ceremonyOpeningPrompt(story, "## Furos da US\n\n- Sem regra de arredondamento.");
 
     expect(prompt).toContain("#4242");
@@ -80,6 +88,18 @@ describe("ceremonyOpeningPrompt", () => {
   });
 });
 
+describe("investigationAgenda", () => {
+  it("should preserve only the gap question from rendered Investigation markdown", () => {
+    expect(
+      investigationAgenda(
+        "## Furos da US\n\n- **Qual regra de arredondamento?** — muda a estimativa\n\n## Impacto mapeado\n\n- outro texto",
+      ),
+    ).toEqual([
+      { id: "investigacao-1", question: "Qual regra de arredondamento?" },
+    ]);
+  });
+});
+
 describe("consultationInstructions", () => {
   it("should list every repo the agent may read with its absolute path", () => {
     const instructions = consultationInstructions(repos);
@@ -88,12 +108,15 @@ describe("consultationInstructions", () => {
     expect(instructions).toContain("`web-app` — /dev/web-app");
   });
 
-  it("should forbid asking anything, because nobody is there to answer", () => {
-    expect(consultationInstructions(repos)).toMatch(/não pergunte/i);
+  it("should classify a doubt that needs a room choice instead of guessing", () => {
+    const instructions = consultationInstructions(repos);
+
+    expect(instructions).toContain('"kind": "room-choice"');
+    expect(instructions).toMatch(/escolha.*sala/i);
   });
 
-  it("should forbid recommending, so a fact never comes back dressed as a decision", () => {
-    expect(consultationInstructions(repos)).toMatch(/não recomende/i);
+  it("should forbid recommending when the classified answer is a fact", () => {
+    expect(consultationInstructions(repos)).toMatch(/fato.*não recomende/i);
   });
 
   it("should ask for the answer with citations in the structured contract", () => {
@@ -118,14 +141,13 @@ describe("ceremonyResumePrompt", () => {
   it("should replay the decisions already taken so the agent does not ask them again", () => {
     const prompt = ceremonyResumePrompt([
       decision(),
-      decision({ questionId: "q2", question: "Entra nesta sprint?", answer: "Sim", decidedBy: "squad" }),
+      decision({ questionId: "q2", question: "Entra nesta sprint?", answer: "Sim" }),
     ]);
 
     expect(prompt).toContain("A comissão arredonda para cima?");
     expect(prompt).toContain("Regra bancária");
-    expect(prompt).toContain("PO");
     expect(prompt).toContain("Entra nesta sprint?");
-    expect(prompt).toContain("squad");
+    expect(prompt).not.toContain("decidido por");
   });
 
   it("should tell the agent the ceremony is starting over with nothing decided", () => {

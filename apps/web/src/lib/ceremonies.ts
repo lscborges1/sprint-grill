@@ -1,6 +1,8 @@
 import { createAgentRuntime } from "@sprint-griller/agent-runtime";
 import {
   createCeremonyLifecycle,
+  type ArtifactApproval,
+  type ArtifactGateInput,
   type CeremonyLifecycle,
   type CeremonyDumpInput,
   type CeremonySession,
@@ -9,6 +11,7 @@ import {
   type PalcoState,
   type SaveSpecDraftInput,
   type SpecDraft,
+  type TicketArtifact,
 } from "@sprint-griller/ceremony";
 import { defaultCeremonyDbPath, loadAdoCredentials } from "@sprint-griller/core";
 import { z } from "zod";
@@ -21,15 +24,19 @@ export const sessionIdSchema = z.string().min(1);
 
 export const consultationSchema = z.object({
   sessionId: sessionIdSchema,
-  question: z.string().trim().min(1, "escreva a dúvida de fato"),
+  question: z.string().trim().min(1, "escreva a dúvida"),
 });
 
 export const decisionSchema = z.object({
   sessionId: sessionIdSchema,
   questionId: z.string().min(1),
   answer: z.string().trim().min(1, "escolha ou escreva a resposta da sala"),
-  decidedBy: z.string().trim().min(1, "registre quem decidiu"),
 });
+
+export const artifactGateSchema = z.object({
+  sessionId: sessionIdSchema,
+  expectedRevision: z.coerce.number().int().nonnegative(),
+}) satisfies z.ZodType<ArtifactGateInput>;
 
 const expectedSavedAtSchema = z.preprocess(
   (value) => (value === "" || value === null ? null : value),
@@ -59,11 +66,7 @@ export const discardSpecDraftSchema = z.object({
 
 export const dumpCeremonySchema = z.object({
   sessionId: sessionIdSchema,
-  markdown: z.string().min(1),
-  base: z.string(),
-  tasksMarkdown: z.string().min(1, "escreva as Tasks agent-ready antes de despejar"),
   estimate: z.coerce.number().finite().positive("registre a estimativa da squad"),
-  confirmPending: z.boolean(),
 }) satisfies z.ZodType<CeremonyDumpInput>;
 
 type CeremonyGlobal = typeof globalThis & {
@@ -92,7 +95,7 @@ const lifecycle = ((globalThis as CeremonyGlobal).__sprintGrillerCeremonyLifecyc
 
 /**
  * Abre a cerimônia de uma US **investigada**: a Investigação aprovada é o insumo
- * do grilling, e sem ela não há o que grelhar.
+ * do Refinamento coletivo.
  */
 export function startCeremony(storyId: number): Promise<CeremonySession> {
   return lifecycle.start(storyId);
@@ -146,12 +149,34 @@ export async function submitDecision(input: z.infer<typeof decisionSchema>): Pro
 }
 
 /** Dispara a Consulta factual; a resposta chega ao Palco pelo SSE. */
-export async function askFact(input: z.infer<typeof consultationSchema>): Promise<void> {
+export async function addDoubt(input: z.infer<typeof consultationSchema>): Promise<void> {
   await lifecycle.consult(input);
 }
 
 export function resumeCeremony(sessionId: string): Promise<void> {
   return lifecycle.resume(sessionId);
+}
+
+export function confirmRefinement(input: ArtifactGateInput): Promise<void> {
+  return lifecycle.confirmRefinement(input);
+}
+
+export function continueRefining(input: ArtifactGateInput): Promise<void> {
+  return lifecycle.continueRefining(input);
+}
+
+export function approveSpec(input: ArtifactGateInput): Promise<ArtifactApproval> {
+  return lifecycle.approveSpec(input);
+}
+
+export function approveTickets(
+  input: ArtifactGateInput,
+): Promise<NonNullable<TicketArtifact["approval"]>> {
+  return lifecycle.approveTickets(input);
+}
+
+export function reopenRefinement(input: ArtifactGateInput): Promise<void> {
+  return lifecycle.reopenRefinement(input);
 }
 
 /** Assina o Palco de uma sessão. Devolve o cancelamento — o SSE chama no `cancel`. */

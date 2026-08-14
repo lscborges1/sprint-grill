@@ -4,10 +4,30 @@
  */
 
 import type { CeremonyDumpState } from "./dump-state";
+import type { RefinementArtifactState } from "./artifact-workflow";
 
 export type { CeremonyDumpState, SignedDumpInputs } from "./dump-state";
 
 export type SessionStatus = "ativa" | "encerrada" | "falhou";
+
+export type RefinementPhase =
+  | "refinando"
+  | "aguardando-confirmacao"
+  | "revisando-spec"
+  | "revisando-tickets"
+  | "pronto-para-publicar"
+  | "publicado";
+
+export interface RefinementState {
+  readonly phase: RefinementPhase;
+  /** Revisão monotônica de qualquer mudança no refinamento persistido. */
+  readonly revision: number;
+}
+
+export interface RefinementCompletionProposal {
+  readonly summary: string;
+  readonly proposedAt: number;
+}
 
 export interface CeremonySession {
   readonly id: string;
@@ -19,6 +39,7 @@ export interface CeremonySession {
   readonly createdAt: number;
   readonly status: SessionStatus;
   readonly failureMessage: string | null;
+  readonly refinement: RefinementState;
   readonly dump: CeremonyDumpState;
 }
 
@@ -34,6 +55,10 @@ export interface CeremonyQuestionOption {
  */
 export interface CeremonyQuestion {
   readonly id: string;
+  /** Item da Agenda que receberá a Resolução desta escolha. */
+  readonly agendaItemId?: string;
+  /** Perguntas da sala sobrevivem ao turno; perguntas do agente não. */
+  readonly source?: "agent" | "room-doubt";
   readonly header: string;
   readonly question: string;
   readonly recommendation: string;
@@ -45,6 +70,8 @@ export interface CeremonyQuestion {
 /** A pergunta como ela volta do store, com a identidade persistida da linha. */
 export interface PersistedCeremonyQuestion extends CeremonyQuestion {
   readonly questionSeq: number;
+  readonly agendaItemId: string;
+  readonly source: "agent" | "room-doubt";
 }
 
 /** Registro de decisão: o artefato que a cerimônia existe para produzir. */
@@ -55,7 +82,6 @@ export interface CeremonyDecision {
   readonly question: string;
   readonly recommendation: string;
   readonly answer: string;
-  readonly decidedBy: string;
   readonly decidedAt: number;
   /** Referência opcional ao Registro de decisão que o despejo gravou no ADO. */
   readonly recordId?: number | undefined;
@@ -80,6 +106,72 @@ export interface CeremonyCitation {
   readonly symbol?: string | undefined;
 }
 
+interface RefinementItemBase {
+  /** Identidade estável do furo dentro da sessão. */
+  readonly id: string;
+  readonly question: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export type RefinementResolution =
+  | {
+      readonly kind: "fato";
+      readonly answer: string;
+      readonly citations: readonly CeremonyCitation[];
+      readonly resolvedAt: number;
+    }
+  | {
+      readonly kind: "escolha";
+      readonly answer: string;
+      readonly recommendation: string;
+      readonly resolvedAt: number;
+    }
+  | {
+      readonly kind: "fora-de-escopo";
+      readonly justification: string;
+      readonly resolvedAt: number;
+    };
+
+export type RefinementItem = RefinementItemBase &
+  (
+    | { readonly status: "aberto" | "pesquisando" | "aguardando-sala" }
+    | {
+        readonly status: "resolvido";
+        readonly resolution: Extract<RefinementResolution, { readonly kind: "fato" | "escolha" }>;
+      }
+    | {
+        readonly status: "fora-de-escopo";
+        readonly resolution: Extract<RefinementResolution, { readonly kind: "fora-de-escopo" }>;
+      }
+  );
+
+export interface SeedRefinementItemInput {
+  readonly id: string;
+  readonly question: string;
+}
+
+export type RefinementItemTransition =
+  | {
+      readonly itemId: string;
+      readonly status: "aberto" | "pesquisando" | "aguardando-sala";
+    }
+  | {
+      readonly itemId: string;
+      readonly status: "resolvido";
+      readonly resolution:
+        | Omit<Extract<RefinementResolution, { readonly kind: "fato" }>, "resolvedAt">
+        | Omit<Extract<RefinementResolution, { readonly kind: "escolha" }>, "resolvedAt">;
+    }
+  | {
+      readonly itemId: string;
+      readonly status: "fora-de-escopo";
+      readonly resolution: Omit<
+        Extract<RefinementResolution, { readonly kind: "fora-de-escopo" }>,
+        "resolvedAt"
+      >;
+    };
+
 /** Como uma Consulta termina. `buscando` é o único estado que não está aqui. */
 export type ConsultationOutcome =
   | {
@@ -94,6 +186,14 @@ export type ConsultationOutcome =
       readonly citations: readonly CeremonyCitation[];
       readonly motivo: string;
     }
+  | {
+      readonly status: "precisa-sala";
+      readonly question: string;
+      readonly recommendation: string;
+      readonly evidence: readonly string[];
+      readonly options: readonly CeremonyQuestionOption[];
+      readonly allowFreeText: boolean;
+    }
   | { readonly status: "falhou"; readonly message: string };
 
 interface ConsultationAsked {
@@ -106,8 +206,8 @@ interface ConsultationAsked {
  * Consulta: dúvida **factual** que surge na sala e o agente resolve ao vivo,
  * lendo o código. É o mecanismo que mata o "alguém verifica depois".
  *
- * Nada disto é Registro de decisão: consulta não tem `decidedBy` porque não há
- * o que decidir — quem responde é o repositório, não a sala.
+ * Nada disto é Registro de decisão: não há o que decidir — quem responde é o
+ * repositório, não a sala.
  */
 export type CeremonyConsultation =
   | (ConsultationAsked & { readonly status: "buscando" })
@@ -131,6 +231,11 @@ export type VerifiedConsultation = Extract<
   { readonly status: "respondida" }
 >;
 
+export type RoomChoiceConsultation = Extract<
+  CeremonyConsultation,
+  { readonly status: "precisa-sala" }
+>;
+
 /** O transcript. Deltas de mensagem não entram: ruído não é registro. */
 export type TranscriptEvent =
   | { readonly kind: "mensagem"; readonly text: string }
@@ -144,7 +249,6 @@ export type TranscriptEvent =
       readonly kind: "decisao";
       readonly questionId: string;
       readonly answer: string;
-      readonly decidedBy: string;
     }
   | { readonly kind: "pergunta-recusada"; readonly question: string; readonly motivo: string }
   | { readonly kind: "consulta"; readonly consultationId: string; readonly question: string }
@@ -184,6 +288,7 @@ export interface TranscriptEntry {
 export type PalcoPhase =
   | { readonly phase: "perguntando"; readonly question: PersistedCeremonyQuestion }
   | { readonly phase: "pensando" }
+  | { readonly phase: "revisao-humana" }
   | { readonly phase: "retomavel" }
   | { readonly phase: "encerrada" }
   | { readonly phase: "falhou"; readonly message: string };
@@ -198,6 +303,9 @@ export interface StoryRef {
 export interface PalcoState {
   readonly sessionId: string;
   readonly story: StoryRef;
+  readonly refinement: RefinementState;
+  readonly completionProposal: RefinementCompletionProposal | null;
+  readonly agenda: readonly RefinementItem[];
   readonly decisionCount: number;
   /** Histórico completo para a árvore de decisões do Palco. */
   readonly decisions: readonly CeremonyDecision[];
@@ -251,6 +359,10 @@ export interface DossieState extends DossieDocument {
   readonly status: SessionStatus;
   /** Fuso capturado na abertura da cerimônia, usado para exibir decisões. */
   readonly timeZone: string;
+  readonly refinement: RefinementState;
+  readonly completionProposal: RefinementCompletionProposal | null;
+  readonly agenda: readonly RefinementItem[];
+  readonly artifacts: RefinementArtifactState;
   /** Rascunho de Tasks que o agente redigiu no encerramento da cerimônia. */
   readonly taskPreview: string;
   readonly dump: CeremonyDumpState;

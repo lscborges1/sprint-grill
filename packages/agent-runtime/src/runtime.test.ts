@@ -179,6 +179,7 @@ describe("createAgentRuntime", () => {
             questions: [
               {
                 id: "q1",
+                agendaItemId: "gap-1",
                 header: "Escopo",
                 question: "Vale para o app mobile?",
                 recommendation: "Só web: o mobile não consome esse endpoint.",
@@ -191,7 +192,7 @@ describe("createAgentRuntime", () => {
       ]),
       transcript,
     );
-    const session = await runtime.startSession();
+    const session = await runtime.startSession({ tools: ["ask_operator"] });
 
     const events = await drain(session.send("investigue"), { q1: ["Não, só web"] });
 
@@ -201,6 +202,7 @@ describe("createAgentRuntime", () => {
         questions: [
           {
             id: "q1",
+            agendaItemId: "gap-1",
             header: "Escopo",
             allowFreeText: true,
             recommendation: "Só web: o mobile não consome esse endpoint.",
@@ -218,6 +220,327 @@ describe("createAgentRuntime", () => {
     await runtime.close();
   });
 
+  it("should expose an agent-originated Agenda item submission", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "add_refinement_item",
+          arguments: { question: "A política de expiração cobre o cache distribuído?" },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["add_refinement_item"] });
+
+    let item: Extract<AgentEvent, { readonly type: "agenda-item-submission" }> | undefined;
+    for await (const event of session.send("registre o novo furo")) {
+      if (event.type !== "agenda-item-submission") continue;
+      item = event;
+      await event.item.respond({
+        accepted: true,
+        message: "Item agente-1 criado na Agenda. Use esse ID para perguntar ou resolver o furo.",
+      });
+    }
+    if (!item) throw new Error("expected Agenda item");
+
+    expect(item.item.submission).toEqual({
+      question: "A política de expiração cobre o cache distribuído?",
+    });
+    expect(responsesIn(transcript)).toContainEqual({
+      success: true,
+      contentItems: [
+        {
+          type: "inputText",
+          text: "Item agente-1 criado na Agenda. Use esse ID para perguntar ou resolver o furo.",
+        },
+      ],
+    });
+    await runtime.close();
+  });
+
+  it("should reject a blank agent-originated Agenda item", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "add_refinement_item",
+          arguments: { question: "   " },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["add_refinement_item"] });
+
+    const events: AgentEvent[] = [];
+    for await (const event of session.send("registre o novo furo")) {
+      events.push(event);
+      if (event.type === "agenda-item-submission") {
+        await event.item.respond({ accepted: false, message: "Item inválido." });
+      }
+    }
+
+    expect(events.some((event) => event.type === "agenda-item-submission")).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{ type: "inputText", text: "argumentos inválidos para add_refinement_item." }],
+    });
+    await runtime.close();
+  });
+
+  it("should surface an explicit completion proposal and return the ceremony verdict", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "propose_refinement_completion",
+          arguments: { summary: "Todos os itens da agenda foram resolvidos." },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["propose_refinement_completion"] });
+    const events: AgentEvent[] = [];
+
+    for await (const event of session.send("grelhe")) {
+      events.push(event);
+      if (event.type === "completion-proposal") {
+        await event.proposal.respond({ accepted: false, message: "Ainda há itens abertos." });
+      }
+    }
+
+    expect(events[0]).toMatchObject({
+      type: "completion-proposal",
+      proposal: { submission: { summary: "Todos os itens da agenda foram resolvidos." } },
+    });
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{ type: "inputText", text: "Ainda há itens abertos." }],
+    });
+    await runtime.close();
+  });
+
+  it("should reject a whitespace-only completion proposal at the runtime boundary", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "propose_refinement_completion",
+          arguments: { summary: "   " },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["propose_refinement_completion"] });
+    let emitted = false;
+
+    for await (const event of session.send("conclua")) {
+      if (event.type !== "completion-proposal") continue;
+      emitted = true;
+      await event.proposal.respond({ accepted: false, message: "Proposta inválida." });
+    }
+
+    expect(emitted).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{
+        type: "inputText",
+        text: "argumentos inválidos para propose_refinement_completion.",
+      }],
+    });
+    await runtime.close();
+  });
+
+  it("should transport a structured agenda resolution and return the ceremony verdict", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "resolve_refinement_item",
+          arguments: {
+            kind: "fact",
+            agendaItemId: "gap-1",
+            answer: "O checkout já aplica a regra bancária.",
+            citations: [{ repo: "core-api", path: "src/checkout.ts", symbol: "round" }],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["resolve_refinement_item"] });
+    const events: AgentEvent[] = [];
+
+    for await (const event of session.send("resolva a agenda")) {
+      events.push(event);
+      if (event.type === "agenda-resolution") {
+        await event.resolution.respond({ accepted: true, message: "Item resolvido." });
+      }
+    }
+
+    expect(events[0]).toMatchObject({
+      type: "agenda-resolution",
+      resolution: {
+        submission: {
+          kind: "fact",
+          agendaItemId: "gap-1",
+          answer: "O checkout já aplica a regra bancária.",
+        },
+      },
+    });
+    expect(responsesIn(transcript)).toContainEqual({
+      success: true,
+      contentItems: [{ type: "inputText", text: "Item resolvido." }],
+    });
+    await runtime.close();
+  });
+
+  it("should transport structured Spec and Ticket submissions without applying phase rules", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "submit_refinement_spec",
+          arguments: {
+            problem: "A comissão não tem regra de arredondamento.",
+            solution: "Aplicar a regra bancária.",
+            expectedBehaviors: ["Valores são arredondados em duas casas."],
+            implementationDecisions: ["Reutilizar o módulo de folha."],
+            testStrategy: ["Cobrir os limites de meia unidade."],
+            outOfScope: [],
+            traceability: ["agenda:investigacao-1"],
+          },
+        }),
+        serverRequest("item/tool/call", {
+          tool: "submit_refinement_tickets",
+          arguments: {
+            tickets: [
+              {
+                id: "ticket-1",
+                title: "Aplicar arredondamento",
+                description: "Slice vertical do cálculo.",
+                acceptanceCriteria: ["A API devolve duas casas decimais."],
+                specUrl: "https://dev.azure.com/org/project/_workitems/edit/42",
+                blockedBy: [],
+              },
+            ],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({
+      tools: ["submit_refinement_spec", "submit_refinement_tickets"],
+    });
+    const submissions: AgentEvent["type"][] = [];
+
+    for await (const event of session.send("submeta os artefatos")) {
+      if (event.type !== "spec-submission" && event.type !== "tickets-submission") continue;
+      submissions.push(event.type);
+      await event.submission.respond({ accepted: false, message: "Fase incorreta." });
+    }
+
+    expect(submissions).toEqual(["spec-submission", "tickets-submission"]);
+    expect(responsesIn(transcript)).toEqual(
+      expect.arrayContaining([
+        {
+          success: false,
+          contentItems: [{ type: "inputText", text: "Fase incorreta." }],
+        },
+      ]),
+    );
+    await runtime.close();
+  });
+
+  it("should reject a whitespace-only expected behavior in a structured Spec", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "submit_refinement_spec",
+          arguments: {
+            problem: "A comissão não tem regra de arredondamento.",
+            solution: "Aplicar a regra bancária.",
+            expectedBehaviors: ["   "],
+            implementationDecisions: ["Reutilizar o módulo de folha."],
+            testStrategy: ["Cobrir os limites de meia unidade."],
+            outOfScope: [],
+            traceability: ["agenda:investigacao-1"],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["submit_refinement_spec"] });
+    let emitted = false;
+
+    for await (const event of session.send("submeta a Spec")) {
+      if (event.type !== "spec-submission") continue;
+      emitted = true;
+      await event.submission.respond({ accepted: false, message: "Spec inválida." });
+    }
+
+    expect(emitted).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{
+        type: "inputText",
+        text: "argumentos inválidos para submit_refinement_spec.",
+      }],
+    });
+    await runtime.close();
+  });
+
+  it("should reject a whitespace-only test strategy in a structured Spec", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "submit_refinement_spec",
+          arguments: {
+            problem: "A comissão não tem regra de arredondamento.",
+            solution: "Aplicar a regra bancária.",
+            expectedBehaviors: ["Valores são arredondados em duas casas."],
+            implementationDecisions: ["Reutilizar o módulo de folha."],
+            testStrategy: ["   "],
+            outOfScope: [],
+            traceability: ["agenda:investigacao-1"],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["submit_refinement_spec"] });
+    let emitted = false;
+
+    for await (const event of session.send("submeta a Spec")) {
+      if (event.type !== "spec-submission") continue;
+      emitted = true;
+      await event.submission.respond({ accepted: false, message: "Spec inválida." });
+    }
+
+    expect(emitted).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{
+        type: "inputText",
+        text: "argumentos inválidos para submit_refinement_spec.",
+      }],
+    });
+    await runtime.close();
+  });
+
   it("should refuse an ask_operator question that comes with no recommendation", async () => {
     const transcript = transcriptPath();
     const { runtime } = await runtimeWith(
@@ -229,6 +552,7 @@ describe("createAgentRuntime", () => {
             questions: [
               {
                 id: "q1",
+                agendaItemId: "gap-1",
                 header: "Cache",
                 question: "Onde o cache invalida?",
                 evidence: ["core-api · src/cache.ts"],
@@ -240,7 +564,7 @@ describe("createAgentRuntime", () => {
       ]),
       transcript,
     );
-    const session = await runtime.startSession();
+    const session = await runtime.startSession({ tools: ["ask_operator"] });
 
     const events = await drain(session.send("grelhe"));
 
@@ -269,6 +593,7 @@ describe("createAgentRuntime", () => {
             questions: [
               {
                 id: "q1",
+                agendaItemId: "gap-1",
                 header: "Cache",
                 question: "Onde o cache invalida?",
                 recommendation: "Na escrita.",
@@ -281,7 +606,7 @@ describe("createAgentRuntime", () => {
       ]),
       transcript,
     );
-    const session = await runtime.startSession();
+    const session = await runtime.startSession({ tools: ["ask_operator"] });
 
     const events = await drain(session.send("grelhe"));
 
@@ -323,6 +648,32 @@ describe("createAgentRuntime", () => {
           type: "inputText",
           text: expect.stringContaining("deploy_para_producao") as unknown as string,
         },
+      ],
+    });
+    await runtime.close();
+  });
+
+  it("should reject a ceremony tool that was not enabled for the session", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "propose_refinement_completion",
+          arguments: { summary: "Tudo pronto." },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession();
+
+    const events = await drain(session.send("investigue"));
+
+    expect(events.some((event) => event.type === "completion-proposal")).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [
+        { type: "inputText", text: expect.stringMatching(/não está disponível/i) as unknown as string },
       ],
     });
     await runtime.close();
@@ -716,7 +1067,16 @@ describe("createAgentRuntime", () => {
     const transcript = transcriptPath();
     const { runtime } = await runtimeWith(scriptWith([turnCompleted]), transcript);
 
-    await runtime.startSession({ instructions: "você investiga User Stories" });
+    await runtime.startSession({
+      instructions: "você investiga User Stories",
+      tools: [
+        "ask_operator",
+        "resolve_refinement_item",
+        "propose_refinement_completion",
+        "submit_refinement_spec",
+        "submit_refinement_tickets",
+      ],
+    });
 
     expect(
       readTranscript(transcript).find((message) => message.method === "thread/start"),
@@ -724,7 +1084,13 @@ describe("createAgentRuntime", () => {
       params: {
         sandbox: "read-only",
         developerInstructions: "você investiga User Stories",
-        dynamicTools: [{ name: "ask_operator" }],
+        dynamicTools: [
+          { name: "ask_operator" },
+          { name: "resolve_refinement_item" },
+          { name: "propose_refinement_completion" },
+          { name: "submit_refinement_spec" },
+          { name: "submit_refinement_tickets" },
+        ],
       },
     });
     await runtime.close();

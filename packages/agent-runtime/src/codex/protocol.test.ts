@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { askOperatorArgumentsSchema } from "./protocol";
+import {
+  agendaResolutionArgumentsSchema,
+  askOperatorArgumentsSchema,
+  completionProposalArgumentsSchema,
+} from "./protocol";
 
 const baseQuestion = {
   id: "q1",
+  agendaItemId: "gap-1",
   header: "Escopo",
   question: "Vale para o mobile?",
   recommendation: "Só web: o mobile não consome esse endpoint.",
@@ -41,5 +46,74 @@ describe("askOperatorArgumentsSchema", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it("should refuse more than one room question in the same call", () => {
+    const parsed = askOperatorArgumentsSchema.safeParse({
+      questions: [baseQuestion, { ...baseQuestion, id: "q2", agendaItemId: "gap-2" }],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("should require the agenda item identity", () => {
+    const { agendaItemId: _agendaItemId, ...withoutAgendaItem } = baseQuestion;
+
+    expect(askOperatorArgumentsSchema.safeParse({ questions: [withoutAgendaItem] }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("completionProposalArgumentsSchema", () => {
+  it("should accept an explicit completion summary", () => {
+    expect(
+      completionProposalArgumentsSchema.safeParse({ summary: "Todos os furos foram resolvidos." })
+        .success,
+    ).toBe(true);
+  });
+});
+
+describe("agendaResolutionArgumentsSchema", () => {
+  it("should require at least one citation for a factual resolution", () => {
+    expect(
+      agendaResolutionArgumentsSchema.safeParse({
+        kind: "fact",
+        agendaItemId: "gap-1",
+        answer: "A regra já existe.",
+        citations: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("should reject a whitespace-only factual answer", () => {
+    expect(
+      agendaResolutionArgumentsSchema.safeParse({
+        kind: "fact",
+        agendaItemId: "gap-1",
+        answer: "   ",
+        citations: [{ repo: "core-api", path: "src/checkout.ts" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("should accept a justified out-of-scope resolution without citations", () => {
+    expect(
+      agendaResolutionArgumentsSchema.safeParse({
+        kind: "out-of-scope",
+        agendaItemId: "gap-1",
+        justification: "O mobile terá uma US própria.",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("should reject a whitespace-only out-of-scope justification", () => {
+    expect(
+      agendaResolutionArgumentsSchema.safeParse({
+        kind: "out-of-scope",
+        agendaItemId: "gap-1",
+        justification: "   ",
+      }).success,
+    ).toBe(false);
   });
 });

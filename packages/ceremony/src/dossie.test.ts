@@ -4,6 +4,9 @@ import path from "node:path";
 import { renderReportMarkdown, reportSectionMarker } from "@sprint-griller/investigation";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readDossie } from "./dossie";
+import { dossieStateSchema } from "./session-state";
+import { palcoStateSchema } from "./palco-state";
+import { readPalco } from "./palco";
 import { readSpecSection } from "./spec";
 import { SPEC_SECTIONS } from "./spec-vocabulary";
 import { openCeremonyStore } from "./store";
@@ -78,13 +81,37 @@ const question = (overrides: Partial<CeremonyQuestion> = {}): CeremonyQuestion =
   ...overrides,
 });
 
-function decide(store: CeremonyStore, decidedBy = "PO + squad"): void {
+it("should expose persisted workflow state through both SSE schemas", () => {
+  const store = open();
+  newSession(store);
+  store.proposeRefinementCompletion({
+    sessionId: "thread-1",
+    expectedRevision: 0,
+    summary: "Agenda vazia.",
+  });
+
+  const palco = palcoStateSchema.parse(readPalco(store, "thread-1", false));
+  const dossie = dossieStateSchema.parse(readDossie(store, "thread-1"));
+
+  expect({
+    palcoPhase: palco.refinement.phase,
+    palcoProposal: palco.completionProposal?.summary,
+    dossiePhase: dossie.refinement.phase,
+    dossieProposal: dossie.completionProposal?.summary,
+  }).toEqual({
+    palcoPhase: "aguardando-confirmacao",
+    palcoProposal: "Agenda vazia.",
+    dossiePhase: "aguardando-confirmacao",
+    dossieProposal: "Agenda vazia.",
+  });
+});
+
+function decide(store: CeremonyStore): void {
   store.askQuestions("thread-1", [question()]);
   store.recordDecision({
     sessionId: "thread-1",
     questionId: "q1",
     answer: "Regra bancária",
-    decidedBy,
   });
 }
 
@@ -99,7 +126,7 @@ describe("readDossie", () => {
     decide(store);
 
     expect(readDossie(store, "thread-1")?.decisions).toMatchObject([
-      { answer: "Regra bancária", decidedBy: "PO + squad" },
+      { answer: "Regra bancária" },
     ]);
   });
 
@@ -339,7 +366,7 @@ describe("readDossie", () => {
     const generated = readDossie(store, "thread-1")?.spec.generated ?? "";
 
     expect(generated).toContain("# Spec da US #4242 — Exportar relatório de comissões");
-    expect(generated).toContain("Decidido por PO + squad");
+    expect(generated).not.toContain("Decidido por");
     expect(generated).toContain(`## ${SPEC_SECTIONS.impact.heading}`);
   });
 

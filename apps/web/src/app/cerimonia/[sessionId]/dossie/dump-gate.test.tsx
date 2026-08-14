@@ -3,24 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DumpGate } from "./dump-gate";
 import { dumpGateView, type DumpGateController } from "./use-dump-gate";
 
-const DEFAULT_TASKS = "## Implementar\n\n[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/1)\n\n### Critérios de aceite\n\n- Funciona.";
-
 const DEFAULT_CONTROLLER = {
   action: () => undefined,
-  ceremonyClosed: true,
-  close: () => undefined,
   dumping: false,
-  open: true,
-  openGate: () => undefined,
   result: { status: "idle" },
-  setTasksMarkdown: () => undefined,
-  taskErrors: [],
-  view: { status: "editable", tasksMarkdown: DEFAULT_TASKS },
+  view: { status: "ready" },
 } as const satisfies DumpGateController;
 
-const controller = vi.hoisted(() => ({
-  current: {} as DumpGateController,
-}));
+const controller = vi.hoisted(() => ({ current: {} as DumpGateController }));
 
 vi.mock("../../actions", () => ({
   dumpCeremonyAction: () => Promise.resolve({ status: "idle" }),
@@ -37,91 +27,54 @@ beforeEach(() => {
 
 const props = {
   sessionId: "ceremony-1",
-  storyUrl: "https://dev.azure.com/acme/Plataforma/_workitems/edit/1",
-  markdown: "# Spec",
-  base: "# Spec",
-  pending: [],
-  taskPreview: DEFAULT_TASKS,
+  phase: "pronto-para-publicar" as const,
   dump: { status: "not-started" as const },
-  ceremonyStatus: "encerrada" as const,
-  blocked: false,
 };
 
-describe("DumpGate estimate", () => {
-  it("should tell the operator every Task needs the exact current Spec URL", () => {
+describe("DumpGate", () => {
+  it("should submit only the server-owned session and estimate fields", () => {
     const html = renderToStaticMarkup(<DumpGate {...props} />);
 
-    expect(html).toContain("Toda Task deve conter um link Markdown para a URL exata da Spec desta US:");
-    expect(html).toContain(props.storyUrl);
-    expect(html).not.toContain("Se usar");
+    expect(html).toContain('name="sessionId"');
+    expect(html).toContain('name="estimate"');
+    expect(html).not.toContain('name="markdown"');
+    expect(html).not.toContain('name="tasksMarkdown"');
+    expect(html).not.toContain('name="confirmPending"');
   });
 
-  it("should render the allowed estimate scale as a select for a new dump", () => {
+  it("should render the Fibonacci estimate scale for a new publication", () => {
     const html = renderToStaticMarkup(<DumpGate {...props} />);
 
     expect(html).toMatch(/<select id="estimate" name="estimate" required=""/);
     expect(html.match(/<option value="(?:1|2|3|5|8|13|21|34|55|89)">/g)).toHaveLength(10);
   });
 
-  it("should submit a frozen legacy estimate through a hidden field", () => {
-    controller.current = {
-      ...DEFAULT_CONTROLLER,
-      view: { status: "retryable", tasksMarkdown: DEFAULT_TASKS, estimate: 4 },
-    };
+  it("should preserve a frozen legacy estimate on retry", () => {
+    controller.current = { ...DEFAULT_CONTROLLER, view: { status: "retryable", estimate: 4 } };
 
     const html = renderToStaticMarkup(<DumpGate {...props} />);
 
     expect(html).toContain('<input type="hidden" name="estimate" value="4"/>');
-    expect(html).toContain("4");
+    expect(html).toContain("Tentar publicação novamente");
   });
 
-  it("should render a persisted publishing dump as a non-interactive status", () => {
-    controller.current = {
-      ...controller.current,
-      view: { status: "publishing" },
-      open: false,
-    };
+  it.each([
+    ["publishing", "Publicação em andamento"],
+    ["completed", "Publicação concluída"],
+  ] as const)("should render %s as a non-interactive status", (status, label) => {
+    controller.current = { ...DEFAULT_CONTROLLER, view: { status } };
 
     const html = renderToStaticMarkup(<DumpGate {...props} />);
 
     expect(html).toContain('role="status"');
-    expect(html).toContain("Despejo em andamento");
-    expect(html).not.toContain("<button");
-    expect(html).not.toContain("<form");
-  });
-
-  it("should render a completed dump as a non-interactive status", () => {
-    controller.current = {
-      ...DEFAULT_CONTROLLER,
-      view: { status: "completed" },
-    };
-
-    const html = renderToStaticMarkup(<DumpGate {...props} />);
-
-    expect(html).toContain('role="status"');
-    expect(html).toContain("Despejo concluído");
-    expect(html).not.toContain("<button");
+    expect(html).toContain(label);
     expect(html).not.toContain("<form");
   });
 });
 
 describe("dumpGateView", () => {
-  it("should project a successful action as completed before the SSE echo", () => {
-    expect(
-      dumpGateView(
-        {
-          status: "publishing",
-          inputs: {
-            dumpId: "dump-1",
-            markdown: "# Spec",
-            tasksMarkdown: DEFAULT_TASKS,
-            estimate: 5,
-          },
-          startedAt: 1,
-        },
-        { status: "success" },
-        DEFAULT_TASKS,
-      ),
-    ).toEqual({ status: "completed" });
+  it("should project a successful action before the SSE echo", () => {
+    expect(dumpGateView({ status: "not-started" }, { status: "success" }))
+      .toEqual({ status: "completed" });
   });
 });

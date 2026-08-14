@@ -46,7 +46,7 @@ export default async function Home() {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-14 px-8 py-20">
       <header className="flex flex-col gap-3">
-        <h1 className="text-4xl font-semibold tracking-tight">Sprint Griller</h1>
+        <h1 className="text-4xl font-semibold tracking-tight">Refina</h1>
         <p className="text-lg text-muted">
           As US da iteration atual de {azureDevOps.project}. O status vem dos
           artefatos no Azure DevOps — a ferramenta não guarda estado próprio.

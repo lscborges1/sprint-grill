@@ -78,6 +78,90 @@ function beginDump(
 }
 
 describe("openCeremonyStore", () => {
+  it("should persist versioned Spec and Ticket approvals bound to the same Spec hash", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    store.updateRefinementPhase({
+      sessionId: "thread-1",
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+
+    const spec = store.submitSpec("thread-1", {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda rounding resolvida pela sala."],
+    });
+    expect(spec.revision).toBe(1);
+
+    const specApproval = store.approveSpec({
+      sessionId: "thread-1",
+      expectedRevision: 2,
+    });
+    expect(specApproval).toMatchObject({ revision: 1, hash: expect.any(String) });
+    expect(store.getSession("thread-1")?.refinement.phase).toBe("revisando-tickets");
+
+    const tickets = store.submitTickets("thread-1", {
+      tickets: [{
+        id: "rounding",
+        title: "Unificar arredondamento",
+        description: "Entrega o cálculo compartilhado do relatório até a folha.",
+        acceptanceCriteria: ["Relatório e folha exibem o mesmo valor."],
+        specUrl: "https://untrusted.example/spec",
+        blockedBy: [],
+      }],
+    });
+    expect(tickets.markdown).toContain(
+      "[Spec da US](https://dev.azure.com/org/proj/_workitems/edit/4242)",
+    );
+    expect(tickets.specHash).toBe(specApproval.hash);
+
+    const ticketApproval = store.approveTickets({
+      sessionId: "thread-1",
+      expectedRevision: 4,
+    });
+    expect(ticketApproval.specHash).toBe(specApproval.hash);
+    expect(store.getSession("thread-1")?.refinement.phase).toBe("pronto-para-publicar");
+
+    store.close();
+    opened.pop();
+    const reopened = open(file);
+    expect(reopened.getApprovedArtifacts("thread-1")).toMatchObject({
+      spec: { revision: 1, hash: specApproval.hash },
+      tickets: { revision: 1, specHash: specApproval.hash },
+    });
+  });
+
+  it("should preserve drafts but invalidate approvals when refinement is reopened", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.updateRefinementPhase({ sessionId: "thread-1", phase: "revisando-spec", expectedRevision: 0 });
+    store.submitSpec("thread-1", {
+      problem: "Problema.", solution: "Solução.", expectedBehaviors: ["Comportamento."],
+      implementationDecisions: ["Decisão."], testStrategy: ["Teste."],
+      outOfScope: ["Fora."], traceability: ["Registro."],
+    });
+    store.approveSpec({ sessionId: "thread-1", expectedRevision: 2 });
+    store.submitTickets("thread-1", { tickets: [{
+      id: "one", title: "Ticket", description: "Slice completo.",
+      acceptanceCriteria: ["Entrega observável."], specUrl: "https://ignored.example", blockedBy: [],
+    }] });
+    store.approveTickets({ sessionId: "thread-1", expectedRevision: 4 });
+
+    store.reopenRefinement({ sessionId: "thread-1", expectedRevision: 5 });
+
+    expect(store.getSession("thread-1")?.refinement.phase).toBe("refinando");
+    expect(store.getArtifactState("thread-1")).toMatchObject({
+      spec: { revision: 1, approval: null },
+      tickets: { revision: 1, approval: null },
+    });
+    expect(store.getApprovedArtifacts("thread-1")).toBeUndefined();
+  });
   it("should persist the initial refinement phase and advance it with a guarded revision", () => {
     const file = dbPath();
     const first = open(file);
@@ -127,10 +211,14 @@ describe("openCeremonyStore", () => {
 
     beginDump(store);
     store.markDumpCompleted("thread-1");
-    expect(store.getSession("thread-1")?.dump).toMatchObject({
-      status: "completed",
-      inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
-      completedAt: expect.any(Number),
+    expect(store.getSession("thread-1")).toMatchObject({
+      status: "encerrada",
+      refinement: { phase: "publicado" },
+      dump: {
+        status: "completed",
+        inputs: { dumpId: "dump-fingerprint", ...DUMP_DETAILS },
+        completedAt: expect.any(Number),
+      },
     });
   });
 

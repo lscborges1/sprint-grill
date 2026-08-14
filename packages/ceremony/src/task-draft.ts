@@ -1,4 +1,5 @@
 import { CeremonyError } from "./ceremony-error";
+import type { RefinementTicketSubmission } from "@sprint-griller/agent-runtime";
 import type { TranscriptEntry } from "./types";
 
 export const TASK_DRAFT_START = "<!-- sprint-griller:tasks:start -->";
@@ -35,6 +36,35 @@ export type TaskDraftValidation =
 const ACCEPTANCE_HEADING = "### Critérios de aceite";
 const BLOCKERS_HEADING = "### Bloqueada por";
 const MARKDOWN_LINK = /\[([^\u005b\u005d\n]+)\]\(([^()\u005b\u005d\s]+)\)/g;
+
+export type StructuredTicket = Pick<
+  RefinementTicketSubmission,
+  "title" | "description" | "acceptanceCriteria" | "blockedBy"
+>;
+
+/** O link da Spec é sempre inserido pelo servidor e não é confiado à submissão do agente. */
+export function renderStructuredTicketsMarkdown(
+  tickets: readonly StructuredTicket[],
+  specUrl: string,
+): string {
+  return tickets.map((ticket) => [
+    `## ${ticket.title.trim()}`,
+    ticket.description.trim(),
+    `[Spec da US](${specUrl})`,
+    ACCEPTANCE_HEADING,
+    ticket.acceptanceCriteria.map((criterion) => `- ${criterion.trim()}`).join("\n"),
+    ...(ticket.blockedBy.length === 0
+      ? []
+      : [BLOCKERS_HEADING, ticket.blockedBy.map((title) => `- ${title.trim()}`).join("\n")]),
+  ].join("\n\n")).join("\n\n");
+}
+
+export function assertValidStructuredTickets(
+  tickets: readonly StructuredTicket[],
+  specUrl: string,
+): readonly TaskDraft[] {
+  return parseTaskDraft(renderStructuredTicketsMarkdown(tickets, specUrl), specUrl);
+}
 
 /**
  * Contrato pequeno do preview de tasks: cabe no Markdown assinado e dá ao gate

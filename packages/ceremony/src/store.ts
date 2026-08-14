@@ -1,13 +1,31 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Logger } from "@sprint-griller/core";
+import type { RefinementSpecSubmission, RefinementTicketsSubmission } from "@sprint-griller/agent-runtime";
 import Database from "better-sqlite3";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { z } from "zod";
 import { CeremonyError } from "./ceremony-error";
+import {
+  artifactHash,
+  parseStoredSpecSubmission,
+  parseStoredTicketsSubmission,
+} from "./artifact-workflow";
+import type {
+  ApprovedRefinementArtifacts,
+  ArtifactApproval,
+  RefinementArtifactState,
+  SpecArtifact,
+  TicketArtifact,
+} from "./artifact-workflow";
 import { findSignedDumpInputConflict } from "./dump-state";
-import { assertValidSpecMarkdown } from "./spec";
+import {
+  assertValidPublicationSpecMarkdown,
+  assertValidStructuredSpecMarkdown,
+  renderStructuredSpecMarkdown,
+} from "./spec";
+import { assertValidStructuredTickets, renderStructuredTicketsMarkdown } from "./task-draft";
 import {
   SCHEMA_DDL,
   SCHEMA_VERSION,
@@ -17,7 +35,9 @@ import {
   questions,
   refinementItems,
   sessions,
+  specArtifacts,
   specDrafts,
+  ticketArtifacts,
 } from "./schema";
 import type {
   CeremonyCitation,
@@ -94,6 +114,11 @@ export interface DiscardSpecDraftInput {
   readonly expectedSavedAt: number | null;
 }
 
+export interface ArtifactGateInput {
+  readonly sessionId: string;
+  readonly expectedRevision: number;
+}
+
 export interface AttachDecisionRecordInput {
   readonly sessionId: string;
   readonly questionSeq: number;
@@ -125,6 +150,13 @@ export interface CeremonyStore {
   ): readonly RefinementItem[];
   listRefinementItems(sessionId: string): readonly RefinementItem[];
   transitionRefinementItem(input: TransitionRefinementItemInput): RefinementItem;
+  submitSpec(sessionId: string, submission: RefinementSpecSubmission): SpecArtifact;
+  approveSpec(input: ArtifactGateInput): ArtifactApproval;
+  submitTickets(sessionId: string, submission: RefinementTicketsSubmission): TicketArtifact;
+  approveTickets(input: ArtifactGateInput): NonNullable<TicketArtifact["approval"]>;
+  reopenRefinement(input: ArtifactGateInput): RefinementState;
+  getArtifactState(sessionId: string): RefinementArtifactState;
+  getApprovedArtifacts(sessionId: string): ApprovedRefinementArtifacts | undefined;
   finishSession(sessionId: string, outcome: FinishSessionOutcome): void;
   askQuestions(sessionId: string, asked: readonly CeremonyQuestion[]): void;
   currentQuestion(sessionId: string): PersistedCeremonyQuestion | undefined;
@@ -386,6 +418,285 @@ export function openCeremonyStore(
         .run();
       if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
       return { phase, revision: expectedRevision + 1 };
+    },
+
+    submitSpec(sessionId, submission) {
+      assertDossieMutable(sessionId);
+      const markdown = renderStructuredSpecMarkdown(submission);
+      assertValidStructuredSpecMarkdown(markdown);
+      const submittedAt = Date.now();
+      const submit = sqlite.transaction((): SpecArtifact => {
+        const session = requireSession(sessionId);
+        if (session.refinement.phase !== "revisando-spec") {
+          throw new CeremonyError("a Spec só pode ser submetida durante a revisão da Spec.");
+        }
+        const current = db
+          .select({ revision: specArtifacts.revision })
+          .from(specArtifacts)
+          .where(eq(specArtifacts.sessionId, sessionId))
+          .get();
+        const revision = (current?.revision ?? 0) + 1;
+        db.insert(specArtifacts)
+          .values({
+            sessionId,
+            revision,
+            submission: JSON.stringify(submission),
+            markdown,
+            submittedAt,
+          })
+          .onConflictDoUpdate({
+            target: specArtifacts.sessionId,
+            set: {
+              revision,
+              submission: JSON.stringify(submission),
+              markdown,
+              submittedAt,
+              approvedRevision: null,
+              approvedHash: null,
+              approvedMarkdown: null,
+              approvedAt: null,
+            },
+          })
+          .run();
+        bumpRefinementRevision(sessionId, session.refinement.revision);
+        return { revision, submission, markdown, submittedAt, approval: null };
+      });
+      return submit.immediate();
+    },
+
+    approveSpec({ sessionId, expectedRevision }) {
+      assertDossieMutable(sessionId);
+      const approve = sqlite.transaction((): ArtifactApproval => {
+        const session = requireSession(sessionId);
+        if (session.refinement.phase !== "revisando-spec") {
+          throw new CeremonyError("a Spec só pode ser aprovada durante a revisão da Spec.");
+        }
+        if (session.refinement.revision !== expectedRevision) {
+          throw staleRevision(sessionId, expectedRevision);
+        }
+        const artifact = store.getArtifactState(sessionId).spec;
+        if (!artifact) throw new CeremonyError("o agente ainda não submeteu uma Spec para revisão.");
+        const humanDraft = store.getSpecDraft(sessionId);
+        if (humanDraft && humanDraft.base !== artifact.markdown) {
+          throw new CeremonyError("o rascunho humano partiu de outra revisão da Spec; regenere antes de aprovar.");
+        }
+        const markdown = humanDraft?.markdown ?? artifact.markdown;
+        assertValidStructuredSpecMarkdown(markdown);
+        const approval: ArtifactApproval = {
+          revision: artifact.revision,
+          hash: artifactHash(markdown),
+          markdown,
+          approvedAt: Date.now(),
+        };
+        const artifactUpdate = db
+          .update(specArtifacts)
+          .set({
+            approvedRevision: approval.revision,
+            approvedHash: approval.hash,
+            approvedMarkdown: approval.markdown,
+            approvedAt: approval.approvedAt,
+          })
+          .where(and(
+            eq(specArtifacts.sessionId, sessionId),
+            eq(specArtifacts.revision, artifact.revision),
+          ))
+          .run();
+        if (artifactUpdate.changes !== 1) {
+          throw new CeremonyError("a Spec mudou durante a aprovação; recarregue antes de continuar.");
+        }
+        const phaseUpdate = db
+          .update(sessions)
+          .set({ refinementPhase: "revisando-tickets", refinementRevision: expectedRevision + 1 })
+          .where(and(eq(sessions.id, sessionId), eq(sessions.refinementRevision, expectedRevision)))
+          .run();
+        if (phaseUpdate.changes !== 1) throw staleRevision(sessionId, expectedRevision);
+        return approval;
+      });
+      return approve.immediate();
+    },
+
+    submitTickets(sessionId, submission) {
+      assertDossieMutable(sessionId);
+      const submit = sqlite.transaction((): TicketArtifact => {
+        const session = requireSession(sessionId);
+        if (session.refinement.phase !== "revisando-tickets") {
+          throw new CeremonyError("os Tickets só podem ser submetidos durante a revisão de Tickets.");
+        }
+        const spec = store.getArtifactState(sessionId).spec;
+        if (!spec?.approval || spec.approval.revision !== spec.revision) {
+          throw new CeremonyError("aprove a revisão atual da Spec antes de gerar Tickets.");
+        }
+        const structured = submission.tickets.map(({ title, description, acceptanceCriteria, blockedBy }) => ({
+          title,
+          description,
+          acceptanceCriteria,
+          blockedBy,
+        }));
+        assertValidStructuredTickets(structured, session.storyUrl);
+        const markdown = renderStructuredTicketsMarkdown(structured, session.storyUrl);
+        const current = db
+          .select({ revision: ticketArtifacts.revision })
+          .from(ticketArtifacts)
+          .where(eq(ticketArtifacts.sessionId, sessionId))
+          .get();
+        const revision = (current?.revision ?? 0) + 1;
+        const submittedAt = Date.now();
+        db.insert(ticketArtifacts)
+          .values({
+            sessionId,
+            revision,
+            submission: JSON.stringify(submission),
+            markdown,
+            submittedAt,
+            specRevision: spec.approval.revision,
+            specHash: spec.approval.hash,
+          })
+          .onConflictDoUpdate({
+            target: ticketArtifacts.sessionId,
+            set: {
+              revision,
+              submission: JSON.stringify(submission),
+              markdown,
+              submittedAt,
+              specRevision: spec.approval.revision,
+              specHash: spec.approval.hash,
+              approvedRevision: null,
+              approvedHash: null,
+              approvedMarkdown: null,
+              approvedSpecRevision: null,
+              approvedSpecHash: null,
+              approvedAt: null,
+            },
+          })
+          .run();
+        bumpRefinementRevision(sessionId, session.refinement.revision);
+        return {
+          revision,
+          submission,
+          markdown,
+          submittedAt,
+          specRevision: spec.approval.revision,
+          specHash: spec.approval.hash,
+          approval: null,
+        };
+      });
+      return submit.immediate();
+    },
+
+    approveTickets({ sessionId, expectedRevision }) {
+      assertDossieMutable(sessionId);
+      const approve = sqlite.transaction((): NonNullable<TicketArtifact["approval"]> => {
+        const session = requireSession(sessionId);
+        if (session.refinement.phase !== "revisando-tickets") {
+          throw new CeremonyError("os Tickets só podem ser aprovados durante a revisão de Tickets.");
+        }
+        if (session.refinement.revision !== expectedRevision) {
+          throw staleRevision(sessionId, expectedRevision);
+        }
+        const { spec, tickets } = store.getArtifactState(sessionId);
+        if (!spec?.approval || spec.approval.revision !== spec.revision) {
+          throw new CeremonyError("a aprovação da Spec atual não está mais válida.");
+        }
+        if (!tickets) throw new CeremonyError("o agente ainda não submeteu Tickets para revisão.");
+        if (tickets.specRevision !== spec.approval.revision || tickets.specHash !== spec.approval.hash) {
+          throw new CeremonyError("os Tickets foram gerados para outra revisão da Spec.");
+        }
+        const structured = tickets.submission.tickets.map(
+          ({ title, description, acceptanceCriteria, blockedBy }) => ({
+            title,
+            description,
+            acceptanceCriteria,
+            blockedBy,
+          }),
+        );
+        assertValidStructuredTickets(structured, session.storyUrl);
+        const approval = {
+          revision: tickets.revision,
+          hash: artifactHash(tickets.markdown),
+          markdown: tickets.markdown,
+          specRevision: spec.approval.revision,
+          specHash: spec.approval.hash,
+          approvedAt: Date.now(),
+        } satisfies NonNullable<TicketArtifact["approval"]>;
+        const artifactUpdate = db
+          .update(ticketArtifacts)
+          .set({
+            approvedRevision: approval.revision,
+            approvedHash: approval.hash,
+            approvedMarkdown: approval.markdown,
+            approvedSpecRevision: approval.specRevision,
+            approvedSpecHash: approval.specHash,
+            approvedAt: approval.approvedAt,
+          })
+          .where(and(
+            eq(ticketArtifacts.sessionId, sessionId),
+            eq(ticketArtifacts.revision, tickets.revision),
+          ))
+          .run();
+        if (artifactUpdate.changes !== 1) {
+          throw new CeremonyError("os Tickets mudaram durante a aprovação; recarregue antes de continuar.");
+        }
+        const phaseUpdate = db
+          .update(sessions)
+          .set({ refinementPhase: "pronto-para-publicar", refinementRevision: expectedRevision + 1 })
+          .where(and(eq(sessions.id, sessionId), eq(sessions.refinementRevision, expectedRevision)))
+          .run();
+        if (phaseUpdate.changes !== 1) throw staleRevision(sessionId, expectedRevision);
+        return approval;
+      });
+      return approve.immediate();
+    },
+
+    reopenRefinement({ sessionId, expectedRevision }) {
+      assertDumpInputsUnlocked(sessionId);
+      const reopen = sqlite.transaction((): RefinementState => {
+        const session = requireSession(sessionId);
+        if (!["revisando-spec", "revisando-tickets", "pronto-para-publicar"].includes(session.refinement.phase)) {
+          throw new CeremonyError("o refinamento só pode ser reaberto depois da confirmação da sala.");
+        }
+        if (session.refinement.revision !== expectedRevision) throw staleRevision(sessionId, expectedRevision);
+        db.update(specArtifacts)
+          .set({ approvedRevision: null, approvedHash: null, approvedMarkdown: null, approvedAt: null })
+          .where(eq(specArtifacts.sessionId, sessionId))
+          .run();
+        db.update(ticketArtifacts)
+          .set({
+            approvedRevision: null,
+            approvedHash: null,
+            approvedMarkdown: null,
+            approvedSpecRevision: null,
+            approvedSpecHash: null,
+            approvedAt: null,
+          })
+          .where(eq(ticketArtifacts.sessionId, sessionId))
+          .run();
+        const result = db.update(sessions)
+          .set({ refinementPhase: "refinando", refinementRevision: expectedRevision + 1 })
+          .where(and(eq(sessions.id, sessionId), eq(sessions.refinementRevision, expectedRevision)))
+          .run();
+        if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
+        return { phase: "refinando", revision: expectedRevision + 1 };
+      });
+      return reopen.immediate();
+    },
+
+    getArtifactState(sessionId) {
+      const specRow = db.select().from(specArtifacts).where(eq(specArtifacts.sessionId, sessionId)).get();
+      const ticketRow = db.select().from(ticketArtifacts).where(eq(ticketArtifacts.sessionId, sessionId)).get();
+      return {
+        spec: specRow ? toSpecArtifact(specRow) : null,
+        tickets: ticketRow ? toTicketArtifact(ticketRow) : null,
+      };
+    },
+
+    getApprovedArtifacts(sessionId) {
+      const state = store.getArtifactState(sessionId);
+      const spec = state.spec?.approval;
+      const tickets = state.tickets?.approval;
+      if (!state.spec || !state.tickets || !spec || !tickets) return undefined;
+      if (spec.revision !== state.spec.revision || tickets.revision !== state.tickets.revision) return undefined;
+      if (tickets.specRevision !== spec.revision || tickets.specHash !== spec.hash) return undefined;
+      return { spec, tickets };
     },
 
     seedRefinementItems(sessionId, items) {
@@ -681,7 +992,7 @@ export function openCeremonyStore(
       if (markdown.trim() === "") {
         throw new CeremonyError("o despejo precisa da Spec assinada antes de começar.");
       }
-      assertValidSpecMarkdown(markdown, store.listDecisions(sessionId));
+      assertValidPublicationSpecMarkdown(markdown, store.listDecisions(sessionId));
       const tasksMarkdown = input.tasksMarkdown;
       if (tasksMarkdown.trim() === "") {
         throw new CeremonyError("o despejo precisa das Tasks assinadas antes de começar.");
@@ -755,7 +1066,13 @@ export function openCeremonyStore(
         : sql`(SELECT count(*) FROM decisions WHERE session_id = ${sessionId}) = ${expectedDecisionCount}`;
       const result = db
         .update(sessions)
-        .set({ dumpStartedAt: null, dumpedAt: Date.now() })
+        .set({
+          status: "encerrada",
+          refinementPhase: "publicado",
+          refinementRevision: sql`${sessions.refinementRevision} + 1`,
+          dumpStartedAt: null,
+          dumpedAt: Date.now(),
+        })
         .where(and(
           eq(sessions.id, sessionId),
           ...(expectedDecisions === undefined ? [] : [expectedDecisions]),
@@ -1001,7 +1318,7 @@ export function openCeremonyStore(
       if (markdown.trim() === "") {
         throw new CeremonyError("a Spec da US não pode ficar vazia — regenere o documento.");
       }
-      assertValidSpecMarkdown(markdown, store.listDecisions(sessionId));
+      assertValidPublicationSpecMarkdown(markdown, store.listDecisions(sessionId));
 
       /**
        * A revisão nasce da linha gravada, nunca da que a tela esperava: num
@@ -1232,9 +1549,71 @@ type QuestionRow = typeof questions.$inferSelect;
 type DecisionRow = typeof decisions.$inferSelect;
 type ConsultationRow = typeof consultations.$inferSelect;
 type RefinementItemRow = typeof refinementItems.$inferSelect;
+type SpecArtifactRow = typeof specArtifacts.$inferSelect;
+type TicketArtifactRow = typeof ticketArtifacts.$inferSelect;
 type ParsedTranscriptEvent = z.infer<typeof transcriptEventSchema>;
 
 const LEGACY_UNVERIFIED_REASON = "a citação não fechou com o código.";
+
+function toSpecArtifact(row: SpecArtifactRow): SpecArtifact {
+  const approvalColumns = [
+    row.approvedRevision,
+    row.approvedHash,
+    row.approvedMarkdown,
+    row.approvedAt,
+  ];
+  const hasApproval = approvalColumns.every((value) => value !== null);
+  if (!hasApproval && approvalColumns.some((value) => value !== null)) {
+    throw new CeremonyError(`a Spec da cerimônia ${row.sessionId} tem aprovação inconsistente.`);
+  }
+  return {
+    revision: row.revision,
+    submission: parseStoredSpecSubmission(row.submission),
+    markdown: row.markdown,
+    submittedAt: row.submittedAt,
+    approval: hasApproval
+      ? {
+          revision: row.approvedRevision!,
+          hash: row.approvedHash!,
+          markdown: row.approvedMarkdown!,
+          approvedAt: row.approvedAt!,
+        }
+      : null,
+  };
+}
+
+function toTicketArtifact(row: TicketArtifactRow): TicketArtifact {
+  const approvalColumns = [
+    row.approvedRevision,
+    row.approvedHash,
+    row.approvedMarkdown,
+    row.approvedSpecRevision,
+    row.approvedSpecHash,
+    row.approvedAt,
+  ];
+  const hasApproval = approvalColumns.every((value) => value !== null);
+  if (!hasApproval && approvalColumns.some((value) => value !== null)) {
+    throw new CeremonyError(`os Tickets da cerimônia ${row.sessionId} têm aprovação inconsistente.`);
+  }
+  return {
+    revision: row.revision,
+    submission: parseStoredTicketsSubmission(row.submission),
+    markdown: row.markdown,
+    submittedAt: row.submittedAt,
+    specRevision: row.specRevision,
+    specHash: row.specHash,
+    approval: hasApproval
+      ? {
+          revision: row.approvedRevision!,
+          hash: row.approvedHash!,
+          markdown: row.approvedMarkdown!,
+          specRevision: row.approvedSpecRevision!,
+          specHash: row.approvedSpecHash!,
+          approvedAt: row.approvedAt!,
+        }
+      : null,
+  };
+}
 
 function normalizeTranscriptEvent(
   event: ParsedTranscriptEvent,

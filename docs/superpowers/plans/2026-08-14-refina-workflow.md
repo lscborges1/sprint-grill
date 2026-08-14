@@ -35,10 +35,10 @@
 - Produces store operations to seed/list/transition agenda items and update the session phase/revision.
 - Removes `decidedBy` from decision inputs, transcript events, persisted rows, SSE schemas, and ADO decision records.
 
-- [ ] Write failing store and publication tests for phase/agenda persistence and authorless resolutions.
-- [ ] Run the focused tests and confirm failures are caused by missing contracts.
-- [ ] Add the minimum schema/types/store/ADO changes, bump `SCHEMA_VERSION`, and update domain docs/ADR.
-- [ ] Run focused tests and refactor while green.
+- [x] Write failing store and publication tests for phase/agenda persistence and authorless resolutions.
+- [x] Run the focused tests and confirm failures are caused by missing contracts.
+- [x] Add the minimum schema/types/store/ADO changes, bump `SCHEMA_VERSION`, and update domain docs/ADR.
+- [x] Run focused tests and refactor while green.
 
 ### Task 2: Make agent completion explicit and generalize room doubts
 
@@ -52,10 +52,10 @@
 - Extends `ask_operator` with agenda identity while enforcing one active question.
 - Replaces factual-only consultation with a classified doubt outcome: verified fact, room choice, unverified answer, or failure.
 
-- [ ] Write failing tests proving a normal `turn-completed` cannot close refinement and that a completion proposal is rejected with open items.
-- [ ] Write failing tests for automatic continuation, one-question enforcement, and generalized doubt classification.
-- [ ] Implement the minimum protocol schemas, runtime events, prompt contracts, lifecycle loop, and recovery behavior.
-- [ ] Run focused tests and refactor while green.
+- [x] Write failing tests proving a normal `turn-completed` cannot close refinement and that a completion proposal is rejected with open items.
+- [x] Write failing tests for automatic continuation, one-question enforcement, and generalized doubt classification.
+- [x] Implement the minimum protocol schemas, runtime events, prompt contracts, lifecycle loop, and recovery behavior.
+- [x] Run focused tests and refactor while green.
 
 ### Task 3: Add versioned Spec/Ticket gates and server-owned publication
 
@@ -69,10 +69,10 @@
 - Publication consumes only `sessionId` and `estimate`, loading and revalidating approved artifacts from the store.
 - Reopening refinement invalidates approved Spec/Tickets and returns the phase to `refinando`.
 
-- [ ] Write failing renderer and lifecycle tests for required Spec sections, ticket links/DAG, approvals, and invalidation.
-- [ ] Write failing dump tests for agenda/approval gates and server-owned inputs.
-- [ ] Implement structured rendering, revisioned persistence, lifecycle transitions, and strict publication gates.
-- [ ] Run focused tests and refactor while green.
+- [x] Write failing renderer and lifecycle tests for required Spec sections, ticket links/DAG, approvals, and invalidation.
+- [x] Write failing dump tests for agenda/approval gates and server-owned inputs.
+- [x] Implement structured rendering, revisioned persistence, lifecycle transitions, and strict publication gates.
+- [x] Run focused tests and refactor while green.
 
 ### Task 4: Update the Palco, Dossiê, actions, and visible brand
 
@@ -100,4 +100,3 @@
 - [ ] Run `rtk pnpm build` and fix integration/bundling defects.
 - [ ] Review `git diff origin/master...HEAD` against every requirement and remove stale visible Grill/grelhar and `decidedBy` references, excluding compatibility identifiers and historical ADR text.
 - [ ] Run the full checks again and record final evidence.
-

@@ -29,11 +29,7 @@ export interface AssertCanStartCeremonyInput {
 
 export interface CeremonyDumpInput {
   readonly sessionId: string;
-  readonly markdown: string;
-  readonly base: string;
-  readonly tasksMarkdown: string;
   readonly estimate: number;
-  readonly confirmPending: boolean;
 }
 
 export interface CeremonyDump {
@@ -213,13 +209,6 @@ export function createCeremonyDump(options: CreateCeremonyDumpOptions): Ceremony
 
 function signedInputSignature(input: CeremonyDumpInput): string {
   return createHash("sha256")
-    .update(JSON.stringify({
-      sessionId: input.sessionId,
-      markdown: input.markdown,
-      base: input.base,
-      tasksMarkdown: input.tasksMarkdown,
-      estimate: input.estimate,
-      confirmPending: input.confirmPending,
-    }))
+    .update(JSON.stringify(input))
     .digest("hex");
 }

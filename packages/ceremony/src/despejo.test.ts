@@ -15,15 +15,26 @@ import type { CeremonyStore } from "./store";
 
 const STORY_ID = 4242;
 const STORY_URL = `https://dev.azure.com/acme/Plataforma/_workitems/edit/${STORY_ID}`;
-const TASKS_MARKDOWN = `## Preparar cálculo
+const SPEC_SUBMISSION = {
+  problem: "O relatório pode divergir da folha no arredondamento.",
+  solution: "Reutilizar a regra bancária da folha.",
+  expectedBehaviors: ["O relatório e a folha exibem a mesma comissão."],
+  implementationDecisions: ["Centralizar o cálculo no módulo compartilhado."],
+  testStrategy: ["Comparar os valores no limite de meio centavo."],
+  outOfScope: ["Recalcular relatórios históricos."],
+  traceability: ["Resolução coletiva sobre arredondamento."],
+} as const;
 
-Entrega o cálculo de comissão como um slice executável.
-
-[Spec da US](${STORY_URL})
-
-### Critérios de aceite
-
-- O cálculo usa a regra bancária.`;
+const TICKETS_SUBMISSION = {
+  tickets: [{
+    id: "calculo",
+    title: "Preparar cálculo",
+    description: "Entrega o cálculo de comissão como um slice executável.",
+    acceptanceCriteria: ["O cálculo usa a regra bancária."],
+    specUrl: "https://untrusted.example/spec",
+    blockedBy: [],
+  }],
+} as const;
 
 interface AzureState {
   description: string;
@@ -163,11 +174,11 @@ function createAzure(): { readonly state: AzureState; readonly fetch: typeof glo
 }
 
 function createFixture(options: {
-  readonly active?: boolean;
   readonly fetch?: (base: typeof globalThis.fetch) => typeof globalThis.fetch;
   readonly onChange?: (sessionId: string) => void;
+  readonly ready?: boolean;
   readonly withDecision?: boolean;
-  readonly withPending?: boolean;
+  readonly withOpenAgenda?: boolean;
 } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), "sprint-griller-despejo-"));
   const store = openCeremonyStore(path.join(directory, "cerimonias.db"));
@@ -180,7 +191,7 @@ function createFixture(options: {
     investigationMarkdown: "## Furos da US\n\n- Sem regra de arredondamento.",
     timeZone: "America/Bahia",
   });
-  if (options.withDecision || options.withPending) {
+  if (options.withDecision) {
     store.askQuestions("session-1", [{
       id: "q1",
       header: "Arredondamento",
@@ -198,7 +209,10 @@ function createFixture(options: {
       answer: "Regra bancária",
     });
   }
-  if (!options.active) store.finishSession("session-1", { status: "encerrada" });
+  if (options.withOpenAgenda) {
+    store.seedRefinementItems("session-1", [{ id: "agenda-1", question: "Qual regra deve ser usada?" }]);
+  }
+  if (options.ready !== false) approveArtifacts(store, "session-1");
   const dossie = readDossie(store, "session-1");
   if (!dossie) throw new Error("expected fixture dossie");
   const azure = createAzure();
@@ -239,15 +253,28 @@ function createFixture(options: {
   };
 }
 
+function approveArtifacts(store: CeremonyStore, sessionId: string): void {
+  const revision = (): number => {
+    const current = store.getSession(sessionId)?.refinement.revision;
+    if (current === undefined) throw new Error(`expected session ${sessionId}`);
+    return current;
+  };
+  store.updateRefinementPhase({
+    sessionId,
+    phase: "revisando-spec",
+    expectedRevision: revision(),
+  });
+  store.submitSpec(sessionId, SPEC_SUBMISSION);
+  store.approveSpec({ sessionId, expectedRevision: revision() });
+  store.submitTickets(sessionId, TICKETS_SUBMISSION);
+  store.approveTickets({ sessionId, expectedRevision: revision() });
+}
+
 function inputFor(dossie: NonNullable<ReturnType<typeof readDossie>>): CeremonyDumpInput {
   if (!dossie) throw new Error("expected dossie");
   return {
     sessionId: dossie.sessionId,
-    markdown: dossie.spec.generated,
-    base: dossie.spec.generated,
-    tasksMarkdown: TASKS_MARKDOWN,
     estimate: 5,
-    confirmPending: true,
   };
 }
 
@@ -255,14 +282,7 @@ describe("CeremonyDump", () => {
   it("should publish the signed artifacts in Azure DevOps and complete the local dump", async () => {
     const { azure, dossie, dump, store } = createFixture();
 
-    await dump.publish({
-      sessionId: dossie.sessionId,
-      markdown: dossie.spec.generated,
-      base: dossie.spec.generated,
-      tasksMarkdown: TASKS_MARKDOWN,
-      estimate: 5,
-      confirmPending: true,
-    });
+    await dump.publish({ sessionId: dossie.sessionId, estimate: 5 });
 
     expect({
       description: azure.description,
@@ -277,22 +297,15 @@ describe("CeremonyDump", () => {
     });
   });
 
-  it.each([
-    ["Spec", (input: ReturnType<typeof inputFor>) => ({ ...input, markdown: `${input.markdown}\nOutra Spec` })],
-    ["Tasks", (input: ReturnType<typeof inputFor>) => ({ ...input, tasksMarkdown: `${input.tasksMarkdown}\nOutra Task` })],
-    ["estimativa", (input: ReturnType<typeof inputFor>) => ({ ...input, estimate: 8 })],
-  ] as const)(
-    "should reject completed dump calls with conflicting signed %s",
-    async (_field, conflict) => {
-      const fixture = createFixture();
-      const input = inputFor(fixture.dossie);
-      await fixture.dump.publish(input);
+  it("should reject a completed dump retry with a conflicting signed estimate", async () => {
+    const fixture = createFixture();
+    const input = inputFor(fixture.dossie);
+    await fixture.dump.publish(input);
 
-      await expect(fixture.dump.publish(conflict(input))).rejects.toThrow(
-        /Spec assinada|Tasks assinadas|estimativa assinada/i,
-      );
-    },
-  );
+    await expect(fixture.dump.publish({ ...input, estimate: 8 })).rejects.toThrow(
+      /estimativa assinada/i,
+    );
+  });
 
   it("should deduplicate concurrent publication of the same signed inputs", async () => {
     let release!: () => void;
@@ -349,67 +362,6 @@ describe("CeremonyDump", () => {
     await publishing;
   });
 
-  it("should reject a different base while the same story is publishing", async () => {
-    let release!: () => void;
-    let entered!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    const requestStarted = new Promise<void>((resolve) => { entered = resolve; });
-    let heldOnce = false;
-    const fixture = createFixture({
-      fetch: (base) => async (request, init) => {
-        if (!heldOnce) {
-          heldOnce = true;
-          entered();
-          await held;
-        }
-        return base(request, init);
-      },
-    });
-    const input = inputFor(fixture.dossie);
-    const publishing = fixture.dump.publish(input);
-    await requestStarted;
-
-    try {
-      await expect(fixture.dump.publish({ ...input, base: "# Outra base" })).rejects.toThrow(
-        /outros valores assinados/i,
-      );
-    } finally {
-      release();
-      await publishing;
-    }
-  });
-
-  it("should not let an unconfirmed pending caller join a confirmed publication", async () => {
-    let release!: () => void;
-    let entered!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    const requestStarted = new Promise<void>((resolve) => { entered = resolve; });
-    let heldOnce = false;
-    const fixture = createFixture({
-      withPending: true,
-      fetch: (base) => async (request, init) => {
-        if (!heldOnce) {
-          heldOnce = true;
-          entered();
-          await held;
-        }
-        return base(request, init);
-      },
-    });
-    const input = inputFor(fixture.dossie);
-    const publishing = fixture.dump.publish(input);
-    await requestStarted;
-
-    try {
-      await expect(fixture.dump.publish({ ...input, confirmPending: false })).rejects.toThrow(
-        /outros valores assinados/i,
-      );
-    } finally {
-      release();
-      await publishing;
-    }
-  });
-
   it("should serialize separate sessions of the same story", async () => {
     let release!: () => void;
     let entered!: () => void;
@@ -434,6 +386,8 @@ describe("CeremonyDump", () => {
       investigationMarkdown: "## Furos da US\n\n- Sem regra de arredondamento.",
       timeZone: "America/Bahia",
     });
+    approveArtifacts(fixture.store, "session-2");
+    fixture.store.finishSession("session-1", { status: "encerrada" });
     fixture.store.finishSession("session-2", { status: "encerrada" });
     const secondDossie = readDossie(fixture.store, "session-2");
     if (!secondDossie) throw new Error("expected second dossie");
@@ -453,10 +407,12 @@ describe("CeremonyDump", () => {
   it("should preserve local, investigation, then remote start-blocker precedence", async () => {
     const fixture = createFixture();
     const input = inputFor(fixture.dossie);
+    const approved = fixture.store.getApprovedArtifacts(input.sessionId);
+    if (!approved) throw new Error("expected approved artifacts");
     fixture.store.beginDump(input.sessionId, {
       dumpId: "local-incomplete",
-      markdown: input.markdown,
-      tasksMarkdown: input.tasksMarkdown,
+      markdown: approved.spec.markdown,
+      tasksMarkdown: approved.tickets.markdown,
       estimate: input.estimate,
     });
     fixture.azure.description = dumpMarker("remote-incomplete", "spec");
@@ -598,42 +554,29 @@ describe("CeremonyDump", () => {
       .toHaveLength(1);
   });
 
-  it("should reject a stale Spec before resolving Azure DevOps options", async () => {
-    const stale = createFixture();
-    const staleInput = inputFor(stale.dossie);
-    await expect(stale.dump.publish({
-      ...staleInput,
-      markdown: `${staleInput.markdown}\ntexto não salvo`,
-    })).rejects.toThrow(/salve a edição/i);
-    expect(stale.adoOptionsCalls()).toBe(0);
-  });
-
-  it("should reject an unsigned Spec before resolving Azure DevOps options", async () => {
-    const unsigned = createFixture({ withDecision: true });
-    const generated = unsigned.dossie.spec.generated;
-    const markdown = generated.replace(
-      /- \*\*A comissão usa a regra bancária\?\*\* — Regra bancária\n(?=\s*$)/m,
-      "",
-    );
-    const database = new Database(unsigned.dbPath);
-    database.prepare(
-      "INSERT INTO spec_drafts (session_id, markdown, base, saved_at) VALUES (?, ?, ?, ?)",
-    ).run("session-1", markdown, generated, Date.now());
+  it("should revalidate the approved server-side Spec before resolving Azure DevOps options", async () => {
+    const invalid = createFixture();
+    const database = new Database(invalid.dbPath);
+    database.prepare("UPDATE spec_artifacts SET approved_markdown = ? WHERE session_id = ?")
+      .run("# Spec inválida", "session-1");
     database.close();
 
-    await expect(unsigned.dump.publish({
-      ...inputFor(unsigned.dossie),
-      markdown,
-    })).rejects.toThrow(/rastreabilidade/i);
-    expect(unsigned.adoOptionsCalls()).toBe(0);
+    await expect(invalid.dump.publish(inputFor(invalid.dossie))).rejects.toThrow(
+      /Spec estruturada|Problema/i,
+    );
+    expect(invalid.adoOptionsCalls()).toBe(0);
   });
 
-  it("should reject invalid Tasks before ADO", async () => {
+  it("should revalidate the approved server-side Tickets before ADO", async () => {
     const invalidTasks = createFixture();
-    await expect(invalidTasks.dump.publish({
-      ...inputFor(invalidTasks.dossie),
-      tasksMarkdown: "## Task sem contrato",
-    })).rejects.toThrow(/slice vertical|critérios de aceite/i);
+    const database = new Database(invalidTasks.dbPath);
+    database.prepare("UPDATE ticket_artifacts SET approved_markdown = ? WHERE session_id = ?")
+      .run("## Ticket sem contrato", "session-1");
+    database.close();
+
+    await expect(invalidTasks.dump.publish(inputFor(invalidTasks.dossie))).rejects.toThrow(
+      /slice vertical|critérios de aceite/i,
+    );
     expect(invalidTasks.adoOptionsCalls()).toBe(0);
   });
 
@@ -646,20 +589,18 @@ describe("CeremonyDump", () => {
     expect(invalidEstimate.adoOptionsCalls()).toBe(0);
   });
 
-  it("should reject unconfirmed pending questions before ADO", async () => {
-    const pending = createFixture({ withPending: true });
-    await expect(pending.dump.publish({
-      ...inputFor(pending.dossie),
-      confirmPending: false,
-    })).rejects.toThrow(/confirme/i);
+  it("should reject an open Agenda before ADO", async () => {
+    const pending = createFixture({ withOpenAgenda: true });
+
+    await expect(pending.dump.publish(inputFor(pending.dossie))).rejects.toThrow(/Agenda.*vazia/i);
     expect(pending.adoOptionsCalls()).toBe(0);
   });
 
-  it("should reject publication before the ceremony ends", async () => {
-    const fixture = createFixture({ active: true });
+  it("should reject publication before the Spec and Tickets are approved", async () => {
+    const fixture = createFixture({ ready: false });
 
     await expect(fixture.dump.publish(inputFor(fixture.dossie))).rejects.toThrow(
-      /encerre a cerimônia/i,
+      /aprove a Spec e os Tickets/i,
     );
 
     expect(fixture.adoOptionsCalls()).toBe(0);
@@ -703,31 +644,9 @@ describe("CeremonyDump", () => {
       status: fixture.store.getSession(fixture.dossie.sessionId)?.dump.status,
     }).toEqual({
       wroteEveryArtifact: true,
-      description: expect.stringContaining("Exportar relatório de comissões"),
+      description: expect.stringContaining("Spec da US"),
       status: "completed",
     });
-  });
-
-  it("should ignore stale editor base while retrying frozen inputs", async () => {
-    let failCompletion = true;
-    const fixture = createFixture({
-      fetch: (base) => async (request, init) => {
-        const description = patchValue(requestBody(init), "/fields/System.Description");
-        if (failCompletion && typeof description === "string" && description.includes(":complete -->")) {
-          failCompletion = false;
-          return json({ message: "transient" }, 500);
-        }
-        return base(request, init);
-      },
-    });
-    const input = inputFor(fixture.dossie);
-
-    await expect(fixture.dump.publish(input)).rejects.toThrow(/pode ter acontecido/i);
-
-    await expect(fixture.dump.publish({
-      ...input,
-      base: "# base obsoleta de outra aba",
-    })).resolves.toBeUndefined();
   });
 
   it("should freeze the signed snapshot before asynchronous ADO preflight", async () => {
@@ -737,7 +656,6 @@ describe("CeremonyDump", () => {
     const requestStarted = new Promise<void>((resolve) => { entered = resolve; });
     let heldOnce = false;
     const fixture = createFixture({
-      withPending: true,
       fetch: (base) => async (request, init) => {
         if (!heldOnce) {
           heldOnce = true;
@@ -750,10 +668,9 @@ describe("CeremonyDump", () => {
     const publishing = fixture.dump.publish(inputFor(fixture.dossie));
     await requestStarted;
 
-    await expect(Promise.resolve().then(() => fixture.store.recordDecision({
+    await expect(Promise.resolve().then(() => fixture.store.reopenRefinement({
       sessionId: fixture.dossie.sessionId,
-      questionId: "q1",
-      answer: "Regra bancária",
+      expectedRevision: fixture.dossie.refinement.revision,
     }))).rejects.toThrow(/despejo/i);
 
     release();
@@ -772,7 +689,7 @@ describe("CeremonyDump", () => {
       investigationMarkdown: "## Furos da US\n\n- Sem regra de arredondamento.",
       timeZone: "America/Bahia",
     });
-    fixture.store.finishSession("session-2", { status: "encerrada" });
+    approveArtifacts(fixture.store, "session-2");
     const secondDossie = readDossie(fixture.store, "session-2");
     if (!secondDossie) throw new Error("expected second dossie");
 

@@ -44,15 +44,10 @@ const startInput = {
   investigationMarkdown: "## Furos da US\n\n- Sem regra de arredondamento.",
 };
 
-const tasksMarkdown = `## Preparar cálculo
-
-Entrega o cálculo de comissão como um slice executável.
-
-[Spec da US](https://dev.azure.com/acme/Plataforma/_workitems/edit/42)
-
-### Critérios de aceite
-
-- O cálculo usa a regra bancária.`;
+const resolvedStartInput = {
+  ...startInput,
+  investigationMarkdown: "# Investigação sem furos",
+};
 
 const directories: string[] = [];
 const logLines: string[] = [];
@@ -98,6 +93,75 @@ function terminalRuntime(close = vi.fn(async () => undefined)): AgentRuntime {
   return {
     startSession: async () => terminalSession(`thread-${++sessions}`),
     resumeSession: async (sessionId) => terminalSession(sessionId),
+    close,
+  };
+}
+
+function workflowRuntime(close = vi.fn(async () => undefined)): AgentRuntime {
+  let sessions = 0;
+  const resumeCount = new Map<string, number>();
+  const session = (id: string, stage: "completion" | "spec" | "tickets"): AgentSession => ({
+    id,
+    send() {
+      return (async function* () {
+        if (stage === "completion") {
+          yield {
+            type: "completion-proposal",
+            proposal: {
+              submission: { summary: "Agenda vazia." },
+              respond: async () => undefined,
+            },
+          } as const;
+        } else if (stage === "spec") {
+          yield {
+            type: "spec-submission",
+            submission: {
+              submission: {
+                problem: "Problema.",
+                solution: "Solução.",
+                expectedBehaviors: ["Comportamento."],
+                implementationDecisions: ["Decisão."],
+                testStrategy: ["Teste."],
+                outOfScope: ["Fora."],
+                traceability: ["Registro."],
+              },
+              respond: async () => undefined,
+            },
+          } as const;
+        } else {
+          yield {
+            type: "tickets-submission",
+            submission: {
+              submission: {
+                tickets: [{
+                  id: "ticket",
+                  title: "Preparar cálculo",
+                  description: "Entrega um slice vertical completo.",
+                  acceptanceCriteria: ["A entrega é observável."],
+                  specUrl: "https://untrusted.example/spec",
+                  blockedBy: [],
+                }],
+              },
+              respond: async () => undefined,
+            },
+          } as const;
+        }
+        yield {
+          type: "turn-completed",
+          turn: { id: stage, status: "completed", durationMs: 1 },
+        } as const;
+      })();
+    },
+    interrupt: async () => undefined,
+  });
+
+  return {
+    startSession: async () => session(`thread-${++sessions}`, "completion"),
+    resumeSession: async (id) => {
+      const count = (resumeCount.get(id) ?? 0) + 1;
+      resumeCount.set(id, count);
+      return session(id, count === 1 ? "spec" : "tickets");
+    },
     close,
   };
 }
@@ -241,10 +305,32 @@ async function terminalDossie(
   lifecycle: ReturnType<typeof createCeremonyLifecycle>,
 ): Promise<NonNullable<ReturnType<typeof lifecycle.dossie>>> {
   const session = await lifecycle.start(STORY_ID);
-  await vi.waitFor(() => expect(lifecycle.dossie(session.id)?.status).toBe("encerrada"));
-  const dossie = lifecycle.dossie(session.id);
+  await vi.waitFor(() =>
+    expect(lifecycle.dossie(session.id)?.refinement.phase).toBe("aguardando-confirmacao"),
+  );
+  let dossie = lifecycle.dossie(session.id);
   if (!dossie) throw new Error("expected dossie");
-  return dossie;
+  await lifecycle.confirmRefinement({
+    sessionId: session.id,
+    expectedRevision: dossie.refinement.revision,
+  });
+  await vi.waitFor(() => expect(lifecycle.dossie(session.id)?.artifacts.spec).not.toBeNull());
+  dossie = lifecycle.dossie(session.id);
+  if (!dossie) throw new Error("expected dossie");
+  await lifecycle.approveSpec({
+    sessionId: session.id,
+    expectedRevision: dossie.refinement.revision,
+  });
+  await vi.waitFor(() => expect(lifecycle.dossie(session.id)?.artifacts.tickets).not.toBeNull());
+  dossie = lifecycle.dossie(session.id);
+  if (!dossie) throw new Error("expected dossie");
+  await lifecycle.approveTickets({
+    sessionId: session.id,
+    expectedRevision: dossie.refinement.revision,
+  });
+  const ready = lifecycle.dossie(session.id);
+  if (!ready) throw new Error("expected dossie");
+  return ready;
 }
 
 function adoOptions(): AdoClientOptions {
@@ -255,6 +341,79 @@ function adoOptions(): AdoClientOptions {
 }
 
 describe("CeremonyLifecycle", () => {
+  it("should drive explicit confirmation and versioned Spec/Ticket approval gates", async () => {
+    const verdicts: boolean[] = [];
+    let resumes = 0;
+    const eventSession = (id: string, event: "completion" | "spec" | "tickets"): AgentSession => ({
+      id,
+      send() {
+        return (async function* () {
+          if (event === "completion") {
+            yield {
+              type: "completion-proposal",
+              proposal: {
+                submission: { summary: "Agenda vazia." },
+                respond: async ({ accepted }: { readonly accepted: boolean }) => { verdicts.push(accepted); },
+              },
+            } as const;
+          } else if (event === "spec") {
+            yield {
+              type: "spec-submission",
+              submission: {
+                submission: {
+                  problem: "Problema.", solution: "Solução.", expectedBehaviors: ["Comportamento."],
+                  implementationDecisions: ["Decisão."], testStrategy: ["Teste."],
+                  outOfScope: ["Fora."], traceability: ["Registro."],
+                },
+                respond: async ({ accepted }: { readonly accepted: boolean }) => { verdicts.push(accepted); },
+              },
+            } as const;
+          } else {
+            yield {
+              type: "tickets-submission",
+              submission: {
+                submission: { tickets: [{
+                  id: "ticket", title: "Entregar slice", description: "Slice vertical completo.",
+                  acceptanceCriteria: ["Entrega observável."], specUrl: "https://ignored.example",
+                  blockedBy: [],
+                }] },
+                respond: async ({ accepted }: { readonly accepted: boolean }) => { verdicts.push(accepted); },
+              },
+            } as const;
+          }
+          yield { type: "turn-completed", turn: { id: event, status: "completed", durationMs: 1 } } as const;
+        })();
+      },
+      interrupt: async () => undefined,
+    });
+    const runtime: AgentRuntime = {
+      startSession: async () => eventSession("thread-1", "completion"),
+      resumeSession: async (id) => eventSession(id, ++resumes === 1 ? "spec" : "tickets"),
+      close: async () => undefined,
+    };
+    const lifecycle = createTestLifecycle({
+      dbPath: dbPath(), repos, adoOptions, runtimeFactory: async () => runtime,
+      resolveStartInput: () => ({ ...startInput, investigationMarkdown: "# Investigação sem furos" }),
+    });
+    const session = await lifecycle.start(STORY_ID);
+    await vi.waitFor(() => expect(lifecycle.dossie(session.id)?.refinement.phase).toBe("aguardando-confirmacao"));
+
+    await lifecycle.confirmRefinement({ sessionId: session.id, expectedRevision: 1 });
+    await vi.waitFor(() => expect(lifecycle.dossie(session.id)?.artifacts.spec?.revision).toBe(1));
+    await lifecycle.approveSpec({ sessionId: session.id, expectedRevision: 3 });
+    await vi.waitFor(() => expect(lifecycle.dossie(session.id)?.artifacts.tickets?.revision).toBe(1));
+    await lifecycle.approveTickets({ sessionId: session.id, expectedRevision: 5 });
+
+    expect(lifecycle.dossie(session.id)).toMatchObject({
+      refinement: { phase: "pronto-para-publicar", revision: 6 },
+      artifacts: {
+        spec: { revision: 1, approval: { revision: 1 } },
+        tickets: { revision: 1, approval: { revision: 1 } },
+      },
+    });
+    expect(verdicts).toEqual([true, true, true]);
+    await lifecycle.close();
+  });
   it("should start an approved Investigation through one lazy runtime", async () => {
     readIncompleteDumps.mockResolvedValue([]);
     const runtimeFactory = vi.fn(async () => terminalRuntime());
@@ -369,22 +528,20 @@ describe("CeremonyLifecycle", () => {
     const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
-      resolveStartInput: () => startInput,
+      resolveStartInput: () => resolvedStartInput,
       adoOptions,
-      runtimeFactory: async () => terminalRuntime(),
+      runtimeFactory: async () => workflowRuntime(),
     });
     const previous = await terminalDossie(lifecycle);
+    await lifecycle.dump({ sessionId: previous.sessionId, estimate: 3 });
+    readIncompleteDumps.mockClear();
     readIncompleteDumps.mockImplementationOnce(() => preflight);
 
     const starting = lifecycle.start(STORY_ID);
-    await vi.waitFor(() => expect(readIncompleteDumps).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(readIncompleteDumps).toHaveBeenCalledTimes(1));
     await expect(lifecycle.dump({
       sessionId: previous.sessionId,
-      markdown: previous.spec.generated,
-      base: previous.spec.generated,
-      tasksMarkdown,
       estimate: 3,
-      confirmPending: true,
     })).rejects.toThrow(/já está abrindo outra cerimônia/i);
 
     releasePreflight();
@@ -392,28 +549,26 @@ describe("CeremonyLifecycle", () => {
     await lifecycle.close();
   });
 
-  it("should block a start when a prior dump has reserved the same User Story", async () => {
+  it("should return the current session when its publication is still in flight", async () => {
     let releaseDumpRead: () => void = () => undefined;
     const dumpRead = new Promise<readonly string[]>((resolve) => { releaseDumpRead = () => resolve([]); });
     const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
-      resolveStartInput: () => startInput,
+      resolveStartInput: () => resolvedStartInput,
       adoOptions,
-      runtimeFactory: async () => terminalRuntime(),
+      runtimeFactory: async () => workflowRuntime(),
     });
     const previous = await terminalDossie(lifecycle);
     readDumpCompletion.mockImplementationOnce(() => dumpRead);
     const dumping = lifecycle.dump({
       sessionId: previous.sessionId,
-      markdown: previous.spec.generated,
-      base: previous.spec.generated,
-      tasksMarkdown,
       estimate: 3,
-      confirmPending: true,
     });
 
-    await expect(lifecycle.start(STORY_ID)).rejects.toThrow(/despejo incompleto/i);
+    const reopened = await lifecycle.start(STORY_ID);
+
+    expect(reopened.id).toBe(previous.sessionId);
 
     releaseDumpRead();
     await dumping;
@@ -429,19 +584,15 @@ describe("CeremonyLifecycle", () => {
     const lifecycle = createTestLifecycle({
       dbPath: pathToDb,
       repos,
-      resolveStartInput: () => startInput,
+      resolveStartInput: () => resolvedStartInput,
       adoOptions,
-      runtimeFactory: async () => terminalRuntime(),
+      runtimeFactory: async () => workflowRuntime(),
     });
     const previous = await terminalDossie(lifecycle);
     readDumpCompletion.mockImplementationOnce(() => dumpRead);
     const dumping = lifecycle.dump({
       sessionId: previous.sessionId,
-      markdown: previous.spec.generated,
-      base: previous.spec.generated,
-      tasksMarkdown,
       estimate: 3,
-      confirmPending: true,
     });
 
     const closing = lifecycle.close();
@@ -572,9 +723,9 @@ describe("CeremonyLifecycle", () => {
     const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
-      resolveStartInput: () => startInput,
+      resolveStartInput: () => resolvedStartInput,
       adoOptions,
-      runtimeFactory: async () => terminalRuntime(),
+      runtimeFactory: async () => workflowRuntime(),
     });
     const dossie = await terminalDossie(lifecycle);
     const broken = vi.fn(() => { throw new Error("SSE caiu"); });
@@ -663,19 +814,15 @@ describe("CeremonyLifecycle", () => {
     const lifecycle = createTestLifecycle({
       dbPath: pathToDb,
       repos,
-      resolveStartInput: () => startInput,
+      resolveStartInput: () => resolvedStartInput,
       adoOptions,
-      runtimeFactory: async () => terminalRuntime(closeRuntime),
+      runtimeFactory: async () => workflowRuntime(closeRuntime),
     });
     const previous = await terminalDossie(lifecycle);
     readDumpCompletion.mockImplementationOnce(() => dumpRead);
     const dumping = lifecycle.dump({
       sessionId: previous.sessionId,
-      markdown: previous.spec.generated,
-      base: previous.spec.generated,
-      tasksMarkdown,
       estimate: 3,
-      confirmPending: true,
     });
     const closing = lifecycle.close();
 

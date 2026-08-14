@@ -4,6 +4,7 @@
  */
 
 import type { CeremonyDumpState } from "./dump-state";
+import type { RefinementArtifactState } from "./artifact-workflow";
 
 export type { CeremonyDumpState, SignedDumpInputs } from "./dump-state";
 
@@ -349,6 +350,8 @@ export interface DossieState extends DossieDocument {
   readonly status: SessionStatus;
   /** Fuso capturado na abertura da cerimônia, usado para exibir decisões. */
   readonly timeZone: string;
+  readonly refinement: RefinementState;
+  readonly artifacts: RefinementArtifactState;
   /** Rascunho de Tasks que o agente redigiu no encerramento da cerimônia. */
   readonly taskPreview: string;
   readonly dump: CeremonyDumpState;

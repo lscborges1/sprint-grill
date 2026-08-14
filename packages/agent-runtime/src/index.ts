@@ -1,4 +1,8 @@
 export { createAgentRuntime } from "./runtime";
+export {
+  refinementSpecSubmissionSchema,
+  refinementTicketsSubmissionSchema,
+} from "./codex/protocol";
 export type { CreateAgentRuntimeOptions } from "./runtime";
 export { AgentRuntimeError } from "./types";
 export type {

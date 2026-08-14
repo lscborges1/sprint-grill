@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendDecisionTraceability,
+  assertValidStructuredSpecMarkdown,
   assertValidSpecMarkdown,
   readSpecSection,
   renderSpecMarkdown,
+  renderStructuredSpecMarkdown,
   stripDecisionRecordLinks,
 } from "./spec";
 import { SPEC_SECTIONS } from "./spec-vocabulary";
@@ -50,6 +52,49 @@ const REFINED: DossieDocument = {
 };
 
 describe("renderSpecMarkdown", () => {
+  it("should render every canonical structured Spec section deterministically", () => {
+    const markdown = renderStructuredSpecMarkdown({
+      problem: "Pedidos duplicados chegam ao ERP.",
+      solution: "Aplicar uma chave idempotente no envio.",
+      expectedBehaviors: ["Reenvios devolvem o pedido original."],
+      implementationDecisions: ["Persistir a chave junto ao pedido."],
+      testStrategy: ["Cobrir dois envios concorrentes com a mesma chave."],
+      outOfScope: ["Deduplicar pedidos históricos."],
+      traceability: ["Decisão: usar a chave enviada pelo cliente."],
+    });
+
+    expect(markdown).toBe(`# Spec da US
+
+## Problema
+
+Pedidos duplicados chegam ao ERP.
+
+## Solução
+
+Aplicar uma chave idempotente no envio.
+
+## Comportamentos esperados
+
+- Reenvios devolvem o pedido original.
+
+## Decisões de implementação
+
+- Persistir a chave junto ao pedido.
+
+## Estratégia de testes
+
+- Cobrir dois envios concorrentes com a mesma chave.
+
+## Fora de escopo
+
+- Deduplicar pedidos históricos.
+
+## Rastreabilidade
+
+- Decisão: usar a chave enviada pelo cliente.
+`);
+    expect(() => assertValidStructuredSpecMarkdown(markdown)).not.toThrow();
+  });
   it("should title the spec with the story id and title", () => {
     expect(renderSpecMarkdown(REFINED)).toContain(
       "# Spec da US #4211 — TTL de sessão configurável",

@@ -18,6 +18,8 @@ import {
 } from "./prompt";
 import type { CeremonyStory } from "./prompt";
 import type { CeremonyStore, RecordDecisionInput } from "./store";
+import type { ArtifactGateInput } from "./store";
+import type { ArtifactApproval, TicketArtifact } from "./artifact-workflow";
 import type {
   CeremonyConsultation,
   CeremonyDecision,
@@ -57,6 +59,11 @@ export interface Ceremony {
    */
   consult(input: ConsultInput): CeremonyConsultation;
   resume(sessionId: string): Promise<void>;
+  confirmRefinement(input: ArtifactGateInput): Promise<void>;
+  continueRefining(input: ArtifactGateInput): Promise<void>;
+  approveSpec(input: ArtifactGateInput): Promise<ArtifactApproval>;
+  approveTickets(input: ArtifactGateInput): Promise<NonNullable<TicketArtifact["approval"]>>;
+  reopenRefinement(input: ArtifactGateInput): Promise<void>;
   palco(sessionId: string): PalcoState | undefined;
 }
 
@@ -227,11 +234,10 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
               break;
 
             case "spec-submission":
+              await receiveSpecSubmission(sessionId, event.submission);
+              break;
             case "tickets-submission":
-              await event.submission.respond({
-                accepted: false,
-                message: "Esta submissão não pertence à fase Refinar.",
-              });
+              await receiveTicketsSubmission(sessionId, event.submission);
               break;
 
             case "approval":
@@ -316,6 +322,54 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     });
     changed(sessionId);
     return true;
+  }
+
+  async function receiveSpecSubmission(
+    sessionId: string,
+    pending: Extract<AgentEvent, { readonly type: "spec-submission" }>["submission"],
+  ): Promise<void> {
+    if (store.getSession(sessionId)?.refinement.phase !== "revisando-spec") {
+      await pending.respond({ accepted: false, message: "A Spec só pertence à fase Revisar Spec." });
+      return;
+    }
+    try {
+      store.submitSpec(sessionId, pending.submission);
+      await pending.respond({ accepted: true, message: "Spec estruturada pronta para revisão humana." });
+      changed(sessionId);
+    } catch (error) {
+      await pending.respond({
+        accepted: false,
+        message: error instanceof Error ? error.message : "A Spec estruturada é inválida.",
+      });
+    }
+  }
+
+  async function receiveTicketsSubmission(
+    sessionId: string,
+    pending: Extract<AgentEvent, { readonly type: "tickets-submission" }>["submission"],
+  ): Promise<void> {
+    if (store.getSession(sessionId)?.refinement.phase !== "revisando-tickets") {
+      await pending.respond({ accepted: false, message: "Os Tickets só pertencem à fase Revisar Tickets." });
+      return;
+    }
+    try {
+      store.submitTickets(sessionId, pending.submission);
+      await pending.respond({ accepted: true, message: "Tickets estruturados prontos para revisão humana." });
+      changed(sessionId);
+    } catch (error) {
+      await pending.respond({
+        accepted: false,
+        message: error instanceof Error ? error.message : "Os Tickets estruturados são inválidos.",
+      });
+    }
+  }
+
+  async function startReviewTurn(sessionId: string, prompt: string): Promise<void> {
+    while (lives.get(sessionId)?.running) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    const agentSession = await runtime.resumeSession(sessionId, { tools: CEREMONY_AGENT_TOOLS });
+    kick(agentSession, prompt);
   }
 
   async function receiveQuestion(
@@ -590,6 +644,58 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       if (lives.get(sessionId)?.running) return;
 
       await resumeFrom(sessionId);
+    },
+
+    async confirmRefinement(input) {
+      const session = store.getSession(input.sessionId);
+      if (!session) throw new CeremonyError(`cerimônia ${input.sessionId} não existe.`);
+      if (session.refinement.phase !== "aguardando-confirmacao") {
+        throw new CeremonyError("a confirmação só pode ocorrer quando a sala está aguardando confirmação.");
+      }
+      const openAgenda = store.listRefinementItems(input.sessionId)
+        .filter((item) => item.status !== "resolvido" && item.status !== "fora-de-escopo");
+      if (openAgenda.length > 0) throw new CeremonyError("resolva toda a Agenda antes de confirmar.");
+      store.updateRefinementPhase({ ...input, phase: "revisando-spec" });
+      changed(input.sessionId);
+      await startReviewTurn(input.sessionId, "Submeta agora a Spec estruturada com todos os campos obrigatórios.");
+    },
+
+    async continueRefining(input) {
+      const session = store.getSession(input.sessionId);
+      if (session?.refinement.phase !== "aguardando-confirmacao") {
+        throw new CeremonyError("só é possível continuar enquanto a sala aguarda confirmação.");
+      }
+      store.updateRefinementPhase({ ...input, phase: "refinando" });
+      changed(input.sessionId);
+      await startReviewTurn(
+        input.sessionId,
+        ceremonyResumePrompt(store.listDecisions(input.sessionId), store.listRefinementItems(input.sessionId)),
+      );
+    },
+
+    async approveSpec(input) {
+      const approval = store.approveSpec(input);
+      changed(input.sessionId);
+      await startReviewTurn(
+        input.sessionId,
+        "A Spec foi aprovada. Submeta agora os Tickets estruturados como slices verticais completos.",
+      );
+      return approval;
+    },
+
+    async approveTickets(input) {
+      const approval = store.approveTickets(input);
+      changed(input.sessionId);
+      return approval;
+    },
+
+    async reopenRefinement(input) {
+      store.reopenRefinement(input);
+      changed(input.sessionId);
+      await startReviewTurn(
+        input.sessionId,
+        ceremonyResumePrompt(store.listDecisions(input.sessionId), store.listRefinementItems(input.sessionId)),
+      );
     },
 
     palco(sessionId) {

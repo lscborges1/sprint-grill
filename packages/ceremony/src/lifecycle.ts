@@ -14,6 +14,7 @@ import { openCeremonyStore } from "./store";
 import type {
   CeremonyStore,
   DiscardSpecDraftInput,
+  ArtifactGateInput,
   RecordDecisionInput,
   SaveSpecDraftInput,
 } from "./store";
@@ -25,6 +26,7 @@ import type {
   PalcoState,
   SpecDraft,
 } from "./types";
+import type { ArtifactApproval, TicketArtifact } from "./artifact-workflow";
 
 export interface CreateCeremonyLifecycleOptions {
   readonly dbPath: string;
@@ -49,6 +51,11 @@ export interface CeremonyLifecycle {
   decide(input: RecordDecisionInput): Promise<CeremonyDecision>;
   consult(input: ConsultInput): Promise<CeremonyConsultation>;
   resume(sessionId: string): Promise<void>;
+  confirmRefinement(input: ArtifactGateInput): Promise<void>;
+  continueRefining(input: ArtifactGateInput): Promise<void>;
+  approveSpec(input: ArtifactGateInput): Promise<ArtifactApproval>;
+  approveTickets(input: ArtifactGateInput): Promise<NonNullable<TicketArtifact["approval"]>>;
+  reopenRefinement(input: ArtifactGateInput): Promise<void>;
   saveSpecDraft(input: SaveSpecDraftInput): SpecDraft;
   discardSpecDraft(input: DiscardSpecDraftInput): void;
   dump(input: CeremonyDumpInput): Promise<void>;
@@ -256,6 +263,26 @@ export function createCeremonyLifecycle(
 
     async resume(sessionId) {
       await (await getCeremony()).resume(sessionId);
+    },
+
+    async confirmRefinement(input) {
+      await (await getCeremony()).confirmRefinement(input);
+    },
+
+    async continueRefining(input) {
+      await (await getCeremony()).continueRefining(input);
+    },
+
+    async approveSpec(input) {
+      return (await getCeremony()).approveSpec(input);
+    },
+
+    async approveTickets(input) {
+      return (await getCeremony()).approveTickets(input);
+    },
+
+    async reopenRefinement(input) {
+      await (await getCeremony()).reopenRefinement(input);
     },
 
     saveSpecDraft(input) {

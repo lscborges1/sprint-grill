@@ -149,6 +149,34 @@ export const specDrafts = sqliteTable("spec_drafts", {
   savedAt: integer("saved_at").notNull(),
 });
 
+export const specArtifacts = sqliteTable("spec_artifacts", {
+  sessionId: text("session_id").primaryKey(),
+  revision: integer("revision").notNull(),
+  submission: text("submission").notNull(),
+  markdown: text("markdown").notNull(),
+  submittedAt: integer("submitted_at").notNull(),
+  approvedRevision: integer("approved_revision"),
+  approvedHash: text("approved_hash"),
+  approvedMarkdown: text("approved_markdown"),
+  approvedAt: integer("approved_at"),
+});
+
+export const ticketArtifacts = sqliteTable("ticket_artifacts", {
+  sessionId: text("session_id").primaryKey(),
+  revision: integer("revision").notNull(),
+  submission: text("submission").notNull(),
+  markdown: text("markdown").notNull(),
+  submittedAt: integer("submitted_at").notNull(),
+  specRevision: integer("spec_revision").notNull(),
+  specHash: text("spec_hash").notNull(),
+  approvedRevision: integer("approved_revision"),
+  approvedHash: text("approved_hash"),
+  approvedMarkdown: text("approved_markdown"),
+  approvedSpecRevision: integer("approved_spec_revision"),
+  approvedSpecHash: text("approved_spec_hash"),
+  approvedAt: integer("approved_at"),
+});
+
 export const events = sqliteTable(
   "events",
   {
@@ -166,7 +194,7 @@ export const events = sqliteTable(
  * recusada na abertura, mandando apagar o arquivo — descobrir a divergência no
  * meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -271,6 +299,34 @@ CREATE TABLE IF NOT EXISTS spec_drafts (
   markdown TEXT NOT NULL,
   base TEXT NOT NULL,
   saved_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS spec_artifacts (
+  session_id TEXT PRIMARY KEY NOT NULL,
+  revision INTEGER NOT NULL,
+  submission TEXT NOT NULL,
+  markdown TEXT NOT NULL,
+  submitted_at INTEGER NOT NULL,
+  approved_revision INTEGER,
+  approved_hash TEXT,
+  approved_markdown TEXT,
+  approved_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS ticket_artifacts (
+  session_id TEXT PRIMARY KEY NOT NULL,
+  revision INTEGER NOT NULL,
+  submission TEXT NOT NULL,
+  markdown TEXT NOT NULL,
+  submitted_at INTEGER NOT NULL,
+  spec_revision INTEGER NOT NULL,
+  spec_hash TEXT NOT NULL,
+  approved_revision INTEGER,
+  approved_hash TEXT,
+  approved_markdown TEXT,
+  approved_spec_revision INTEGER,
+  approved_spec_hash TEXT,
+  approved_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS events (

@@ -98,6 +98,12 @@ export type TransitionRefinementItemInput = {
   readonly expectedRevision: number;
 } & RefinementItemTransition;
 
+export interface AskAgendaQuestionInput {
+  readonly sessionId: string;
+  readonly expectedRevision: number;
+  readonly question: CeremonyQuestion & { readonly agendaItemId: string };
+}
+
 export interface SaveSpecDraftInput {
   readonly sessionId: string;
   readonly markdown: string;
@@ -156,6 +162,7 @@ export interface CeremonyStore {
   ): readonly RefinementItem[];
   listRefinementItems(sessionId: string): readonly RefinementItem[];
   transitionRefinementItem(input: TransitionRefinementItemInput): RefinementItem;
+  askAgendaQuestion(input: AskAgendaQuestionInput): RefinementItem;
   submitSpec(sessionId: string, submission: RefinementSpecSubmission): SpecArtifact;
   approveSpec(input: ArtifactGateInput): ArtifactApproval;
   submitTickets(sessionId: string, submission: RefinementTicketsSubmission): TicketArtifact;
@@ -170,6 +177,7 @@ export interface CeremonyStore {
   unansweredQuestions(sessionId: string): readonly CeremonyQuestion[];
   abandonPendingQuestions(sessionId: string): void;
   recordDecision(input: RecordDecisionInput): CeremonyDecision;
+  recordAgendaDecision(input: RecordDecisionInput): CeremonyDecision;
   /** Persiste o comment criado no ADO para que um retry não duplique o Registro. */
   attachDecisionRecord(input: AttachDecisionRecordInput): void;
   /**
@@ -364,22 +372,9 @@ export function openCeremonyStore(
     if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
   }
 
-  function invalidateArtifactApprovals(sessionId: string): void {
-    db.update(specArtifacts)
-      .set({ approvedRevision: null, approvedHash: null, approvedMarkdown: null, approvedAt: null })
-      .where(eq(specArtifacts.sessionId, sessionId))
-      .run();
-    db.update(ticketArtifacts)
-      .set({
-        approvedRevision: null,
-        approvedHash: null,
-        approvedMarkdown: null,
-        approvedSpecRevision: null,
-        approvedSpecHash: null,
-        approvedAt: null,
-      })
-      .where(eq(ticketArtifacts.sessionId, sessionId))
-      .run();
+  function discardStaleArtifacts(sessionId: string): void {
+    db.delete(ticketArtifacts).where(eq(ticketArtifacts.sessionId, sessionId)).run();
+    db.delete(specArtifacts).where(eq(specArtifacts.sessionId, sessionId)).run();
   }
 
   const store: CeremonyStore = {
@@ -725,7 +720,7 @@ export function openCeremonyStore(
           throw new CeremonyError("o refinamento só pode ser reaberto depois da confirmação da sala.");
         }
         if (session.refinement.revision !== expectedRevision) throw staleRevision(sessionId, expectedRevision);
-        invalidateArtifactApprovals(sessionId);
+        discardStaleArtifacts(sessionId);
         const result = db.update(sessions)
           .set({
             refinementPhase: "refinando",
@@ -772,7 +767,7 @@ export function openCeremonyStore(
           "o item da agenda precisa descrever o furo.",
         );
         if (session.refinement.phase !== "refinando") {
-          invalidateArtifactApprovals(sessionId);
+          discardStaleArtifacts(sessionId);
         }
         const suffixes = db
           .select({ itemId: refinementItems.itemId })
@@ -902,6 +897,21 @@ export function openCeremonyStore(
         return toRefinementItem(updated);
       });
       return transition.immediate();
+    },
+
+    askAgendaQuestion({ sessionId, expectedRevision, question }) {
+      assertDossieMutable(sessionId);
+      const ask = sqlite.transaction(() => {
+        const item = store.transitionRefinementItem({
+          sessionId,
+          itemId: question.agendaItemId,
+          status: "aguardando-sala",
+          expectedRevision,
+        });
+        store.askQuestions(sessionId, [question]);
+        return item;
+      });
+      return ask.immediate();
     },
 
     finishSession(sessionId, outcome) {
@@ -1070,6 +1080,39 @@ export function openCeremonyStore(
       });
 
       return decision;
+    },
+
+    recordAgendaDecision(input) {
+      assertDossieMutable(input.sessionId);
+      const decide = sqlite.transaction(() => {
+        const pending = store.currentQuestion(input.sessionId);
+        if (!pending || pending.id !== input.questionId) {
+          throw new CeremonyError(
+            `a pergunta ${input.questionId} não é a pergunta atual desta cerimônia.`,
+          );
+        }
+        const decision = store.recordDecision(input);
+        const item = store
+          .listRefinementItems(input.sessionId)
+          .find((candidate) => candidate.id === pending.agendaItemId);
+        if (!item || item.status === "resolvido" || item.status === "fora-de-escopo") {
+          return decision;
+        }
+        const session = requireSession(input.sessionId);
+        store.transitionRefinementItem({
+          sessionId: input.sessionId,
+          itemId: pending.agendaItemId,
+          status: "resolvido",
+          resolution: {
+            kind: "escolha",
+            answer: decision.answer,
+            recommendation: pending.recommendation,
+          },
+          expectedRevision: session.refinement.revision,
+        });
+        return decision;
+      });
+      return decide.immediate();
     },
 
     attachDecisionRecord({ sessionId, questionSeq, recordId, recordUrl }) {
@@ -1241,7 +1284,7 @@ export function openCeremonyStore(
       const open = sqlite.transaction((): CeremonyConsultation => {
         const session = requireSession(sessionId);
         if (session.refinement.phase !== "refinando") {
-          invalidateArtifactApprovals(sessionId);
+          discardStaleArtifacts(sessionId);
         }
 
         const row = db

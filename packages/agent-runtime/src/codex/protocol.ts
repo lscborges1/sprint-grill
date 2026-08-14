@@ -236,7 +236,7 @@ export const askOperatorToolSpec = {
 } as const;
 
 export const completionProposalArgumentsSchema = z.object({
-  summary: z.string().min(1).describe("Resumo curto de por que a Agenda está encerrada."),
+  summary: z.string().trim().min(1).describe("Resumo curto de por que a Agenda está encerrada."),
 });
 
 export const completionProposalToolSpec = {
@@ -297,14 +297,16 @@ export const agendaResolutionToolSpec = {
   }),
 } as const;
 
+const structuredSpecListEntrySchema = z.string().trim().min(1);
+
 export const refinementSpecSubmissionSchema = z.object({
   problem: z.string().min(1),
   solution: z.string().min(1),
-  expectedBehaviors: z.array(z.string().min(1)),
-  implementationDecisions: z.array(z.string().min(1)),
-  testStrategy: z.array(z.string().min(1)),
-  outOfScope: z.array(z.string().min(1)),
-  traceability: z.array(z.string().min(1)),
+  expectedBehaviors: z.array(structuredSpecListEntrySchema),
+  implementationDecisions: z.array(structuredSpecListEntrySchema),
+  testStrategy: z.array(structuredSpecListEntrySchema),
+  outOfScope: z.array(structuredSpecListEntrySchema),
+  traceability: z.array(structuredSpecListEntrySchema),
 });
 
 export const refinementSpecSubmissionToolSpec = {

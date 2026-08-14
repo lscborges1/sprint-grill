@@ -141,9 +141,9 @@ describe("openCeremonyStore", () => {
     expect(store.getRefinementCompletionProposal("thread-1")).toBeNull();
     const artifacts = store.getArtifactState("thread-1");
     if (phase === "revisando-tickets" || phase === "pronto-para-publicar") {
-      expect(artifacts.spec?.approval).toBeNull();
+      expect(artifacts.spec).toBeNull();
     }
-    if (phase === "pronto-para-publicar") expect(artifacts.tickets?.approval).toBeNull();
+    if (phase === "pronto-para-publicar") expect(artifacts.tickets).toBeNull();
     expect(store.listRefinementItems("thread-1")).toContainEqual(
       expect.objectContaining({
         id: `duvida-${consultation.id}`,
@@ -233,7 +233,7 @@ describe("openCeremonyStore", () => {
     });
   });
 
-  it("should preserve drafts but invalidate approvals when refinement is reopened", () => {
+  it("should discard stale artifact submissions when refinement is reopened", () => {
     const store = open(dbPath());
     newSession(store);
     store.updateRefinementPhase({ sessionId: "thread-1", phase: "revisando-spec", expectedRevision: 0 });
@@ -252,10 +252,7 @@ describe("openCeremonyStore", () => {
     store.reopenRefinement({ sessionId: "thread-1", expectedRevision: 5 });
 
     expect(store.getSession("thread-1")?.refinement.phase).toBe("refinando");
-    expect(store.getArtifactState("thread-1")).toMatchObject({
-      spec: { revision: 1, approval: null },
-      tickets: { revision: 1, approval: null },
-    });
+    expect(store.getArtifactState("thread-1")).toEqual({ spec: null, tickets: null });
     expect(store.getApprovedArtifacts("thread-1")).toBeUndefined();
   });
   it("should persist the initial refinement phase and advance it with a guarded revision", () => {
@@ -604,6 +601,35 @@ describe("refinement agenda", () => {
     });
   });
 
+  it("should require fresh artifact submissions after a late agent item", () => {
+    const store = open(dbPath());
+    newSession(store);
+    advanceToReviewPhase(store, "pronto-para-publicar");
+
+    const item = store.addAgentRefinementItem("thread-1", "O cache expira com a sessão?");
+    store.transitionRefinementItem({
+      sessionId: "thread-1",
+      itemId: item.id,
+      status: "fora-de-escopo",
+      resolution: { kind: "fora-de-escopo", justification: "O cache não faz parte desta entrega." },
+      expectedRevision: 7,
+    });
+    store.proposeRefinementCompletion({
+      sessionId: "thread-1",
+      expectedRevision: 8,
+      summary: "O novo furo foi resolvido.",
+    });
+    store.updateRefinementPhase({
+      sessionId: "thread-1",
+      phase: "revisando-spec",
+      expectedRevision: 9,
+    });
+
+    expect(() =>
+      store.approveSpec({ sessionId: "thread-1", expectedRevision: 10 }),
+    ).toThrow(/ainda não submeteu uma Spec/i);
+  });
+
   it("should roll back reopening when an agent item insert fails", () => {
     const file = dbPath();
     const store = open(file);
@@ -829,6 +855,39 @@ describe("refinement agenda", () => {
 });
 
 describe("askQuestions", () => {
+  it("should roll back the Agenda transition when persisting its question fails", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    store.seedRefinementItems("thread-1", [{ id: "rounding", question: "Qual regra vale?" }]);
+    const raw = new Database(file);
+    raw.exec(`
+      CREATE TRIGGER fail_agenda_question
+      BEFORE INSERT ON questions
+      BEGIN
+        SELECT RAISE(ABORT, 'forced question failure');
+      END;
+    `);
+    raw.close();
+
+    expect(() =>
+      store.askAgendaQuestion({
+        sessionId: "thread-1",
+        expectedRevision: 1,
+        question: { ...question(), agendaItemId: "rounding" },
+      }),
+    ).toThrow(/forced question failure/);
+    expect({
+      refinement: store.getSession("thread-1")?.refinement,
+      item: store.listRefinementItems("thread-1")[0],
+      currentQuestion: store.currentQuestion("thread-1"),
+    }).toEqual({
+      refinement: { phase: "refinando", revision: 1 },
+      item: expect.objectContaining({ id: "rounding", status: "aberto" }),
+      currentQuestion: undefined,
+    });
+  });
+
   it("should hand out questions in the order they were asked", () => {
     const store = open(dbPath());
     newSession(store);
@@ -867,6 +926,47 @@ describe("askQuestions", () => {
 });
 
 describe("recordDecision", () => {
+  it("should roll back a decision when resolving its Agenda item fails", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    store.seedRefinementItems("thread-1", [{ id: "rounding", question: "Qual regra vale?" }]);
+    store.askAgendaQuestion({
+      sessionId: "thread-1",
+      expectedRevision: 1,
+      question: { ...question(), agendaItemId: "rounding" },
+    });
+    const raw = new Database(file);
+    raw.exec(`
+      CREATE TRIGGER fail_agenda_resolution
+      BEFORE UPDATE ON refinement_items
+      WHEN NEW.status = 'resolvido'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced resolution failure');
+      END;
+    `);
+    raw.close();
+
+    expect(() =>
+      store.recordAgendaDecision({
+        sessionId: "thread-1",
+        questionId: "q1",
+        answer: "Regra bancária",
+      }),
+    ).toThrow(/forced resolution failure/);
+    expect({
+      refinement: store.getSession("thread-1")?.refinement,
+      item: store.listRefinementItems("thread-1")[0],
+      currentQuestion: store.currentQuestion("thread-1")?.id,
+      decisions: store.listDecisions("thread-1"),
+    }).toEqual({
+      refinement: { phase: "refinando", revision: 2 },
+      item: expect.objectContaining({ id: "rounding", status: "aguardando-sala" }),
+      currentQuestion: "q1",
+      decisions: [],
+    });
+  });
+
   it("should record an authorless room choice with an automatic timestamp", () => {
     const store = open(dbPath());
     newSession(store);

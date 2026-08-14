@@ -318,11 +318,17 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       return false;
     }
 
-    store.proposeRefinementCompletion({
-      sessionId,
-      expectedRevision: session.refinement.revision,
-      summary: proposal.submission.summary,
-    });
+    try {
+      store.proposeRefinementCompletion({
+        sessionId,
+        expectedRevision: session.refinement.revision,
+        summary: proposal.submission.summary,
+      });
+    } catch (error) {
+      if (!(error instanceof CeremonyError)) throw error;
+      await proposal.respond({ accepted: false, message: error.message });
+      return false;
+    }
     await proposal.respond({
       accepted: true,
       message: "Agenda encerrada. A sala agora precisa confirmar o avanço.",
@@ -547,22 +553,18 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       return;
     }
 
+    // O filtro acima já provou que nenhuma é nula; aqui o tipo acompanha.
+    const question = pending.questions
+      .filter((candidate): candidate is RecommendedQuestion => candidate.recommendation !== null)
+      .map(toCeremonyQuestion)[0];
+    if (!question) throw new CeremonyError("a pergunta da sala precisa de recomendação.");
     const session = store.getSession(sessionId);
     if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
-    store.transitionRefinementItem({
+    store.askAgendaQuestion({
       sessionId,
-      itemId: agendaItem.id,
-      status: "aguardando-sala",
       expectedRevision: session.refinement.revision,
+      question,
     });
-
-    // O filtro acima já provou que nenhuma é nula; aqui o tipo acompanha.
-    store.askQuestions(
-      sessionId,
-      pending.questions
-        .filter((question): question is RecommendedQuestion => question.recommendation !== null)
-        .map(toCeremonyQuestion),
-    );
     live.pending = pending;
     live.answers = {};
     live.progressed = true;
@@ -637,16 +639,8 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       if (!asked || asked.id !== input.questionId) {
         throw new CeremonyError(`a pergunta ${input.questionId} não é a pergunta atual da sala.`);
       }
-      const decision = store.recordDecision(input);
+      const decision = store.recordAgendaDecision(input);
       const live = lives.get(input.sessionId);
-      if (asked) {
-        resolveAgendaChoice(
-          input.sessionId,
-          asked.agendaItemId,
-          decision.answer,
-          asked.recommendation,
-        );
-      }
       if (live) live.progressed = true;
       changed(input.sessionId);
 
@@ -727,9 +721,10 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         .then((outcome) => {
           const persisted = settleConsultation(sessionId, consultation, outcome);
           try {
-            settleDoubtAgenda(sessionId, consultation.id, persisted);
             if (persisted.status === "precisa-sala") {
               queueRoomChoice(sessionId, consultation.id, persisted);
+            } else {
+              settleDoubtAgenda(sessionId, consultation.id, persisted);
             }
           } catch (error) {
             logger?.error(
@@ -822,33 +817,18 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     },
   };
 
-  function resolveAgendaChoice(
-    sessionId: string,
-    itemId: string,
-    answer: string,
-    recommendation: string,
-  ): void {
-    const item = store.listRefinementItems(sessionId).find((candidate) => candidate.id === itemId);
-    const session = store.getSession(sessionId);
-    if (!item || !session || item.status === "resolvido" || item.status === "fora-de-escopo") return;
-
-    store.transitionRefinementItem({
-      sessionId,
-      itemId,
-      status: "resolvido",
-      resolution: { kind: "escolha", answer, recommendation },
-      expectedRevision: session.refinement.revision,
-    });
-  }
-
   function queueRoomChoice(
     sessionId: string,
     consultationId: string,
     outcome: Extract<ConsultationOutcome, { readonly status: "precisa-sala" }>,
   ): void {
     const itemId = `duvida-${consultationId}`;
-    store.askQuestions(sessionId, [
-      {
+    const session = store.getSession(sessionId);
+    if (!session) throw new CeremonyError(`cerimônia ${sessionId} não existe.`);
+    store.askAgendaQuestion({
+      sessionId,
+      expectedRevision: session.refinement.revision,
+      question: {
         id: itemId,
         agendaItemId: itemId,
         source: "room-doubt",
@@ -859,7 +839,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         options: outcome.options,
         allowFreeText: outcome.allowFreeText,
       },
-    ]);
+    });
   }
 
   function settleDoubtAgenda(
@@ -907,7 +887,9 @@ function currentTimeZone(): string {
 /** Pergunta que já provou ter recomendação — a única que o Palco aceita exibir. */
 type RecommendedQuestion = AgentQuestion & { readonly recommendation: string };
 
-function toCeremonyQuestion(question: RecommendedQuestion): CeremonyQuestion {
+function toCeremonyQuestion(
+  question: RecommendedQuestion,
+): CeremonyQuestion & { readonly agendaItemId: string; readonly source: "agent" } {
   return {
     id: question.id,
     agendaItemId: question.agendaItemId ?? question.id,

@@ -326,6 +326,39 @@ describe("createAgentRuntime", () => {
     await runtime.close();
   });
 
+  it("should reject a whitespace-only completion proposal at the runtime boundary", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "propose_refinement_completion",
+          arguments: { summary: "   " },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["propose_refinement_completion"] });
+    let emitted = false;
+
+    for await (const event of session.send("conclua")) {
+      if (event.type !== "completion-proposal") continue;
+      emitted = true;
+      await event.proposal.respond({ accepted: false, message: "Proposta inválida." });
+    }
+
+    expect(emitted).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{
+        type: "inputText",
+        text: "argumentos inválidos para propose_refinement_completion.",
+      }],
+    });
+    await runtime.close();
+  });
+
   it("should transport a structured agenda resolution and return the ceremony verdict", async () => {
     const transcript = transcriptPath();
     const { runtime } = await runtimeWith(
@@ -425,6 +458,86 @@ describe("createAgentRuntime", () => {
         },
       ]),
     );
+    await runtime.close();
+  });
+
+  it("should reject a whitespace-only expected behavior in a structured Spec", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "submit_refinement_spec",
+          arguments: {
+            problem: "A comissão não tem regra de arredondamento.",
+            solution: "Aplicar a regra bancária.",
+            expectedBehaviors: ["   "],
+            implementationDecisions: ["Reutilizar o módulo de folha."],
+            testStrategy: ["Cobrir os limites de meia unidade."],
+            outOfScope: [],
+            traceability: ["agenda:investigacao-1"],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["submit_refinement_spec"] });
+    let emitted = false;
+
+    for await (const event of session.send("submeta a Spec")) {
+      if (event.type !== "spec-submission") continue;
+      emitted = true;
+      await event.submission.respond({ accepted: false, message: "Spec inválida." });
+    }
+
+    expect(emitted).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{
+        type: "inputText",
+        text: "argumentos inválidos para submit_refinement_spec.",
+      }],
+    });
+    await runtime.close();
+  });
+
+  it("should reject a whitespace-only test strategy in a structured Spec", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "submit_refinement_spec",
+          arguments: {
+            problem: "A comissão não tem regra de arredondamento.",
+            solution: "Aplicar a regra bancária.",
+            expectedBehaviors: ["Valores são arredondados em duas casas."],
+            implementationDecisions: ["Reutilizar o módulo de folha."],
+            testStrategy: ["   "],
+            outOfScope: [],
+            traceability: ["agenda:investigacao-1"],
+          },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["submit_refinement_spec"] });
+    let emitted = false;
+
+    for await (const event of session.send("submeta a Spec")) {
+      if (event.type !== "spec-submission") continue;
+      emitted = true;
+      await event.submission.respond({ accepted: false, message: "Spec inválida." });
+    }
+
+    expect(emitted).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{
+        type: "inputText",
+        text: "argumentos inválidos para submit_refinement_spec.",
+      }],
+    });
     await runtime.close();
   });
 

@@ -550,6 +550,32 @@ describe("start", () => {
     expect(store.getSession(SESSION_ID)?.refinement.phase).toBe("aguardando-confirmacao");
   });
 
+  it("should reject a malformed completion proposal without failing the ceremony", async () => {
+    const { ceremony, store, proposalVerdicts } = ceremonyWith([[
+      {
+        type: "resolve-item",
+        resolution: {
+          kind: "fact",
+          agendaItemId: "investigacao-1",
+          answer: "A regra já existe no checkout.",
+          citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+        },
+      },
+      { type: "propose-completion", summary: "   " },
+    ]]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(1));
+    expect({
+      verdict: proposalVerdicts[0],
+      session: store.getSession(SESSION_ID),
+    }).toMatchObject({
+      verdict: { accepted: false, message: expect.stringMatching(/precisa de um resumo/i) },
+      session: { status: "ativa", refinement: { phase: "refinando" } },
+    });
+  });
+
   it("should resolve an investigation item as justified out of scope", async () => {
     const { ceremony, store, resolutionVerdicts } = ceremonyWith([
       [

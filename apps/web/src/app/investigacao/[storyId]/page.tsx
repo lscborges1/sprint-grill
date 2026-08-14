@@ -70,7 +70,7 @@ export default async function InvestigationPage({
 
 /**
  * A ponte entre os dois momentos do produto: a Investigação aprovada é o insumo
- * do grilling, e é daqui que a cerimônia nasce. Se já existe uma aberta para
+ * do Refinamento, e é daqui que a sessão nasce. Se já existe uma aberta para
  * esta US, o botão volta para ela em vez de abrir outra.
  */
 function Grill({ storyId }: { storyId: number }) {
@@ -83,12 +83,12 @@ function Grill({ storyId }: { storyId: number }) {
         type="submit"
         className="rounded-full border border-foreground bg-foreground px-6 py-3 text-base font-medium text-background"
       >
-        {open ? "Voltar ao Palco" : "Grelhar com a sala"}
+        {open ? "Voltar ao Palco" : "Refinar com a sala"}
       </button>
       <span className="text-sm text-muted">
         {open
-          ? "A cerimônia desta US já está aberta."
-          : "Abre o Palco com esta Investigação como insumo do grilling."}
+          ? "O Refinamento desta US já está aberto."
+          : "Abre o Palco com esta Investigação como insumo do Refinamento coletivo."}
       </span>
     </form>
   );

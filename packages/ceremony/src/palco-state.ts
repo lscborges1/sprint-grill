@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { CeremonyConsultation, PalcoState } from "./types";
+import {
+  refinementCompletionProposalSchema,
+  refinementItemSchema,
+  refinementStateSchema,
+} from "./refinement-state";
 
 /**
  * O contrato do SSE, e o único módulo deste pacote que o browser importa —
@@ -75,6 +80,9 @@ const consultationSchema: z.ZodType<CeremonyConsultation> = z.discriminatedUnion
 export const palcoStateSchema: z.ZodType<PalcoState> = z.object({
   sessionId: z.string(),
   story: z.object({ id: z.number(), title: z.string(), url: z.string() }),
+  refinement: refinementStateSchema,
+  completionProposal: refinementCompletionProposalSchema.nullable(),
+  agenda: z.array(refinementItemSchema),
   decisionCount: z.number(),
   decisions: z.array(decisionSchema),
   pendingQuestions: z.array(questionSchema),

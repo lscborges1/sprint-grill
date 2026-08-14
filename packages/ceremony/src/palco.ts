@@ -22,6 +22,9 @@ export function readPalco(
   return {
     sessionId,
     story: { id: session.storyId, title: session.storyTitle, url: session.storyUrl },
+    refinement: session.refinement,
+    completionProposal: store.getRefinementCompletionProposal(sessionId),
+    agenda: store.listRefinementItems(sessionId),
     decisionCount: decisions.length,
     decisions,
     pendingQuestions,

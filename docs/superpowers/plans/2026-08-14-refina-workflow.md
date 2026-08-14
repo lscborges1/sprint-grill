@@ -86,9 +86,9 @@
 - Dossiê exposes separate Spec and Ticket review/approval gates plus reopen and publish actions.
 - No browser form accepts authored decision data or publication Markdown supplied as trusted state.
 
-- [ ] Write failing UI/action tests for authorless answers, agenda labels, phase gates, stale revisions, and accessible error/loading states.
-- [ ] Implement server actions, Zod boundaries, Palco/Dossiê phases, and Refina copy.
-- [ ] Run focused tests and refactor while green.
+- [x] Write failing UI/action tests for authorless answers, agenda labels, phase gates, stale revisions, and accessible error/loading states.
+- [x] Implement server actions, Zod boundaries, Palco/Dossiê phases, and Refina copy.
+- [x] Run focused tests and refactor while green.
 
 ### Task 5: Cross-package verification and final review
 

@@ -61,6 +61,8 @@ export function readDossie(store: CeremonyStore, sessionId: string): DossieState
     status: session.status,
     timeZone: session.timeZone,
     refinement: session.refinement,
+    completionProposal: store.getRefinementCompletionProposal(sessionId),
+    agenda: store.listRefinementItems(sessionId),
     artifacts: store.getArtifactState(sessionId),
     taskPreview: store.getArtifactState(sessionId).tickets?.markdown
       ?? taskPreviewFromTranscript(store.listTranscript(sessionId), session.storyUrl),

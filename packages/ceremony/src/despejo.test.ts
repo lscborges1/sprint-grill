@@ -23,7 +23,7 @@ const SPEC_SUBMISSION = {
   testStrategy: ["Comparar os valores no limite de meio centavo."],
   outOfScope: ["Recalcular relatórios históricos."],
   traceability: ["Resolução coletiva sobre arredondamento."],
-} as const;
+};
 
 const TICKETS_SUBMISSION = {
   tickets: [{
@@ -34,7 +34,7 @@ const TICKETS_SUBMISSION = {
     specUrl: "https://untrusted.example/spec",
     blockedBy: [],
   }],
-} as const;
+};
 
 interface AzureState {
   description: string;

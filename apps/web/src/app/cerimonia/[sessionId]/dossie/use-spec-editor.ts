@@ -19,6 +19,7 @@ export interface SpecEditorController {
   readonly base: string;
   readonly busy: boolean;
   readonly conflict: "edicao" | "descarte" | null;
+  readonly dirty: boolean;
   readonly error: string | null;
   readonly expectedSavedAt: number | null;
   readonly remoteDraftConflict: boolean;
@@ -142,6 +143,7 @@ export function useSpecEditor(spec: DossieState["spec"]): SpecEditorController {
     base,
     busy,
     conflict,
+    dirty: markdown !== (spec.draft?.markdown ?? spec.generated),
     error:
       (saveResult.status === "error" ? saveResult.message : null) ??
       (discardResult.status === "error" ? discardResult.message : null),

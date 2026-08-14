@@ -46,6 +46,7 @@ import type {
   CeremonyQuestion,
   PersistedCeremonyQuestion,
   RefinementItem,
+  RefinementCompletionProposal,
   RefinementItemTransition,
   RefinementPhase,
   RefinementState,
@@ -144,6 +145,10 @@ export interface CeremonyStore {
   /** Sessão cujo despejo começou e ainda não concluiu — bloqueia nova cerimônia da mesma US. */
   findIncompleteDumpByStory(storyId: number): CeremonySession | undefined;
   updateRefinementPhase(input: UpdateRefinementPhaseInput): RefinementState;
+  proposeRefinementCompletion(
+    input: ArtifactGateInput & { readonly summary: string },
+  ): RefinementCompletionProposal;
+  getRefinementCompletionProposal(sessionId: string): RefinementCompletionProposal | null;
   seedRefinementItems(
     sessionId: string,
     items: readonly SeedRefinementItemInput[],
@@ -367,6 +372,8 @@ export function openCeremonyStore(
         failureMessage: null,
         refinementPhase: "refinando",
         refinementRevision: 0,
+        completionProposalSummary: null,
+        completionProposedAt: null,
         dumpStartedAt: null,
         dumpId: null,
         dumpMarkdown: null,
@@ -411,13 +418,57 @@ export function openCeremonyStore(
       assertDossieMutable(sessionId);
       const result = db
         .update(sessions)
-        .set({ refinementPhase: phase, refinementRevision: expectedRevision + 1 })
+        .set({
+          refinementPhase: phase,
+          refinementRevision: expectedRevision + 1,
+          ...(phase === "refinando"
+            ? { completionProposalSummary: null, completionProposedAt: null }
+            : {}),
+        })
         .where(
           and(eq(sessions.id, sessionId), eq(sessions.refinementRevision, expectedRevision)),
         )
         .run();
       if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
       return { phase, revision: expectedRevision + 1 };
+    },
+
+    proposeRefinementCompletion({ sessionId, summary, expectedRevision }) {
+      assertDossieMutable(sessionId);
+      const normalizedSummary = requiredText(summary, "a proposta de conclusão precisa de um resumo.");
+      const proposedAt = Date.now();
+      const result = db
+        .update(sessions)
+        .set({
+          refinementPhase: "aguardando-confirmacao",
+          refinementRevision: expectedRevision + 1,
+          completionProposalSummary: normalizedSummary,
+          completionProposedAt: proposedAt,
+        })
+        .where(and(
+          eq(sessions.id, sessionId),
+          eq(sessions.refinementPhase, "refinando"),
+          eq(sessions.refinementRevision, expectedRevision),
+        ))
+        .run();
+      if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
+      return { summary: normalizedSummary, proposedAt };
+    },
+
+    getRefinementCompletionProposal(sessionId) {
+      const row = db
+        .select({
+          summary: sessions.completionProposalSummary,
+          proposedAt: sessions.completionProposedAt,
+        })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .get();
+      if (!row || (row.summary === null && row.proposedAt === null)) return null;
+      if (row.summary === null || row.proposedAt === null) {
+        throw new CeremonyError(`a proposta de conclusão da cerimônia ${sessionId} está inconsistente.`);
+      }
+      return { summary: row.summary, proposedAt: row.proposedAt };
     },
 
     submitSpec(sessionId, submission) {
@@ -671,7 +722,12 @@ export function openCeremonyStore(
           .where(eq(ticketArtifacts.sessionId, sessionId))
           .run();
         const result = db.update(sessions)
-          .set({ refinementPhase: "refinando", refinementRevision: expectedRevision + 1 })
+          .set({
+            refinementPhase: "refinando",
+            refinementRevision: expectedRevision + 1,
+            completionProposalSummary: null,
+            completionProposedAt: null,
+          })
           .where(and(eq(sessions.id, sessionId), eq(sessions.refinementRevision, expectedRevision)))
           .run();
         if (result.changes !== 1) throw staleRevision(sessionId, expectedRevision);
@@ -1450,6 +1506,8 @@ function toCeremonySession(row: SessionRow): CeremonySession {
     dumpedAt,
     refinementPhase,
     refinementRevision,
+    completionProposalSummary: _completionProposalSummary,
+    completionProposedAt: _completionProposedAt,
     ...session
   } = row;
   return {

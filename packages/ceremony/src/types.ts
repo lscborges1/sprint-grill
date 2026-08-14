@@ -24,6 +24,11 @@ export interface RefinementState {
   readonly revision: number;
 }
 
+export interface RefinementCompletionProposal {
+  readonly summary: string;
+  readonly proposedAt: number;
+}
+
 export interface CeremonySession {
   readonly id: string;
   readonly storyId: number;
@@ -297,6 +302,9 @@ export interface StoryRef {
 export interface PalcoState {
   readonly sessionId: string;
   readonly story: StoryRef;
+  readonly refinement: RefinementState;
+  readonly completionProposal: RefinementCompletionProposal | null;
+  readonly agenda: readonly RefinementItem[];
   readonly decisionCount: number;
   /** Histórico completo para a árvore de decisões do Palco. */
   readonly decisions: readonly CeremonyDecision[];
@@ -351,6 +359,8 @@ export interface DossieState extends DossieDocument {
   /** Fuso capturado na abertura da cerimônia, usado para exibir decisões. */
   readonly timeZone: string;
   readonly refinement: RefinementState;
+  readonly completionProposal: RefinementCompletionProposal | null;
+  readonly agenda: readonly RefinementItem[];
   readonly artifacts: RefinementArtifactState;
   /** Rascunho de Tasks que o agente redigiu no encerramento da cerimônia. */
   readonly taskPreview: string;

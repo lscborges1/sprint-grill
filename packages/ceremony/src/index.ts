@@ -61,6 +61,7 @@ export type {
   PalcoPhase,
   PalcoState,
   RefinementItem,
+  RefinementCompletionProposal,
   RefinementItemTransition,
   RefinementPhase,
   RefinementResolution,

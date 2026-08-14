@@ -311,10 +311,10 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       return false;
     }
 
-    store.updateRefinementPhase({
+    store.proposeRefinementCompletion({
       sessionId,
-      phase: "aguardando-confirmacao",
       expectedRevision: session.refinement.revision,
+      summary: proposal.submission.summary,
     });
     await proposal.respond({
       accepted: true,

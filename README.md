@@ -1,6 +1,6 @@
-# Sprint Griller
+# Refina
 
-Ferramenta de refinamento da squad: **Investigação** que chega pronta antes da cerimônia e **grilling coletivo** com decisões documentadas, tudo despejado no Azure DevOps.
+Ferramenta de refinamento da squad: **Investigação** antes da sala e um fluxo persistente de **Refinar → Revisar Spec → Revisar Tickets → Publicar** no Azure DevOps.
 
 Roda na máquina do **Operador**, em processo único. O Azure DevOps é a fonte da verdade ([ADR 0003](docs/adr/0003-azure-devops-como-fonte-da-verdade.md)); glossário do domínio em [CONTEXT.md](CONTEXT.md), spec do MVP em [`.scratch/mvp-spec/spec.md`](.scratch/mvp-spec/spec.md).
 
@@ -44,7 +44,7 @@ packages/core             config da squad (zod) e logging estruturado
 packages/ado-client       fronteira do Azure DevOps (REST tipado com zod) + script de rolagem
 packages/agent-runtime    cliente do `codex app-server` (streaming, HITL, resume)
 packages/investigation    turno da Investigação + checagem de grounding + Markdown
-packages/ceremony         sessão do grilling + persistência (SQLite) + Palco e Dossiê
+packages/ceremony         Refinamento coletivo + persistência (SQLite) + Palco e Dossiê
 docs/adr                  decisões de arquitetura difíceis de reverter
 ```
 
@@ -182,110 +182,44 @@ saber antes de defender o número na retro:
 > DevOps de quem é a US. A baseline existe para a squad julgar o processo, não
 > para o processo julgar a squad. Nada aqui escreve no tracker.
 
-## Cerimônia: o Palco
+## Refinamento coletivo: Palco e Dossiê
 
-Com a Investigação **aprovada**, **Grelhar com a sala** abre a cerimônia: o
-agente recebe a Investigação como insumo e conduz o grilling coletivo. O modo
-**Palco** (`/cerimonia/<id da sessão>`) é o que a sala acompanha projetado —
-pergunta atual, recomendação do agente, evidências, e a captura da decisão.
+Com a Investigação aprovada, **Refinar com a sala** abre o Palco
+(`/cerimonia/<id da sessão>`). O estado persistido segue as fases `Refinar`,
+`Revisar Spec`, `Revisar Tickets`, `Publicar` e `Publicado`; um simples fim de
+turno do agente nunca conclui a sessão.
 
-A sala se orienta sozinha: a **árvore de decisões** fica num trilho lateral (o
-que já foi decidido, com a resposta; o que está em aberto, com a pergunta da vez
-destacada) e a **barra de progresso** no topo tem um segmento por decisão e a
-contagem de pendências. As duas saem do mesmo estado que o Palco já recebe por
-SSE — não há contador guardado em lugar nenhum.
+A **Agenda do refinamento** nasce dos furos da Investigação. Cada item fica
+aberto, em pesquisa, aguardando a sala, resolvido por fato ou escolha, ou
+justificado como fora de escopo. Apenas uma pergunta da sala fica ativa por vez.
+Quando a Agenda está vazia, o agente apresenta uma proposta de conclusão e a
+sala escolhe entre confirmar ou continuar o Refinamento.
 
-O que o Palco exibe é sempre **decisão**, nunca fato:
+### Adicionar dúvida
 
-| Pergunta do agente | O que acontece |
-|---|---|
-| com `recommendation` | vai para o Palco, com a recomendação e as evidências |
-| sem `recommendation` | recusada pelo runtime; volta para o agente buscar no código |
+Uma dúvida adicionada no Palco roda numa sessão auxiliar. O agente a classifica:
 
-A recusa é mecânica, no schema da `ask_operator` — não depende do prompt. E do
-outro lado, **só o formulário do Palco grava Registro de decisão**: `decidedBy` é
-obrigatório, então nenhum caminho do laço de eventos do agente chega lá.
+- fato verificável: volta com citações conferidas mecanicamente;
+- escolha da sala: entra na Agenda com recomendação;
+- resposta sem lastro: aparece marcada como não verificada;
+- falha: permanece explícita e pode ser retomada.
 
-Sessão, decisões e transcript são gravados na hora em SQLite
-(`.sprint-griller/cerimonias.db`, ou `SPRINT_GRILLER_DB`) — F5 no meio da
-cerimônia volta no mesmo ponto, e o estado novo chega por SSE, sem polling. Se o
-processo cair, o Palco mostra a cerimônia como **parada**: retomar casa com o
-`thread/resume` do agente, levando as decisões já registradas. Decisão gravada
-nunca se perde por causa de uma retomada que falhou.
+Resoluções preservam pergunta, resposta, recomendação e horário. Não existe
+autoria individual: a sala confirma os gates coletivamente.
 
-O banco é estado local descartável ([ADR 0003](docs/adr/0003-azure-devops-como-fonte-da-verdade.md)):
-depois do despejo, nada precisa ser consultado nele. Banco de uma versão de
-schema anterior é recusado na abertura, com a mensagem mandando apagar o arquivo.
+### Revisar e publicar
 
-### Fato ao vivo
+O **Dossiê** (`/cerimonia/<id da sessão>/dossie`) separa os gates de revisão. A
+Spec estruturada contém Problema, Solução, Comportamentos esperados, Decisões de
+implementação, Estratégia de testes, Fora de escopo e Rastreabilidade. Depois da
+aprovação da Spec, o agente submete Tickets como slices verticais com critérios
+de aceite e dependências acíclicas.
 
-Dúvida **factual** que surge na sala não sai da cerimônia como "alguém verifica
-depois": o Operador dispara a pergunta no Palco, o agente lê o código na hora e
-responde com a citação que sustenta a resposta.
+As aprovações são versionadas. Reabrir o Refinamento preserva os rascunhos, mas
+invalida aprovações derivadas. A publicação recebe do browser somente o id da
+sessão e a estimativa; Spec e Tickets aprovados são carregados e revalidados no
+SQLite antes de qualquer escrita no Azure DevOps. Retries continuam
+idempotentes pelos marcadores `sprint-griller:*`.
 
-A Consulta roda numa **sessão de agente própria** — o turno do grilling está
-parado na decisão que está projetada, e o codex só aceita um turno por sessão.
-Na prática: a pergunta da sala continua na tela enquanto o fato é buscado, e a
-Consulta funciona mesmo com a cerimônia parada esperando retomada.
-
-A resposta passa pela mesma **checagem mecânica de citações** da Investigação
-(`verifyGrounding`, sem LLM no caminho):
-
-| Resposta do agente | O que a sala vê |
-|---|---|
-| citações conferem com o disco | o fato, com os arquivos citados |
-| citação furada, ou nenhuma citação | a resposta marcada como **Não verificado**, com o motivo |
-| turno quebrado | o erro, para o Operador perguntar de novo |
-
-O que entra no transcript é `resposta-factual`, **nunca** `decisao`: a distinção
-é de tipo, não de convenção — Consulta não tem `decidedBy` porque ninguém
-decidiu nada, quem respondeu foi o repositório. E o despejo, quando existir, sabe
-separar o que a sala decidiu do que ela só descobriu.
-depois do despejo, nada precisa ser consultado nele.
-
-> Mudança no schema do banco sobe o `SCHEMA_VERSION`, e um arquivo de versão
-> anterior é recusado na abertura com a mensagem mandando apagá-lo.
-
-## Dossiê: documento vivo e preview do despejo
-
-**Abrir o Dossiê**, no Palco, leva à outra superfície da cerimônia
-(`/cerimonia/<id da sessão>/dossie`) — em outra aba, de propósito: a sala segue
-vendo o Palco enquanto o Operador revisa o documento na tela dele.
-
-O Dossiê é a **Spec da US se formando ao vivo**, montada só do que a cerimônia
-gravou:
-
-| Seção | De onde vem |
-|---|---|
-| Decisões | Registros de decisão, com quem decidiu e quando |
-| Pendências | perguntas que a sala não respondeu (inclusive as que um crash abandonou) |
-| Contexto de impacto | seção da Investigação que passou na checagem de citações |
-| Não verificado | o que o agente não conseguiu ancorar — hipótese, nunca fato |
-| Fora de escopo | vazio até o Operador escrever |
-
-Embaixo fica o **preview do despejo**: o mesmo documento em Markdown, renderizado
-por código ([ADR 0002](docs/adr/0002-escrita-no-ado-e-deterministica.md)) e
-**editável**. A IA redige, o humano assina — e o que o Operador salvar é o que o
-despejo vai levar. A edição é gravada na sessão, no mesmo SQLite: sobrevive ao F5
-e ao restart do app. Nada disto vai para o Azure DevOps antes do despejo.
-
-O editor não é sobrescrito pelo que chega ao vivo — texto sendo digitado não pode
-sumir porque a sala acabou de decidir. Em troca, quando o documento anda por
-baixo da edição, a tela avisa e oferece **regenerar** (que descarta a edição):
-despejar uma Spec sem a última decisão é o erro que esta aba existe para não
-deixar passar calado.
-
-Cada Task precisa conter, antes da assinatura, um link Markdown para a URL exata
-da Spec da US atual. O Markdown assinado é a fonte do corpo publicado: o
-despejo não acrescenta nem corrige links ou texto. A fronteira estreita depois
-da assinatura admite somente metadados que ainda não existem ou que o ADO exige:
-
-- marcadores determinísticos de armazenamento e reconciliação;
-- conversão do Markdown assinado para o HTML dos campos de work item;
-- cada link de Registro de decisão inserido na entrada correspondente da
-  rastreabilidade que já foi revisada e assinada. O despejo não acrescenta o
-  heading, a pergunta nem a resposta: só a URL, que passa a existir depois que
-  o ADO publica o comment.
-
-Relações nativas de pai e dependência e a estimativa são campos estruturados do
-work item; não alteram o corpo assinado da Task.
+O banco local é descartável. Mudanças incompatíveis sobem `SCHEMA_VERSION`, e
+uma versão antiga é recusada com a orientação de apagar o arquivo.

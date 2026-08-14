@@ -78,6 +78,27 @@ function beginDump(
 }
 
 describe("openCeremonyStore", () => {
+  it("should persist the completion proposal across a restart", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+    const proposal = first.proposeRefinementCompletion({
+      sessionId: "thread-1",
+      expectedRevision: 0,
+      summary: "Agenda vazia e riscos cobertos.",
+    });
+    first.close();
+    opened.pop();
+
+    const reopened = open(file);
+
+    expect(reopened.getRefinementCompletionProposal("thread-1")).toEqual(proposal);
+    expect(reopened.getSession("thread-1")?.refinement).toEqual({
+      phase: "aguardando-confirmacao",
+      revision: 1,
+    });
+  });
+
   it("should persist versioned Spec and Ticket approvals bound to the same Spec hash", () => {
     const file = dbPath();
     const store = open(file);

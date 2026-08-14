@@ -27,6 +27,8 @@ export const sessions = sqliteTable("sessions", {
     ],
   }).notNull(),
   refinementRevision: integer("refinement_revision").notNull(),
+  completionProposalSummary: text("completion_proposal_summary"),
+  completionProposedAt: integer("completion_proposed_at"),
   dumpStartedAt: integer("dump_started_at"),
   /** Fingerprint do despejo: sobrevive ao abort para o retry não criar Tasks duplicadas. */
   dumpId: text("dump_id"),
@@ -194,7 +196,7 @@ export const events = sqliteTable(
  * recusada na abertura, mandando apagar o arquivo — descobrir a divergência no
  * meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -217,6 +219,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   failure_message TEXT,
   refinement_phase TEXT NOT NULL,
   refinement_revision INTEGER NOT NULL,
+  completion_proposal_summary TEXT,
+  completion_proposed_at INTEGER,
   dump_started_at INTEGER,
   dump_id TEXT,
   dump_markdown TEXT,

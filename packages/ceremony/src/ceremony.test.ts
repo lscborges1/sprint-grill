@@ -353,6 +353,10 @@ describe("start", () => {
     ]));
     expect(store.getSession(SESSION_ID)?.refinement.phase).toBe("aguardando-confirmacao");
     expect(store.getSession(SESSION_ID)?.status).toBe("ativa");
+    expect(ceremony.palco(SESSION_ID)?.completionProposal).toMatchObject({
+      summary: "Todos os itens da agenda foram resolvidos.",
+      proposedAt: expect.any(Number),
+    });
   });
 
   it("should surface a broken turn on the stage", async () => {

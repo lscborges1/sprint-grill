@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { dumpStateSchema } from "./dump-state";
 import type { DossieState } from "./types";
+import {
+  refinementCompletionProposalSchema,
+  refinementItemSchema,
+  refinementStateSchema,
+} from "./refinement-state";
 
 export { signedDumpInputs } from "./dump-state";
 
@@ -31,6 +36,54 @@ const decisionSchema = z.object({
   recordUrl: z.string().url().optional(),
 });
 
+const approvalSchema = z.object({
+  revision: z.number().int().positive(),
+  hash: z.string(),
+  markdown: z.string(),
+  approvedAt: z.number(),
+});
+
+const specSubmissionSchema = z.object({
+  problem: z.string(),
+  solution: z.string(),
+  expectedBehaviors: z.array(z.string()),
+  implementationDecisions: z.array(z.string()),
+  testStrategy: z.array(z.string()),
+  outOfScope: z.array(z.string()),
+  traceability: z.array(z.string()),
+});
+
+const artifactsSchema = z.object({
+  spec: z.object({
+    revision: z.number().int().positive(),
+    submission: specSubmissionSchema,
+    markdown: z.string(),
+    submittedAt: z.number(),
+    approval: approvalSchema.nullable(),
+  }).nullable(),
+  tickets: z.object({
+    revision: z.number().int().positive(),
+    submission: z.object({
+      tickets: z.array(z.object({
+        id: z.string(),
+        title: z.string(),
+        description: z.string(),
+        acceptanceCriteria: z.array(z.string()),
+        specUrl: z.string(),
+        blockedBy: z.array(z.string()),
+      })),
+    }),
+    markdown: z.string(),
+    submittedAt: z.number(),
+    specRevision: z.number().int().positive(),
+    specHash: z.string(),
+    approval: approvalSchema.extend({
+      specRevision: z.number().int().positive(),
+      specHash: z.string(),
+    }).nullable(),
+  }).nullable(),
+});
+
 /**
  * O Dossiê chega ao browser pelo mesmo caminho do Palco. `generated` e `draft`
  * viajam separados de propósito: é a comparação entre o texto gerado agora e a
@@ -40,6 +93,10 @@ export const dossieStateSchema: z.ZodType<DossieState> = z.object({
   sessionId: z.string(),
   status: z.enum(["ativa", "encerrada", "falhou"]),
   timeZone: z.string(),
+  refinement: refinementStateSchema,
+  completionProposal: refinementCompletionProposalSchema.nullable(),
+  agenda: z.array(refinementItemSchema),
+  artifacts: artifactsSchema,
   taskPreview: z.string(),
   dump: dumpStateSchema,
   story: storySchema,

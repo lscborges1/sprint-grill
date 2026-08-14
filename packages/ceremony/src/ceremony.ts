@@ -69,8 +69,8 @@ interface LiveTurn {
  * processo, várias sessões dentro dela.
  *
  * O agente nunca decide: ele só pergunta. `decide` é o único caminho que grava
- * Registro de decisão, e ele exige quem decidiu — do laço de eventos aqui de
- * dentro não dá para chegar nele.
+ * uma escolha coletiva da sala — do laço de eventos aqui de dentro não dá para
+ * chegar nele.
  */
 export function createCeremony(options: CreateCeremonyOptions): Ceremony {
   const { runtime, store, repos } = options;

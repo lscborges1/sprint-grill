@@ -1338,6 +1338,7 @@ function toRefinementItem(row: RefinementItemRow): RefinementItem {
       resolution: { kind: "fora-de-escopo", justification: row.justification, resolvedAt },
     };
   }
+  if (row.status !== "resolvido") throw invalidRefinementItem(row);
   if (row.resolutionKind === "fato" && row.answer !== null && row.citations !== null) {
     return {
       ...base,

@@ -21,7 +21,7 @@ Linguagem ubíqua do domínio de refinamento. Os identificadores internos
 
 **Registro de decisão** — artefato de primeira classe que documenta uma escolha coletiva do refinamento (pergunta, resposta, recomendação e horário). O oposto de "ata perdida": é consultável e vinculado à US, sem autoria individual.
 
-**Consulta** — dúvida *factual* levantada na sala durante o grilling coletivo e resolvida ao vivo: o agente lê o código na hora e responde citando o arquivo. É o oposto do Registro de decisão — não tem quem decidiu, porque não houve decisão: quem respondeu foi o repositório. Existe para matar o "alguém verifica depois", que é como uma dúvida de dez segundos vira Explosão três semanas depois.
+**Consulta** — dúvida *factual* levantada na sala durante o Refinamento coletivo e resolvida ao vivo: o agente lê o código na hora e responde citando o arquivo. É o oposto do Registro de decisão — não tem quem decidiu, porque não houve decisão: quem respondeu foi o repositório. Existe para matar o "alguém verifica depois", que é como uma dúvida de dez segundos vira Explosão três semanas depois.
 
 **Explosão** — descoberta de dependência ou restrição técnica no meio da implementação, depois da US já estimada e em sprint: a estimativa dobra e a decisão final é tomada às pressas, sem o PO saber que houve uma decisão. É a consequência dominante que o produto existe para evitar.
 
@@ -31,7 +31,7 @@ Linguagem ubíqua do domínio de refinamento. Os identificadores internos
 
 **Operador** — a pessoa que dispara a Investigação e conduz o Refinamento coletivo. No MVP há um único operador (o Lucas); a squad e o PO participam das resoluções, mas não operam a ferramenta.
 
-**UI de sessão** — a única superfície própria do produto: uma tela web que a sala inteira acompanha durante o grilling coletivo (pergunta atual, recomendação do agente, decisão capturada, árvore de decisões). Ao final da cerimônia, despeja os artefatos no Azure DevOps.
+**UI de sessão** — a única superfície própria do produto: uma tela web que a sala inteira acompanha durante o Refinamento coletivo (pergunta atual, recomendação do agente, decisão capturada, árvore de decisões). Ao final da cerimônia, despeja os artefatos no Azure DevOps.
 
 **Palco** — o modo da UI de sessão que a sala vê projetado: pergunta atual, recomendação do agente, evidências e a captura da decisão, em tipografia legível a distância. Tipografia editorial aqui é requisito, não estética. O outro modo é o **Dossiê**, a aba do Operador com o documento se formando e o preview do despejo.
 

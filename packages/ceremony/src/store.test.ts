@@ -368,6 +368,36 @@ describe("openCeremonyStore", () => {
 });
 
 describe("refinement agenda", () => {
+  it("should reject an unknown persisted item status even when resolution columns look valid", () => {
+    const file = dbPath();
+    const first = open(file);
+    newSession(first);
+    first.seedRefinementItems("thread-1", [{ id: "rounding", question: "Qual regra vale?" }]);
+    first.transitionRefinementItem({
+      sessionId: "thread-1",
+      itemId: "rounding",
+      expectedRevision: 1,
+      status: "resolvido",
+      resolution: {
+        kind: "fato",
+        answer: "Regra bancária.",
+        citations: [{ repo: "core-api", path: "src/payroll/rounding.ts" }],
+      },
+    });
+    first.close();
+    opened.pop();
+
+    const database = new Database(file);
+    database
+      .prepare("UPDATE refinement_items SET status = ? WHERE session_id = ? AND item_id = ?")
+      .run("estado-inventado", "thread-1", "rounding");
+    database.close();
+
+    expect(() => open(file).listRefinementItems("thread-1")).toThrow(
+      /rounding.*resolução inconsistente.*Apague o banco/s,
+    );
+  });
+
   it("should persist every agenda state as a discriminated domain item", () => {
     const file = dbPath();
     const first = open(file);

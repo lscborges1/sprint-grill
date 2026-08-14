@@ -8,6 +8,7 @@ import type {
   AgentQuestion,
   AgentRuntime,
   AgentSession,
+  AgentSubmissionVerdict,
   StartSessionOptions,
 } from "@sprint-griller/agent-runtime";
 import { createLogger } from "@sprint-griller/core";
@@ -66,6 +67,8 @@ type Step =
         | { readonly kind: "out-of-scope"; readonly agendaItemId: string; readonly justification: string };
     }
   | { readonly type: "propose-completion"; readonly summary?: string }
+  | { readonly type: "submit-spec" }
+  | { readonly type: "submit-tickets" }
   | { readonly type: "complete" }
   | { readonly type: "fail"; readonly message: string };
 
@@ -86,6 +89,7 @@ function fakeRuntime(
   const resumed: string[] = [];
   const proposalVerdicts: { readonly accepted: boolean; readonly message: string }[] = [];
   const resolutionVerdicts: { readonly accepted: boolean; readonly message: string }[] = [];
+  const submissionVerdicts: AgentSubmissionVerdict[] = [];
   let turn = 0;
   let sessions = 0;
 
@@ -168,6 +172,45 @@ function fakeRuntime(
               await gate;
               break;
             }
+            case "submit-spec":
+              yield {
+                type: "spec-submission",
+                submission: {
+                  submission: {
+                    problem: "Problema.",
+                    solution: "Solução.",
+                    expectedBehaviors: ["Comportamento."],
+                    implementationDecisions: ["Decisão."],
+                    testStrategy: ["Teste."],
+                    outOfScope: ["Fora."],
+                    traceability: ["Registro."],
+                  },
+                  respond: async (verdict: AgentSubmissionVerdict) => {
+                    submissionVerdicts.push(verdict);
+                  },
+                },
+              } as const;
+              break;
+            case "submit-tickets":
+              yield {
+                type: "tickets-submission",
+                submission: {
+                  submission: {
+                    tickets: [{
+                      id: "rounding",
+                      title: "Unificar arredondamento",
+                      description: "Entrega o cálculo compartilhado do relatório até a folha.",
+                      acceptanceCriteria: ["Relatório e folha exibem o mesmo valor."],
+                      specUrl: story.url,
+                      blockedBy: [],
+                    }],
+                  },
+                  respond: async (verdict: AgentSubmissionVerdict) => {
+                    submissionVerdicts.push(verdict);
+                  },
+                },
+              } as const;
+              break;
             case "complete":
               yield {
                 type: "turn-completed",
@@ -197,12 +240,22 @@ function fakeRuntime(
     close: async () => undefined,
   };
 
-  return { runtime, prompts, consultaPrompts, answered, resumed, proposalVerdicts, resolutionVerdicts };
+  return {
+    runtime,
+    prompts,
+    consultaPrompts,
+    answered,
+    resumed,
+    proposalVerdicts,
+    resolutionVerdicts,
+    submissionVerdicts,
+  };
 }
 
 const stores: CeremonyStore[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   while (stores.length > 0) stores.pop()?.close();
 });
 
@@ -621,6 +674,114 @@ describe("resume", () => {
     await ceremony.resume(SESSION_ID);
 
     expect(fake.prompts[0]).toContain("Submeta agora a Spec estruturada");
+  });
+
+  it("should report an unexpected Spec persistence failure without leaking it to the agent", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    store.submitSpec = () => {
+      throw new Error("detalhe interno do SQLite");
+    };
+    const fake = fakeRuntime([[{ type: "submit-spec" }]]);
+    const ceremony = createCeremony({
+      runtime: fake.runtime,
+      store,
+      repos,
+      logger: createLogger({ destination, level: "info" }),
+    });
+
+    await ceremony.resume(SESSION_ID);
+
+    await vi.waitFor(() =>
+      expect({
+        verdict: fake.submissionVerdicts[0],
+        log: lines.find((line) => line.msg === "cerimônia morreu fora do fluxo de erro"),
+      }).toEqual({
+        verdict: {
+          accepted: false,
+          message: "Não foi possível salvar a Spec. Tente novamente.",
+        },
+        log: expect.objectContaining({ sessionId: SESSION_ID, err: expect.any(Object) }),
+      }),
+    );
+  });
+
+  it("should report an unexpected Ticket persistence failure without leaking it to the agent", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    store.approveSpec({ sessionId: SESSION_ID, expectedRevision: 2 });
+    store.submitTickets = () => {
+      throw new Error("detalhe interno do SQLite");
+    };
+    const fake = fakeRuntime([[{ type: "submit-tickets" }]]);
+    const ceremony = createCeremony({
+      runtime: fake.runtime,
+      store,
+      repos,
+      logger: createLogger({ destination, level: "info" }),
+    });
+
+    await ceremony.resume(SESSION_ID);
+
+    await vi.waitFor(() =>
+      expect({
+        verdict: fake.submissionVerdicts[0],
+        log: lines.find((line) => line.msg === "cerimônia morreu fora do fluxo de erro"),
+      }).toEqual({
+        verdict: {
+          accepted: false,
+          message: "Não foi possível salvar os Tickets. Tente novamente.",
+        },
+        log: expect.objectContaining({ sessionId: SESSION_ID, err: expect.any(Object) }),
+      }),
+    );
   });
 
   it("should record the decision and resume when the turn died with the process", async () => {
@@ -1201,6 +1362,162 @@ describe("consult", () => {
 });
 
 describe("palco", () => {
+  it("should expose recovery when a Spec review ends without a submission", () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 0,
+      summary: "Agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 1,
+    });
+    const fake = fakeRuntime([]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "retomavel" });
+  });
+
+  it("should keep a submitted Spec in human review after its agent turn ends", () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 0,
+      summary: "Agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 1,
+    });
+    store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    const fake = fakeRuntime([]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "revisao-humana" });
+  });
+
+  it("should expose recovery when the only Spec predates the current review cycle", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(100);
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 0,
+      summary: "Agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 1,
+    });
+    now.mockReturnValue(200);
+    store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    store.reopenRefinement({ sessionId: SESSION_ID, expectedRevision: 3 });
+    now.mockReturnValue(300);
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 4,
+      summary: "Nova agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 5,
+    });
+    const fake = fakeRuntime([]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "retomavel" });
+  });
+
+  it("should keep submitted Tickets in human review after their agent turn ends", () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.proposeRefinementCompletion({
+      sessionId: SESSION_ID,
+      expectedRevision: 0,
+      summary: "Agenda encerrada.",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 1,
+    });
+    store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    store.approveSpec({ sessionId: SESSION_ID, expectedRevision: 3 });
+    store.submitTickets(SESSION_ID, {
+      tickets: [{
+        id: "rounding",
+        title: "Unificar arredondamento",
+        description: "Entrega o cálculo compartilhado do relatório até a folha.",
+        acceptanceCriteria: ["Relatório e folha exibem o mesmo valor."],
+        specUrl: story.url,
+        blockedBy: [],
+      }],
+    });
+    const fake = fakeRuntime([]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "revisao-humana" });
+  });
+
   it("should keep repeated agent ids distinct with the persisted question sequence", async () => {
     const { ceremony, store } = ceremonyWith([
       [{ type: "ask", questions: [agentQuestion({ id: "q1" })] }],

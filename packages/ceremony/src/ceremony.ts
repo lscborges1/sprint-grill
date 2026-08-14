@@ -412,9 +412,16 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       await pending.respond({ accepted: true, message: "Spec estruturada pronta para revisão humana." });
       changed(sessionId);
     } catch (error) {
+      if (!(error instanceof CeremonyError)) {
+        await pending.respond({
+          accepted: false,
+          message: "Não foi possível salvar a Spec. Tente novamente.",
+        });
+        throw error;
+      }
       await pending.respond({
         accepted: false,
-        message: error instanceof Error ? error.message : "A Spec estruturada é inválida.",
+        message: error.message,
       });
     }
   }
@@ -432,9 +439,16 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       await pending.respond({ accepted: true, message: "Tickets estruturados prontos para revisão humana." });
       changed(sessionId);
     } catch (error) {
+      if (!(error instanceof CeremonyError)) {
+        await pending.respond({
+          accepted: false,
+          message: "Não foi possível salvar os Tickets. Tente novamente.",
+        });
+        throw error;
+      }
       await pending.respond({
         accepted: false,
-        message: error instanceof Error ? error.message : "Os Tickets estruturados são inválidos.",
+        message: error.message,
       });
     }
   }

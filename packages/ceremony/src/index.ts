@@ -1,4 +1,9 @@
 export { CeremonyError } from "./ceremony-error";
+export { createCeremonyLifecycle } from "./lifecycle";
+export type {
+  CeremonyLifecycle,
+  CreateCeremonyLifecycleOptions,
+} from "./lifecycle";
 export { NAO_E_DECISAO, createCeremony } from "./ceremony";
 export type {
   Ceremony,

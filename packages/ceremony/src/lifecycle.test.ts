@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentQuestion, AgentRuntime, AgentSession } from "@sprint-griller/agent-runtime";
@@ -79,6 +79,45 @@ function terminalRuntime(close = vi.fn(async () => undefined)): AgentRuntime {
     startSession: async () => terminalSession(`thread-${++sessions}`),
     resumeSession: async (sessionId) => terminalSession(sessionId),
     close,
+  };
+}
+
+function liveQuestionRuntime(): AgentRuntime {
+  let sessions = 0;
+
+  return {
+    startSession: async () => {
+      sessions += 1;
+      const id = `thread-${sessions}`;
+      return {
+        id,
+        send() {
+          return (async function* () {
+            let release: () => void = () => undefined;
+            const answered = new Promise<void>((resolve) => { release = resolve; });
+            yield {
+              type: "question",
+              question: {
+                questions: [{
+                  id: "q1",
+                  header: "Arredondamento",
+                  question: "A comissão arredonda para cima?",
+                  recommendation: "Seguir a regra bancária.",
+                  evidence: ["core-api · src/payroll/rounding.ts"],
+                  options: [{ label: "Regra bancária", description: "Igual à folha." }],
+                  allowFreeText: true,
+                }],
+                answer: async () => { release(); },
+              },
+            } as const;
+            await answered;
+          })();
+        },
+        interrupt: async () => undefined,
+      } satisfies AgentSession;
+    },
+    resumeSession: async (id) => terminalSession(id),
+    close: async () => undefined,
   };
 }
 
@@ -273,6 +312,35 @@ describe("CeremonyLifecycle", () => {
     await lifecycle.close();
   });
 
+  it("should keep distinct concurrent starts live on the same ceremony", async () => {
+    let releaseRuntime: (runtime: AgentRuntime) => void = () => undefined;
+    const runtimeReady = new Promise<AgentRuntime>((resolve) => { releaseRuntime = resolve; });
+    const runtimeFactory = vi.fn(() => runtimeReady);
+    const lifecycle = createCeremonyLifecycle({
+      dbPath: dbPath(),
+      repos,
+      resolveStartInput: (storyId) => ({
+        ...startInput,
+        story: { ...startInput.story, id: storyId, title: `US ${storyId}` },
+      }),
+      adoOptions,
+      runtimeFactory,
+    });
+
+    const firstStart = lifecycle.start(STORY_ID);
+    const secondStart = lifecycle.start(STORY_ID + 1);
+    await vi.waitFor(() => expect(runtimeFactory).toHaveBeenCalledTimes(1));
+    releaseRuntime(liveQuestionRuntime());
+    const [first, second] = await Promise.all([firstStart, secondStart]);
+
+    await vi.waitFor(() =>
+      expect({ first: lifecycle.palco(first.id)?.live, second: lifecycle.palco(second.id)?.live })
+        .toEqual({ first: true, second: true }),
+    );
+
+    await lifecycle.close();
+  });
+
   it("should reject a dump while another ceremony for the story is starting", async () => {
     let releasePreflight: () => void = () => undefined;
     const preflight = new Promise<readonly string[]>((resolve) => { releasePreflight = () => resolve([]); });
@@ -458,5 +526,35 @@ describe("CeremonyLifecycle", () => {
 
     expect(close).toHaveBeenCalledTimes(1);
     expect(() => lifecycle.findOpen(STORY_ID)).toThrow(/já foi fechado/i);
+  });
+
+  it("should close SQLite after a runtime startup failure", async () => {
+    let rejectRuntime: (error: Error) => void = () => undefined;
+    const runtimeStarting = new Promise<AgentRuntime>((_resolve, reject) => {
+      rejectRuntime = (error) => reject(error);
+    });
+    const pathToDb = dbPath();
+    const runtimeFactory = vi.fn(() => runtimeStarting);
+    const lifecycle = createCeremonyLifecycle({
+      dbPath: pathToDb,
+      repos,
+      resolveStartInput: () => startInput,
+      adoOptions,
+      runtimeFactory,
+    });
+    lifecycle.dossie("missing");
+    expect(existsSync(`${pathToDb}-wal`)).toBe(true);
+
+    const starting = lifecycle.start(STORY_ID);
+    await vi.waitFor(() => expect(runtimeFactory).toHaveBeenCalledTimes(1));
+    const firstClose = lifecycle.close();
+    const secondClose = lifecycle.close();
+    rejectRuntime(new Error("app-server indisponível"));
+
+    await expect(starting).rejects.toThrow("app-server indisponível");
+    await expect(firstClose).rejects.toThrow("app-server indisponível");
+    await expect(secondClose).rejects.toThrow("app-server indisponível");
+    expect(existsSync(`${pathToDb}-wal`)).toBe(false);
+    expect(() => lifecycle.dossie("missing")).toThrow(/já foi fechado/i);
   });
 });

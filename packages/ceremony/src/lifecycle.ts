@@ -74,6 +74,7 @@ export function createCeremonyLifecycle(
   let runtime: AgentRuntime | undefined;
   let startingRuntime: Promise<AgentRuntime> | undefined;
   let ceremony: Ceremony | undefined;
+  let startingCeremony: Promise<Ceremony> | undefined;
   let dump: CeremonyDump | undefined;
   let closing: Promise<void> | undefined;
   let closed = false;
@@ -151,14 +152,21 @@ export function createCeremonyLifecycle(
   async function getCeremony(): Promise<Ceremony> {
     assertOpen();
     if (ceremony) return ceremony;
-    ceremony = createCeremony({
-      runtime: await getRuntime(),
-      store: getStore(),
-      repos: options.repos,
-      logger,
-      onChange: notify,
+
+    startingCeremony ??= (async (): Promise<Ceremony> => {
+      const next = createCeremony({
+        runtime: await getRuntime(),
+        store: getStore(),
+        repos: options.repos,
+        logger,
+        onChange: notify,
+      });
+      ceremony = next;
+      return next;
+    })().finally(() => {
+      startingCeremony = undefined;
     });
-    return ceremony;
+    return startingCeremony;
   }
 
   function subscribe<T>(
@@ -273,8 +281,8 @@ export function createCeremonyLifecycle(
         palcoSubscribers.clear();
         dossieSubscribers.clear();
 
-        const activeRuntime = runtime ?? (startingRuntime && await startingRuntime);
         try {
+          const activeRuntime = runtime ?? (startingRuntime && await startingRuntime);
           if (activeRuntime) await activeRuntime.close();
         } finally {
           store?.close();

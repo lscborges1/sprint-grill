@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type {
   AgentToolName,
+  addRefinementItemArgumentsSchema,
   agendaResolutionArgumentsSchema,
   completionProposalArgumentsSchema,
   refinementSpecSubmissionSchema,
@@ -89,6 +90,7 @@ export interface PendingAgentSubmission<TSubmission> {
 }
 
 export type CompletionProposal = z.infer<typeof completionProposalArgumentsSchema>;
+export type AddRefinementItemSubmission = z.infer<typeof addRefinementItemArgumentsSchema>;
 export type AgendaResolution = z.infer<typeof agendaResolutionArgumentsSchema>;
 export type RefinementSpecSubmission = z.infer<typeof refinementSpecSubmissionSchema>;
 export type RefinementTicketSubmission = z.infer<typeof refinementTicketSubmissionSchema>;
@@ -106,6 +108,10 @@ export type AgentEvent =
   | {
       readonly type: "completion-proposal";
       readonly proposal: PendingAgentSubmission<CompletionProposal>;
+    }
+  | {
+      readonly type: "agenda-item-submission";
+      readonly item: PendingAgentSubmission<AddRefinementItemSubmission>;
     }
   | {
       readonly type: "agenda-resolution";

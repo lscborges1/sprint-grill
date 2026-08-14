@@ -220,6 +220,78 @@ describe("createAgentRuntime", () => {
     await runtime.close();
   });
 
+  it("should expose an agent-originated Agenda item submission", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "add_refinement_item",
+          arguments: { question: "A política de expiração cobre o cache distribuído?" },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["add_refinement_item"] });
+
+    let item: Extract<AgentEvent, { readonly type: "agenda-item-submission" }> | undefined;
+    for await (const event of session.send("registre o novo furo")) {
+      if (event.type !== "agenda-item-submission") continue;
+      item = event;
+      await event.item.respond({
+        accepted: true,
+        message: "Item agente-1 criado na Agenda. Use esse ID para perguntar ou resolver o furo.",
+      });
+    }
+    if (!item) throw new Error("expected Agenda item");
+
+    expect(item.item.submission).toEqual({
+      question: "A política de expiração cobre o cache distribuído?",
+    });
+    expect(responsesIn(transcript)).toContainEqual({
+      success: true,
+      contentItems: [
+        {
+          type: "inputText",
+          text: "Item agente-1 criado na Agenda. Use esse ID para perguntar ou resolver o furo.",
+        },
+      ],
+    });
+    await runtime.close();
+  });
+
+  it("should reject a blank agent-originated Agenda item", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          callId: "call-1",
+          tool: "add_refinement_item",
+          arguments: { question: "   " },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession({ tools: ["add_refinement_item"] });
+
+    const events: AgentEvent[] = [];
+    for await (const event of session.send("registre o novo furo")) {
+      events.push(event);
+      if (event.type === "agenda-item-submission") {
+        await event.item.respond({ accepted: false, message: "Item inválido." });
+      }
+    }
+
+    expect(events.some((event) => event.type === "agenda-item-submission")).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [{ type: "inputText", text: "argumentos inválidos para add_refinement_item." }],
+    });
+    await runtime.close();
+  });
+
   it("should surface an explicit completion proposal and return the ceremony verdict", async () => {
     const transcript = transcriptPath();
     const { runtime } = await runtimeWith(

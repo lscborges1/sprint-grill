@@ -1,5 +1,8 @@
 export { createAgentRuntime } from "./runtime";
 export {
+  ADD_REFINEMENT_ITEM_TOOL_NAME,
+  AGENT_TOOL_NAMES,
+  addRefinementItemArgumentsSchema,
   agendaResolutionArgumentsSchema,
   refinementSpecSubmissionSchema,
   refinementTicketsSubmissionSchema,
@@ -7,6 +10,7 @@ export {
 export type { CreateAgentRuntimeOptions } from "./runtime";
 export { AgentRuntimeError } from "./types";
 export type {
+  AddRefinementItemSubmission,
   AgentEvent,
   AgentQuestion,
   AgentQuestionOption,

@@ -14,12 +14,14 @@ export const CLIENT_VERSION = "0.1.0";
 
 /** Ferramenta própria de HITL: superfície estável, sob nosso controle. */
 export const ASK_OPERATOR_TOOL_NAME = "ask_operator";
+export const ADD_REFINEMENT_ITEM_TOOL_NAME = "add_refinement_item";
 export const AGENDA_RESOLUTION_TOOL_NAME = "resolve_refinement_item";
 export const COMPLETION_PROPOSAL_TOOL_NAME = "propose_refinement_completion";
 export const SPEC_SUBMISSION_TOOL_NAME = "submit_refinement_spec";
 export const TICKETS_SUBMISSION_TOOL_NAME = "submit_refinement_tickets";
 export const AGENT_TOOL_NAMES = [
   ASK_OPERATOR_TOOL_NAME,
+  ADD_REFINEMENT_ITEM_TOOL_NAME,
   AGENDA_RESOLUTION_TOOL_NAME,
   COMPLETION_PROPOSAL_TOOL_NAME,
   SPEC_SUBMISSION_TOOL_NAME,
@@ -243,6 +245,21 @@ export const completionProposalToolSpec = {
   description:
     "Propõe explicitamente encerrar a etapa Refinar. O sistema confere a Agenda; terminar o turno não encerra nada.",
   inputSchema: z.toJSONSchema(completionProposalArgumentsSchema, {
+    io: "input",
+    target: "draft-7",
+  }),
+} as const;
+
+export const addRefinementItemArgumentsSchema = z.object({
+  question: z.string().trim().min(1),
+});
+
+export const addRefinementItemToolSpec = {
+  type: "function",
+  name: ADD_REFINEMENT_ITEM_TOOL_NAME,
+  description:
+    "Adiciona à Agenda um furo novo descoberto durante o Refinamento e devolve o ID persistido para perguntar ou resolver.",
+  inputSchema: z.toJSONSchema(addRefinementItemArgumentsSchema, {
     io: "input",
     target: "draft-7",
   }),

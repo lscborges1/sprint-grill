@@ -4,11 +4,14 @@ import type { AppServerClient, ServerRequest } from "./codex/app-server";
 import { connectAppServer } from "./codex/app-server";
 import type { AgentToolName, DynamicToolCallResponse, RequestId } from "./codex/protocol";
 import {
+  ADD_REFINEMENT_ITEM_TOOL_NAME,
   AGENDA_RESOLUTION_TOOL_NAME,
   ASK_OPERATOR_TOOL_NAME,
   COMPLETION_PROPOSAL_TOOL_NAME,
   SPEC_SUBMISSION_TOOL_NAME,
   TICKETS_SUBMISSION_TOOL_NAME,
+  addRefinementItemArgumentsSchema,
+  addRefinementItemToolSpec,
   agendaResolutionArgumentsSchema,
   agendaResolutionToolSpec,
   agentMessageDeltaSchema,
@@ -317,6 +320,15 @@ export async function createAgentRuntime(
         (proposal) => ({ type: "completion-proposal", proposal }),
       );
     }
+    if (parsed.data.tool === ADD_REFINEMENT_ITEM_TOOL_NAME) {
+      return registerSubmission(
+        request,
+        parsed.data,
+        addRefinementItemArgumentsSchema,
+        "agenda-item-submission",
+        (item) => ({ type: "agenda-item-submission", item }),
+      );
+    }
     if (parsed.data.tool === AGENDA_RESOLUTION_TOOL_NAME) {
       return registerSubmission(
         request,
@@ -382,7 +394,12 @@ export async function createAgentRuntime(
       readonly arguments: unknown;
     },
     schema: { safeParse(value: unknown): { success: true; data: TSubmission } | { success: false } },
-    kind: "agenda-resolution" | "completion-proposal" | "spec-submission" | "tickets-submission",
+    kind:
+      | "agenda-item-submission"
+      | "agenda-resolution"
+      | "completion-proposal"
+      | "spec-submission"
+      | "tickets-submission",
     event: (submission: PendingAgentSubmission<TSubmission>) => AgentEvent,
   ): void {
     const parsed = schema.safeParse(origin.arguments);
@@ -672,6 +689,8 @@ function dynamicToolSpec(name: AgentToolName) {
   switch (name) {
     case ASK_OPERATOR_TOOL_NAME:
       return askOperatorToolSpec;
+    case ADD_REFINEMENT_ITEM_TOOL_NAME:
+      return addRefinementItemToolSpec;
     case AGENDA_RESOLUTION_TOOL_NAME:
       return agendaResolutionToolSpec;
     case COMPLETION_PROPOSAL_TOOL_NAME:

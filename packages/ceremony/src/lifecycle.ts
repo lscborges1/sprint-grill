@@ -67,6 +67,7 @@ export function createCeremonyLifecycle(
 ): CeremonyLifecycle {
   const logger = options.logger ?? createLogger({ name: "ceremony-lifecycle" });
   const startingByStory = new Map<number, Promise<CeremonySession>>();
+  const activeDumps = new Set<Promise<void>>();
   const palcoSubscribers = new Map<string, Set<PalcoSubscriber>>();
   const dossieSubscribers = new Map<string, Set<DossieSubscriber>>();
 
@@ -185,6 +186,21 @@ export function createCeremonyLifecycle(
     };
   }
 
+  function trackDump(publication: Promise<void>): Promise<void> {
+    activeDumps.add(publication);
+    void publication.then(
+      () => activeDumps.delete(publication),
+      () => activeDumps.delete(publication),
+    );
+    return publication;
+  }
+
+  function errorFrom(failure: unknown, stage: string): Error {
+    return failure instanceof Error
+      ? failure
+      : new Error(`falha ao encerrar ${stage}.`, { cause: failure });
+  }
+
   const lifecycle: CeremonyLifecycle = {
     async start(storyId) {
       assertOpen();
@@ -264,7 +280,7 @@ export function createCeremonyLifecycle(
           `a US #${initial.story.id} já está abrindo outra cerimônia. Aguarde antes de despejar.`,
         ));
       }
-      return getDump().publish(input);
+      return trackDump(getDump().publish(input));
     },
 
     subscribePalco(sessionId, subscriber) {
@@ -280,12 +296,38 @@ export function createCeremonyLifecycle(
         closed = true;
         palcoSubscribers.clear();
         dossieSubscribers.clear();
+        const failures: Error[] = [];
+        const runtimeStartup = startingRuntime;
 
+        const dumpResults = await Promise.allSettled([...activeDumps]);
+        for (const result of dumpResults) {
+          if (result.status === "rejected") {
+            failures.push(errorFrom(result.reason, "um despejo em andamento"));
+          }
+        }
+
+        let activeRuntime = runtime;
+        if (!activeRuntime && runtimeStartup) {
+          try {
+            activeRuntime = await runtimeStartup;
+          } catch (error) {
+            failures.push(errorFrom(error, "a inicialização do runtime"));
+          }
+        }
         try {
-          const activeRuntime = runtime ?? (startingRuntime && await startingRuntime);
           if (activeRuntime) await activeRuntime.close();
-        } finally {
+        } catch (error) {
+          failures.push(errorFrom(error, "o runtime"));
+        }
+        try {
           store?.close();
+        } catch (error) {
+          failures.push(errorFrom(error, "o SQLite"));
+        }
+
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          throw new AggregateError(failures, "múltiplas falhas ao encerrar a cerimônia.");
         }
       })();
       return closing;

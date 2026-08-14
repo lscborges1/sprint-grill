@@ -1,12 +1,15 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import type { AgentQuestion, AgentRuntime, AgentSession } from "@sprint-griller/agent-runtime";
 import type { AdoClientOptions } from "@sprint-griller/ado-client";
 import type * as AdoClientModule from "@sprint-griller/ado-client";
+import { createLogger } from "@sprint-griller/core";
 import type { SquadConfig } from "@sprint-griller/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCeremonyLifecycle } from "./lifecycle";
+import type { CreateCeremonyLifecycleOptions } from "./lifecycle";
 
 const readIncompleteDumps = vi.hoisted(() => vi.fn());
 const readDumpCompletion = vi.hoisted(() => vi.fn());
@@ -52,8 +55,19 @@ Entrega o cálculo de comissão como um slice executável.
 - O cálculo usa a regra bancária.`;
 
 const directories: string[] = [];
+const logLines: string[] = [];
+const logger = createLogger({
+  destination: new Writable({
+    write(chunk, _encoding, done) {
+      logLines.push(String(chunk));
+      done();
+    },
+  }),
+  level: "trace",
+});
 
 beforeEach(() => {
+  logLines.length = 0;
   readIncompleteDumps.mockResolvedValue([]);
   readDumpCompletion.mockResolvedValue([]);
   publishDecisionRecord.mockResolvedValue({ commentId: 1, url: "https://ado/decision/1" });
@@ -71,6 +85,12 @@ function dbPath(): string {
   const directory = mkdtempSync(path.join(tmpdir(), "sprint-griller-lifecycle-"));
   directories.push(directory);
   return path.join(directory, "ceremonies.db");
+}
+
+function createTestLifecycle(
+  options: Omit<CreateCeremonyLifecycleOptions, "logger">,
+) {
+  return createCeremonyLifecycle({ ...options, logger });
 }
 
 function terminalRuntime(close = vi.fn(async () => undefined)): AgentRuntime {
@@ -236,7 +256,7 @@ describe("CeremonyLifecycle", () => {
   it("should start an approved Investigation through one lazy runtime", async () => {
     readIncompleteDumps.mockResolvedValue([]);
     const runtimeFactory = vi.fn(async () => terminalRuntime());
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: (storyId) => (storyId === STORY_ID ? startInput : undefined),
@@ -257,7 +277,7 @@ describe("CeremonyLifecycle", () => {
   it("should reject a missing approved Investigation before starting the runtime", async () => {
     readIncompleteDumps.mockResolvedValue([]);
     const runtimeFactory = vi.fn(async () => terminalRuntime());
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => undefined,
@@ -276,7 +296,7 @@ describe("CeremonyLifecycle", () => {
   it("should keep Palco and Dossiê reads lazy", async () => {
     const runtimeFactory = vi.fn(async () => terminalRuntime());
     const adoOptionsSpy = vi.fn(adoOptions);
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -296,7 +316,7 @@ describe("CeremonyLifecycle", () => {
 
   it("should coalesce concurrent starts for the same User Story", async () => {
     const runtimeFactory = vi.fn(async () => terminalRuntime());
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -316,7 +336,7 @@ describe("CeremonyLifecycle", () => {
     let releaseRuntime: (runtime: AgentRuntime) => void = () => undefined;
     const runtimeReady = new Promise<AgentRuntime>((resolve) => { releaseRuntime = resolve; });
     const runtimeFactory = vi.fn(() => runtimeReady);
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: (storyId) => ({
@@ -344,7 +364,7 @@ describe("CeremonyLifecycle", () => {
   it("should reject a dump while another ceremony for the story is starting", async () => {
     let releasePreflight: () => void = () => undefined;
     const preflight = new Promise<readonly string[]>((resolve) => { releasePreflight = () => resolve([]); });
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -373,7 +393,7 @@ describe("CeremonyLifecycle", () => {
   it("should block a start when a prior dump has reserved the same User Story", async () => {
     let releaseDumpRead: () => void = () => undefined;
     const dumpRead = new Promise<readonly string[]>((resolve) => { releaseDumpRead = () => resolve([]); });
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -398,12 +418,70 @@ describe("CeremonyLifecycle", () => {
     await lifecycle.close();
   });
 
+  it("should drain an active dump before closing SQLite", async () => {
+    let releaseDumpRead: () => void = () => undefined;
+    const dumpRead = new Promise<readonly string[]>((resolve) => {
+      releaseDumpRead = () => resolve([]);
+    });
+    const pathToDb = dbPath();
+    const lifecycle = createTestLifecycle({
+      dbPath: pathToDb,
+      repos,
+      resolveStartInput: () => startInput,
+      adoOptions,
+      runtimeFactory: async () => terminalRuntime(),
+    });
+    const previous = await terminalDossie(lifecycle);
+    readDumpCompletion.mockImplementationOnce(() => dumpRead);
+    const dumping = lifecycle.dump({
+      sessionId: previous.sessionId,
+      markdown: previous.spec.generated,
+      base: previous.spec.generated,
+      tasksMarkdown,
+      estimate: 3,
+      confirmPending: true,
+    });
+
+    const closing = lifecycle.close();
+    const closeWhileHeld = await Promise.race([
+      closing.then(() => "fulfilled" as const, () => "rejected" as const),
+      new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+    ]);
+    const lateUse = (() => {
+      try {
+        lifecycle.dossie(previous.sessionId);
+        return "accepted";
+      } catch (error) {
+        return error instanceof Error ? error.message : "unknown error";
+      }
+    })();
+
+    releaseDumpRead();
+    const [dumpResult, closeResult] = await Promise.allSettled([dumping, closing]);
+
+    expect({
+      closeWhileHeld,
+      closeResult: closeResult.status,
+      dumpResult: dumpResult.status,
+      lateUse,
+      completionWrites: publishDumpCompletion.mock.calls.length,
+      sqliteWalOpen: existsSync(`${pathToDb}-wal`),
+    }).toEqual({
+      closeWhileHeld: "pending",
+      closeResult: "fulfilled",
+      dumpResult: "fulfilled",
+      lateUse: "o ciclo de vida da cerimônia já foi fechado.",
+      completionWrites: 1,
+      sqliteWalOpen: false,
+    });
+  });
+
   it("should retry runtime startup after a failed initialization", async () => {
     const runtimeFactory = vi
       .fn<() => Promise<AgentRuntime>>()
       .mockRejectedValueOnce(new Error("app-server indisponível"))
       .mockResolvedValueOnce(terminalRuntime());
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -414,9 +492,17 @@ describe("CeremonyLifecycle", () => {
     await expect(lifecycle.start(STORY_ID)).rejects.toThrow("app-server indisponível");
     const session = await lifecycle.start(STORY_ID);
 
-    expect({ id: session.id, attempts: runtimeFactory.mock.calls.length }).toEqual({
+    expect({
+      id: session.id,
+      attempts: runtimeFactory.mock.calls.length,
+      structuredErrors: logLines.filter((line) =>
+        line.includes('"level":"error"') &&
+        line.includes('"msg":"falha ao subir a cerimônia"')
+      ).length,
+    }).toEqual({
       id: "thread-1",
       attempts: 2,
+      structuredErrors: 1,
     });
 
     await lifecycle.close();
@@ -424,7 +510,7 @@ describe("CeremonyLifecycle", () => {
 
   it("should delegate decisions and Consultas to the live ceremony", async () => {
     const fake = questioningRuntime();
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -465,7 +551,7 @@ describe("CeremonyLifecycle", () => {
 
   it("should delegate a resumable ceremony without starting a second runtime", async () => {
     const fake = resumableRuntime();
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -482,7 +568,7 @@ describe("CeremonyLifecycle", () => {
   });
 
   it("should notify healthy subscribers when a draft changes despite a broken subscriber", async () => {
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -493,7 +579,7 @@ describe("CeremonyLifecycle", () => {
     const broken = vi.fn(() => { throw new Error("SSE caiu"); });
     const healthy = vi.fn();
     lifecycle.subscribePalco(dossie.sessionId, broken);
-    lifecycle.subscribeDossie(dossie.sessionId, healthy);
+    lifecycle.subscribePalco(dossie.sessionId, healthy);
 
     const draft = lifecycle.saveSpecDraft({
       sessionId: dossie.sessionId,
@@ -503,17 +589,23 @@ describe("CeremonyLifecycle", () => {
     });
     lifecycle.discardSpecDraft({ sessionId: dossie.sessionId, expectedSavedAt: draft.savedAt });
 
-    expect({ brokenCalls: broken.mock.calls.length, healthyCalls: healthy.mock.calls.length }).toEqual({
-      brokenCalls: 2,
-      healthyCalls: 2,
-    });
+    const subscriberWarnings = logLines.filter((line) =>
+      line.includes('"msg":"assinante da cerimônia quebrou ao receber estado"')
+    );
+    expect({
+      brokenCalls: broken.mock.calls.length,
+      healthyCalls: healthy.mock.calls.length,
+      structuredWarnings: subscriberWarnings.filter((line) =>
+        line.includes(`"sessionId":"${dossie.sessionId}"`)
+      ).length,
+    }).toEqual({ brokenCalls: 2, healthyCalls: 2, structuredWarnings: 2 });
 
     await lifecycle.close();
   });
 
   it("should close opened resources once and reject later use", async () => {
     const close = vi.fn(async () => undefined);
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: dbPath(),
       repos,
       resolveStartInput: () => startInput,
@@ -535,7 +627,7 @@ describe("CeremonyLifecycle", () => {
     });
     const pathToDb = dbPath();
     const runtimeFactory = vi.fn(() => runtimeStarting);
-    const lifecycle = createCeremonyLifecycle({
+    const lifecycle = createTestLifecycle({
       dbPath: pathToDb,
       repos,
       resolveStartInput: () => startInput,
@@ -556,5 +648,56 @@ describe("CeremonyLifecycle", () => {
     await expect(secondClose).rejects.toThrow("app-server indisponível");
     expect(existsSync(`${pathToDb}-wal`)).toBe(false);
     expect(() => lifecycle.dossie("missing")).toThrow(/já foi fechado/i);
+  });
+
+  it("should aggregate dump and runtime failures while still closing SQLite", async () => {
+    let rejectDumpRead: (error: Error) => void = () => undefined;
+    const dumpRead = new Promise<readonly string[]>((_resolve, reject) => {
+      rejectDumpRead = (error) => reject(error);
+    });
+    const pathToDb = dbPath();
+    const closeRuntime = vi.fn(async () => {
+      throw new Error("runtime não encerrou");
+    });
+    const lifecycle = createTestLifecycle({
+      dbPath: pathToDb,
+      repos,
+      resolveStartInput: () => startInput,
+      adoOptions,
+      runtimeFactory: async () => terminalRuntime(closeRuntime),
+    });
+    const previous = await terminalDossie(lifecycle);
+    readDumpCompletion.mockImplementationOnce(() => dumpRead);
+    const dumping = lifecycle.dump({
+      sessionId: previous.sessionId,
+      markdown: previous.spec.generated,
+      base: previous.spec.generated,
+      tasksMarkdown,
+      estimate: 3,
+      confirmPending: true,
+    });
+    const closing = lifecycle.close();
+
+    rejectDumpRead(new Error("ADO indisponível"));
+    const [dumpResult, closeResult] = await Promise.allSettled([dumping, closing]);
+    const aggregate = closeResult.status === "rejected" && closeResult.reason instanceof AggregateError
+      ? closeResult.reason
+      : undefined;
+
+    expect({
+      aggregateErrors: aggregate?.errors.flatMap((error: unknown) =>
+        error instanceof Error ? [error.message] : []
+      ),
+      closeResult: closeResult.status,
+      dumpResult: dumpResult.status,
+      runtimeCloseCalls: closeRuntime.mock.calls.length,
+      sqliteWalOpen: existsSync(`${pathToDb}-wal`),
+    }).toEqual({
+      aggregateErrors: ["ADO indisponível", "runtime não encerrou"],
+      closeResult: "rejected",
+      dumpResult: "rejected",
+      runtimeCloseCalls: 1,
+      sqliteWalOpen: false,
+    });
   });
 });

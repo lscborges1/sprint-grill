@@ -158,4 +158,17 @@ describe("ceremony lifecycle wiring", () => {
       sessionId: "session-1",
     });
   });
+
+  it("should reuse the lifecycle after an HMR module reload", async () => {
+    await startCeremony(117);
+
+    vi.resetModules();
+    const reloaded = await import("./ceremonies");
+    await reloaded.startCeremony(118);
+
+    expect({
+      lifecycleInstances: createCeremonyLifecycle.mock.calls.length,
+      storyIds: lifecycleSpies.start.mock.calls.map(([storyId]) => storyId),
+    }).toEqual({ lifecycleInstances: 1, storyIds: [117, 118] });
+  });
 });

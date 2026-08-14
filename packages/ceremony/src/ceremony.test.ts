@@ -229,6 +229,7 @@ describe("start", () => {
             questionSeq: 1,
             id: "q1",
             agendaItemId: "investigacao-1",
+            source: "agent",
           header: "Arredondamento",
           question: "A comissão arredonda para cima?",
           recommendation: "Seguir a regra bancária, igual à folha.",
@@ -288,6 +289,26 @@ describe("start", () => {
     await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(1));
     expect(proposalVerdicts[0]).toMatchObject({ accepted: false, message: expect.stringMatching(/aberto/i) });
     expect(store.getSession(SESSION_ID)?.refinement.phase).toBe("refinando");
+  });
+
+  it("should stop after two rejected completion proposals make no persisted progress", async () => {
+    const { ceremony, store, prompts, proposalVerdicts } = ceremonyWith([
+      [{ type: "propose-completion" }, { type: "complete" }],
+      [{ type: "propose-completion" }, { type: "complete" }],
+    ]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() => expect(proposalVerdicts).toHaveLength(2));
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("retomavel"));
+    expect(prompts).toHaveLength(2);
+    expect(store.listTranscript(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: expect.objectContaining({ kind: "mensagem", text: expect.stringMatching(/duas vezes/i) }),
+        }),
+      ]),
+    );
   });
 
   it("should reset the no-progress count when an agenda question reaches the room", async () => {
@@ -563,6 +584,66 @@ describe("resume", () => {
     expect(ceremony.palco(SESSION_ID)?.current).toEqual({ phase: "retomavel" });
   });
 
+  it("should preserve and answer a queued room doubt after process recovery", async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "sprint-griller-choice-")), "cerimonias.db");
+    const previousStore = openCeremonyStore(file);
+    const roomChoice: AgentEvent = {
+      type: "message",
+      text: `\`\`\`json\n${JSON.stringify({
+        kind: "room-choice",
+        question: "O rollout inclui o app mobile?",
+        recommendation: "Começar pela web.",
+        evidence: ["core-api · src/order.ts"],
+        options: [{ label: "Só web", description: "Menor risco inicial." }],
+        allowFreeText: true,
+      })}\n\`\`\``,
+    };
+    const firstRuntime = fakeRuntime(
+      [[{ type: "ask", questions: [agentQuestion()] }]],
+      [roomChoice, {
+        type: "turn-completed",
+        turn: { id: "turn-consulta", status: "completed", durationMs: 1 },
+      }],
+    );
+    const firstCeremony = createCeremony({ runtime: firstRuntime.runtime, store: previousStore, repos });
+    await start(firstCeremony);
+    await vi.waitFor(() => expect(firstCeremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+    firstCeremony.consult({ sessionId: SESSION_ID, question: "Isto vale no app também?" });
+    await vi.waitFor(() => expect(previousStore.listOpenQuestions(SESSION_ID)).toHaveLength(2));
+    previousStore.close();
+
+    const recoveredStore = openCeremonyStore(file);
+    stores.push(recoveredStore);
+    const recoveredRuntime = fakeRuntime([[]]);
+    const recovered = createCeremony({ runtime: recoveredRuntime.runtime, store: recoveredStore, repos });
+
+    await recovered.resume(SESSION_ID);
+
+    expect(recoveredStore.currentQuestion(SESSION_ID)).toMatchObject({
+      id: "duvida-1",
+      agendaItemId: "duvida-1",
+      question: "O rollout inclui o app mobile?",
+    });
+    expect(recoveredStore.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "investigacao-1", status: "aberto" }),
+        expect.objectContaining({ id: "duvida-1", status: "aguardando-sala" }),
+      ]),
+    );
+    expect(recoveredRuntime.prompts[0]).toContain("investigacao-1");
+    expect(recoveredRuntime.prompts[0]).toContain("duvida-1");
+    await recovered.decide({
+      sessionId: SESSION_ID,
+      questionId: "duvida-1",
+      answer: "Só web",
+    });
+    expect(recoveredStore.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "duvida-1", status: "resolvido" }),
+      ]),
+    );
+  });
+
   it("should refuse to resume a ceremony that already ended", async () => {
     const { ceremony, store } = ceremonyWith([]);
     await start(ceremony);
@@ -744,6 +825,48 @@ describe("consult", () => {
     );
   });
 
+  it("should refuse a queued room choice until the current question is answered", async () => {
+    const roomChoice: AgentEvent = {
+      type: "message",
+      text: `\`\`\`json\n${JSON.stringify({
+        kind: "room-choice",
+        question: "O rollout inclui o app mobile?",
+        recommendation: "Começar pela web.",
+        evidence: ["core-api · src/order.ts"],
+        options: [{ label: "Só web", description: "Menor risco inicial." }],
+        allowFreeText: true,
+      })}\n\`\`\``,
+    };
+    const { ceremony, store } = await grilling([roomChoice, TURN_DONE]);
+    ceremony.consult({ sessionId: SESSION_ID, question: "Isto vale no app também?" });
+    await vi.waitFor(() => expect(store.listOpenQuestions(SESSION_ID)).toHaveLength(2));
+
+    await expect(
+      ceremony.decide({
+        sessionId: SESSION_ID,
+        questionId: "duvida-1",
+        answer: "Só web",
+      }),
+    ).rejects.toThrow(/pergunta atual/i);
+
+    await ceremony.decide({ sessionId: SESSION_ID, questionId: "q1", answer: "Regra bancária" });
+    expect(store.currentQuestion(SESSION_ID)?.id).toBe("duvida-1");
+    await ceremony.decide({
+      sessionId: SESSION_ID,
+      questionId: "duvida-1",
+      answer: "Só web",
+    });
+    expect(store.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "duvida-1",
+          status: "resolvido",
+          resolution: expect.objectContaining({ kind: "escolha", answer: "Só web" }),
+        }),
+      ]),
+    );
+  });
+
   it("should mark an answer whose citation does not exist as unsustained", async () => {
     const { ceremony, store } = await grilling([
       factAnswer([{ repo: "core-api", path: "src/inventado.ts" }]),
@@ -829,6 +952,9 @@ describe("consult", () => {
         message: /não foi possível gravar/i,
       }),
     );
+    expect(store.listRefinementItems(SESSION_ID)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "duvida-1", status: "aberto" })]),
+    );
   });
 
   it("should keep the stage unstuck when even the failure cannot be written", async () => {
@@ -852,6 +978,51 @@ describe("consult", () => {
     expect(() =>
       ceremony.consult({ sessionId: SESSION_ID, question: "E o cancelOrder?" }),
     ).not.toThrow();
+  });
+
+  it("should catch and log a later agenda transition failure", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    const fake = fakeRuntime(
+      [[{ type: "ask", questions: [agentQuestion()] }]],
+      [factAnswer([{ repo: "core-api", path: "src/order.ts" }]), TURN_DONE],
+    );
+    const ceremony = createCeremony({
+      runtime: fake.runtime,
+      store,
+      repos,
+      logger: createLogger({ destination, level: "info" }),
+    });
+    await start(ceremony);
+    await vi.waitFor(() => expect(ceremony.palco(SESSION_ID)?.current.phase).toBe("perguntando"));
+    const transition = store.transitionRefinementItem.bind(store);
+    let doubtTransitions = 0;
+    store.transitionRefinementItem = (input) => {
+      if (input.itemId === "duvida-1" && ++doubtTransitions === 2) {
+        throw new Error("revisão concorrente");
+      }
+      return transition(input);
+    };
+
+    ceremony.consult({ sessionId: SESSION_ID, question: "Quem chama o createOrder?" });
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)?.consultation?.status).toBe("respondida"),
+    );
+    await vi.waitFor(() =>
+      expect(lines).toContainEqual(
+        expect.objectContaining({
+          msg: "não foi possível atualizar a Agenda depois da consulta",
+          sessionId: SESSION_ID,
+        }),
+      ),
+    );
   });
 
   it("should notify the stage when the consultation opens and when it answers", async () => {

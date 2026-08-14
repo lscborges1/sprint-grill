@@ -1,3 +1,12 @@
+import type { z } from "zod";
+import type {
+  AgentToolName,
+  completionProposalArgumentsSchema,
+  refinementSpecSubmissionSchema,
+  refinementTicketSubmissionSchema,
+  refinementTicketsSubmissionSchema,
+} from "./codex/protocol";
+
 /**
  * Falha na fronteira do runtime de agente: o processo do agente morreu, o
  * protocolo devolveu erro, ou o turno falhou. Distinta de `ConfigError` — esta
@@ -124,7 +133,7 @@ export interface AgentSession {
 
 export interface AgentRuntime {
   startSession(options?: StartSessionOptions): Promise<AgentSession>;
-  resumeSession(sessionId: string): Promise<AgentSession>;
+  resumeSession(sessionId: string, options?: ResumeSessionOptions): Promise<AgentSession>;
   /** Encerra o processo do agente. Sessões abertas param de funcionar. */
   close(): Promise<void>;
 }
@@ -132,11 +141,8 @@ export interface AgentRuntime {
 export interface StartSessionOptions {
   /** Instruções de sistema para a sessão (ex.: o papel do agente na Investigação). */
   readonly instructions?: string;
+  /** Ferramentas dinâmicas disponíveis nesta sessão; vazio por padrão. */
+  readonly tools?: readonly AgentToolName[];
 }
-import type { z } from "zod";
-import type {
-  completionProposalArgumentsSchema,
-  refinementSpecSubmissionSchema,
-  refinementTicketSubmissionSchema,
-  refinementTicketsSubmissionSchema,
-} from "./codex/protocol";
+
+export type ResumeSessionOptions = Pick<StartSessionOptions, "tools">;

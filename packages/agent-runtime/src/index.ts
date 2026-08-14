@@ -16,6 +16,7 @@ export type {
   RefinementSpecSubmission,
   RefinementTicketSubmission,
   RefinementTicketsSubmission,
+  ResumeSessionOptions,
   StartSessionOptions,
   TurnSummary,
 } from "./types";

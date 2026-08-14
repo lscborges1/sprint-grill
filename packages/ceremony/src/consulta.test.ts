@@ -73,12 +73,14 @@ interface FakeRuntime {
   readonly runtime: AgentRuntime;
   readonly prompts: string[];
   readonly instructions: (string | undefined)[];
+  readonly options: StartSessionOptions[];
 }
 
 /** Runtime de mentira: entrega um roteiro de eventos e anota o que recebeu. */
 function fakeRuntime(script: readonly AgentEvent[]): FakeRuntime {
   const prompts: string[] = [];
   const instructions: (string | undefined)[] = [];
+  const optionsSeen: StartSessionOptions[] = [];
 
   const session: AgentSession = {
     id: "consulta-1",
@@ -94,8 +96,10 @@ function fakeRuntime(script: readonly AgentEvent[]): FakeRuntime {
   return {
     prompts,
     instructions,
+    options: optionsSeen,
     runtime: {
       startSession: async (options: StartSessionOptions = {}) => {
+        optionsSeen.push(options);
         instructions.push(options.instructions);
         return session;
       },
@@ -169,6 +173,7 @@ describe("runConsultation", () => {
 
     expect(fake.instructions[0]).toContain(REPOS.primary.path);
     expect(fake.prompts[0]).toContain("O contrato já tem campo de parcelas?");
+    expect(fake.options[0]?.tools).toBeUndefined();
   });
 
   it("should refuse to call an answer a fact when the cited file does not exist", async () => {

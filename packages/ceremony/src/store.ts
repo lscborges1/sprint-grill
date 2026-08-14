@@ -503,6 +503,7 @@ export function openCeremonyStore(
               sessionId,
               questionId: question.id,
               agendaItemId: question.agendaItemId ?? question.id,
+              source: question.source ?? "agent",
               header: question.header,
               question: question.question,
               recommendation: question.recommendation,
@@ -571,7 +572,13 @@ export function openCeremonyStore(
       assertDossieMutable(sessionId);
       db.update(questions)
         .set({ status: "abandonada" })
-        .where(and(eq(questions.sessionId, sessionId), eq(questions.status, "aberta")))
+        .where(
+          and(
+            eq(questions.sessionId, sessionId),
+            eq(questions.status, "aberta"),
+            eq(questions.source, "agent"),
+          ),
+        )
         .run();
     },
 
@@ -1261,6 +1268,7 @@ function toQuestion(row: QuestionRow): PersistedCeremonyQuestion {
     questionSeq: row.seq,
     id: row.questionId,
     agendaItemId: row.agendaItemId,
+    source: row.source,
     header: row.header,
     question: row.question,
     recommendation: row.recommendation,

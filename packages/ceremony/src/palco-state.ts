@@ -23,6 +23,7 @@ const questionSchema = z.object({
   questionSeq: z.number(),
   id: z.string(),
   agendaItemId: z.string(),
+  source: z.enum(["agent", "room-doubt"]),
   header: z.string(),
   question: z.string(),
   recommendation: z.string(),

@@ -47,6 +47,7 @@ export const questions = sqliteTable(
     // O id que o agente deu à pergunta: é a chave da resposta no `ask_operator`.
     questionId: text("question_id").notNull(),
     agendaItemId: text("agenda_item_id").notNull(),
+    source: text("source", { enum: ["agent", "room-doubt"] }).notNull(),
     header: text("header").notNull(),
     question: text("question").notNull(),
     recommendation: text("recommendation").notNull(),
@@ -165,7 +166,7 @@ export const events = sqliteTable(
  * recusada na abertura, mandando apagar o arquivo — descobrir a divergência no
  * meio de uma cerimônia seria o pior momento possível.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 /**
  * ponytail: o schema é aplicado assim, e não por migration do drizzle-kit,
@@ -201,6 +202,7 @@ CREATE TABLE IF NOT EXISTS questions (
   session_id TEXT NOT NULL,
   question_id TEXT NOT NULL,
   agenda_item_id TEXT NOT NULL,
+  source TEXT NOT NULL,
   header TEXT NOT NULL,
   question TEXT NOT NULL,
   recommendation TEXT NOT NULL,

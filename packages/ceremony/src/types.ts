@@ -51,6 +51,8 @@ export interface CeremonyQuestion {
   readonly id: string;
   /** Item da Agenda que receberá a Resolução desta escolha. */
   readonly agendaItemId?: string;
+  /** Perguntas da sala sobrevivem ao turno; perguntas do agente não. */
+  readonly source?: "agent" | "room-doubt";
   readonly header: string;
   readonly question: string;
   readonly recommendation: string;
@@ -63,6 +65,7 @@ export interface CeremonyQuestion {
 export interface PersistedCeremonyQuestion extends CeremonyQuestion {
   readonly questionSeq: number;
   readonly agendaItemId: string;
+  readonly source: "agent" | "room-doubt";
 }
 
 /** Registro de decisão: o artefato que a cerimônia existe para produzir. */

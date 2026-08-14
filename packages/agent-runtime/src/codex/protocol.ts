@@ -17,6 +17,13 @@ export const ASK_OPERATOR_TOOL_NAME = "ask_operator";
 export const COMPLETION_PROPOSAL_TOOL_NAME = "propose_refinement_completion";
 export const SPEC_SUBMISSION_TOOL_NAME = "submit_refinement_spec";
 export const TICKETS_SUBMISSION_TOOL_NAME = "submit_refinement_tickets";
+export const AGENT_TOOL_NAMES = [
+  ASK_OPERATOR_TOOL_NAME,
+  COMPLETION_PROPOSAL_TOOL_NAME,
+  SPEC_SUBMISSION_TOOL_NAME,
+  TICKETS_SUBMISSION_TOOL_NAME,
+] as const;
+export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 
 export type RequestId = number | string;
 

@@ -65,6 +65,13 @@ export const NAO_E_DECISAO =
   "Isto não é decisão da sala: sem recomendação sua, é fato que você mesmo tem que " +
   "buscar nos repos. Leia o código e volte com a decisão e a recomendação.";
 
+const CEREMONY_AGENT_TOOLS = [
+  "ask_operator",
+  "propose_refinement_completion",
+  "submit_refinement_spec",
+  "submit_refinement_tickets",
+] as const;
+
 /** Turno vivo neste processo. Some no crash — é o que separa `pensando` de `retomavel`. */
 interface LiveTurn {
   running: boolean;
@@ -126,11 +133,11 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     sessionId: string,
     consultation: CeremonyConsultation,
     outcome: ConsultationOutcome,
-  ): void {
+  ): ConsultationOutcome {
     try {
       store.answerConsultation(consultation.id, outcome);
       writeFailures.delete(sessionId);
-      return;
+      return outcome;
     } catch (error) {
       sessionLogger(sessionId)?.error({ err: error }, "não foi possível gravar a consulta");
     }
@@ -150,12 +157,14 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         message: failed.message,
       });
       writeFailures.delete(sessionId);
+      return { status: "falhou", message: failed.message };
     } catch (persistError) {
       sessionLogger(sessionId)?.error(
         { err: persistError },
         "consulta ficou sem estado terminal no banco — Palco usa falha em memória",
       );
       writeFailures.set(sessionId, failed);
+      return { status: "falhou", message: failed.message };
     }
   }
 
@@ -212,8 +221,9 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
               break;
 
             case "completion-proposal":
-              live.progressed = true;
-              await receiveCompletionProposal(sessionId, event.proposal);
+              if (await receiveCompletionProposal(sessionId, event.proposal)) {
+                live.progressed = true;
+              }
               break;
 
             case "spec-submission":
@@ -274,7 +284,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
   async function receiveCompletionProposal(
     sessionId: string,
     proposal: Extract<AgentEvent, { readonly type: "completion-proposal" }>["proposal"],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const open = store
       .listRefinementItems(sessionId)
       .filter((item) => item.status !== "resolvido" && item.status !== "fora-de-escopo");
@@ -283,7 +293,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         accepted: false,
         message: `A conclusão foi recusada: ${open.length} item(ns) da Agenda continuam abertos.`,
       });
-      return;
+      return false;
     }
 
     const session = store.getSession(sessionId);
@@ -292,7 +302,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
         accepted: false,
         message: "A conclusão só pode ser proposta durante a fase Refinar.",
       });
-      return;
+      return false;
     }
 
     store.updateRefinementPhase({
@@ -305,6 +315,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       message: "Agenda encerrada. A sala agora precisa confirmar o avanço.",
     });
     changed(sessionId);
+    return true;
   }
 
   async function receiveQuestion(
@@ -391,19 +402,39 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
   }
 
   async function resumeFrom(sessionId: string): Promise<void> {
-    // As perguntas do turno morto morreram com ele: perguntar de novo é ruído na sala.
+    const deadAgentQuestions = store
+      .listOpenQuestions(sessionId)
+      .filter((question) => question.source === "agent");
+    // A pergunta do turno morreu, mas seu item volta a aberto com a mesma identidade.
     store.abandonPendingQuestions(sessionId);
+    for (const question of deadAgentQuestions) {
+      const item = store
+        .listRefinementItems(sessionId)
+        .find((candidate) => candidate.id === question.agendaItemId);
+      if (item?.status === "aguardando-sala") {
+        transitionAgenda(sessionId, { itemId: item.id, status: "aberto" });
+      }
+    }
     store.appendEvent(sessionId, { kind: "retomada" });
 
-    const agentSession = await runtime.resumeSession(sessionId);
+    const agentSession = await runtime.resumeSession(sessionId, {
+      tools: CEREMONY_AGENT_TOOLS,
+    });
     sessionLogger(sessionId)?.info("cerimônia retomada");
-    kick(agentSession, ceremonyResumePrompt(store.listDecisions(sessionId)));
+    kick(
+      agentSession,
+      ceremonyResumePrompt(
+        store.listDecisions(sessionId),
+        store.listRefinementItems(sessionId),
+      ),
+    );
   }
 
   return {
     async start({ story, investigationMarkdown }) {
       const agentSession = await runtime.startSession({
         instructions: ceremonyInstructions(repos),
+        tools: CEREMONY_AGENT_TOOLS,
       });
 
       const session = store.createSession({
@@ -428,9 +459,10 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     },
 
     async decide(input) {
-      const asked = store
-        .listOpenQuestions(input.sessionId)
-        .find((question) => question.id === input.questionId);
+      const asked = store.currentQuestion(input.sessionId);
+      if (!asked || asked.id !== input.questionId) {
+        throw new CeremonyError(`a pergunta ${input.questionId} não é a pergunta atual da sala.`);
+      }
       const decision = store.recordDecision(input);
       const live = lives.get(input.sessionId);
       if (asked) {
@@ -520,10 +552,28 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
           } as const;
         })
         .then((outcome) => {
-          settleConsultation(sessionId, consultation, outcome);
-          settleDoubtAgenda(sessionId, consultation.id, outcome);
-          if (outcome.status === "precisa-sala") {
-            queueRoomChoice(sessionId, consultation.id, outcome);
+          const persisted = settleConsultation(sessionId, consultation, outcome);
+          try {
+            settleDoubtAgenda(sessionId, consultation.id, persisted);
+            if (persisted.status === "precisa-sala") {
+              queueRoomChoice(sessionId, consultation.id, persisted);
+            }
+          } catch (error) {
+            logger?.error(
+              { err: error, consultationId: consultation.id },
+              "não foi possível atualizar a Agenda depois da consulta",
+            );
+            try {
+              transitionAgenda(sessionId, {
+                itemId: `duvida-${consultation.id}`,
+                status: "aberto",
+              });
+            } catch (recoveryError) {
+              logger?.error(
+                { err: recoveryError, consultationId: consultation.id },
+                "não foi possível recuperar o item da Agenda depois da consulta",
+              );
+            }
           }
           changed(sessionId);
         });
@@ -576,6 +626,7 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       {
         id: itemId,
         agendaItemId: itemId,
+        source: "room-doubt",
         header: "Dúvida da sala",
         question: outcome.question,
         recommendation: outcome.recommendation,
@@ -644,6 +695,7 @@ function toCeremonyQuestion(question: RecommendedQuestion): CeremonyQuestion {
   return {
     id: question.id,
     agendaItemId: question.agendaItemId ?? question.id,
+    source: "agent",
     header: question.header,
     question: question.question,
     recommendation: question.recommendation,

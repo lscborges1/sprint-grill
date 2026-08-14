@@ -2,7 +2,7 @@ import { createLogger } from "@sprint-griller/core";
 import type { Logger } from "@sprint-griller/core";
 import type { AppServerClient, ServerRequest } from "./codex/app-server";
 import { connectAppServer } from "./codex/app-server";
-import type { DynamicToolCallResponse, RequestId } from "./codex/protocol";
+import type { AgentToolName, DynamicToolCallResponse, RequestId } from "./codex/protocol";
 import {
   ASK_OPERATOR_TOOL_NAME,
   COMPLETION_PROPOSAL_TOOL_NAME,
@@ -38,6 +38,7 @@ import type {
   AgentSubmissionVerdict,
   PendingAgentSubmission,
   PendingQuestion,
+  ResumeSessionOptions,
   StartSessionOptions,
 } from "./types";
 
@@ -75,6 +76,7 @@ interface ActiveTurn {
 interface SessionState {
   readonly id: string;
   readonly logger: Logger;
+  readonly enabledTools: ReadonlySet<string>;
   activeTurn: ActiveTurn | null;
   /**
    * Turnos largados sem `turn/completed` — a interrupção pode ter falhado, ou o
@@ -294,6 +296,15 @@ export async function createAgentRuntime(
       return;
     }
 
+    if (!sessions.get(parsed.data.threadId)?.enabledTools.has(parsed.data.tool)) {
+      logger.warn({ tool: parsed.data.tool }, "ferramenta indisponível nesta sessão");
+      respond(
+        request.id,
+        toolFailure(`a ferramenta ${parsed.data.tool} não está disponível nesta sessão.`),
+      );
+      return;
+    }
+
     if (parsed.data.tool === COMPLETION_PROPOSAL_TOOL_NAME) {
       return registerSubmission(
         request,
@@ -484,10 +495,11 @@ export async function createAgentRuntime(
     onClose: handleClose,
   });
 
-  function registerSession(threadId: string): AgentSession {
+  function registerSession(threadId: string, enabledTools: readonly AgentToolName[]): AgentSession {
     const state: SessionState = {
       id: threadId,
       logger: logger.child({ sessionId: threadId }),
+      enabledTools: new Set(enabledTools),
       activeTurn: null,
       abandonedTurnIds: new Set(),
     };
@@ -602,18 +614,14 @@ export async function createAgentRuntime(
 
   return {
     async startSession(sessionOptions: StartSessionOptions = {}): Promise<AgentSession> {
+      const enabledTools = sessionOptions.tools ?? [];
       const threadId = readThreadId(
         await callAppServer("thread/start", {
           cwd: options.cwd,
           // A Investigação lê repositórios; escrita no ADO é do `ado-client`.
           sandbox: "read-only",
           approvalPolicy: "on-request",
-          dynamicTools: [
-            askOperatorToolSpec,
-            completionProposalToolSpec,
-            refinementSpecSubmissionToolSpec,
-            refinementTicketsSubmissionToolSpec,
-          ],
+          dynamicTools: enabledTools.map(dynamicToolSpec),
           ...(sessionOptions.instructions === undefined
             ? {}
             : { developerInstructions: sessionOptions.instructions }),
@@ -622,20 +630,23 @@ export async function createAgentRuntime(
       );
 
       logger.info({ sessionId: threadId }, "sessão iniciada");
-      return registerSession(threadId);
+      return registerSession(threadId, enabledTools);
     },
 
     // `dynamicTools` só existe em `thread/start`, mas o codex persiste as
     // ferramentas na thread: verificado que a `ask_operator` continua disponível
     // depois de um `thread/resume` (codex-cli 0.146.1).
-    async resumeSession(sessionId: string): Promise<AgentSession> {
+    async resumeSession(
+      sessionId: string,
+      sessionOptions: ResumeSessionOptions = {},
+    ): Promise<AgentSession> {
       const threadId = readThreadId(
         await callAppServer("thread/resume", { threadId: sessionId, excludeTurns: true }),
         "thread/resume",
       );
 
       logger.info({ sessionId: threadId }, "sessão retomada");
-      return registerSession(threadId);
+      return registerSession(threadId, sessionOptions.tools ?? []);
     },
 
     async close(): Promise<void> {
@@ -643,6 +654,19 @@ export async function createAgentRuntime(
       sessions.clear();
     },
   };
+}
+
+function dynamicToolSpec(name: AgentToolName) {
+  switch (name) {
+    case ASK_OPERATOR_TOOL_NAME:
+      return askOperatorToolSpec;
+    case COMPLETION_PROPOSAL_TOOL_NAME:
+      return completionProposalToolSpec;
+    case SPEC_SUBMISSION_TOOL_NAME:
+      return refinementSpecSubmissionToolSpec;
+    case TICKETS_SUBMISSION_TOOL_NAME:
+      return refinementTicketsSubmissionToolSpec;
+  }
 }
 
 function readThreadId(result: unknown, method: string): string {

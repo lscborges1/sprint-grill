@@ -210,7 +210,10 @@ export function consultationPrompt(story: ConsultationStory, question: string): 
  * agente perdeu as perguntas que estavam no ar. O que sobrevive é o que a sala
  * decidiu — e é isso que volta para ele.
  */
-export function ceremonyResumePrompt(taken: readonly CeremonyDecision[]): string {
+export function ceremonyResumePrompt(
+  taken: readonly CeremonyDecision[],
+  agenda: readonly RefinementItem[] = [],
+): string {
   return [
     "A cerimônia foi retomada depois de uma interrupção. Estas são as decisões já",
     "registradas com a sala — não pergunte de novo nada que elas resolvem:",
@@ -221,7 +224,13 @@ export function ceremonyResumePrompt(taken: readonly CeremonyDecision[]): string
           (decision) => `- ${decision.question}\n  → ${decision.answer}`,
         )),
     "",
-    "Faça a próxima pergunta em aberto, ou feche a cerimônia se não houver mais nenhuma.",
+    "Agenda persistida (preserve estes ids):",
+    "",
+    ...(agenda.length === 0
+      ? ["(nenhum item persistido)"]
+      : agenda.map((item) => `- \`${item.id}\` [${item.status}] — ${item.question}`)),
+    "",
+    "Faça a próxima pergunta em aberto; se a Agenda estiver encerrada, use `propose_refinement_completion`.",
   ].join("\n");
 }
 

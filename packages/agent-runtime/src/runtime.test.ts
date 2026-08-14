@@ -192,7 +192,7 @@ describe("createAgentRuntime", () => {
       ]),
       transcript,
     );
-    const session = await runtime.startSession();
+    const session = await runtime.startSession({ tools: ["ask_operator"] });
 
     const events = await drain(session.send("investigue"), { q1: ["Não, só web"] });
 
@@ -233,7 +233,7 @@ describe("createAgentRuntime", () => {
       ]),
       transcript,
     );
-    const session = await runtime.startSession();
+    const session = await runtime.startSession({ tools: ["propose_refinement_completion"] });
     const events: AgentEvent[] = [];
 
     for await (const event of session.send("grelhe")) {
@@ -289,7 +289,9 @@ describe("createAgentRuntime", () => {
       ]),
       transcript,
     );
-    const session = await runtime.startSession();
+    const session = await runtime.startSession({
+      tools: ["submit_refinement_spec", "submit_refinement_tickets"],
+    });
     const submissions: AgentEvent["type"][] = [];
 
     for await (const event of session.send("submeta os artefatos")) {
@@ -333,7 +335,7 @@ describe("createAgentRuntime", () => {
       ]),
       transcript,
     );
-    const session = await runtime.startSession();
+    const session = await runtime.startSession({ tools: ["ask_operator"] });
 
     const events = await drain(session.send("grelhe"));
 
@@ -375,7 +377,7 @@ describe("createAgentRuntime", () => {
       ]),
       transcript,
     );
-    const session = await runtime.startSession();
+    const session = await runtime.startSession({ tools: ["ask_operator"] });
 
     const events = await drain(session.send("grelhe"));
 
@@ -417,6 +419,32 @@ describe("createAgentRuntime", () => {
           type: "inputText",
           text: expect.stringContaining("deploy_para_producao") as unknown as string,
         },
+      ],
+    });
+    await runtime.close();
+  });
+
+  it("should reject a ceremony tool that was not enabled for the session", async () => {
+    const transcript = transcriptPath();
+    const { runtime } = await runtimeWith(
+      scriptWith([
+        serverRequest("item/tool/call", {
+          tool: "propose_refinement_completion",
+          arguments: { summary: "Tudo pronto." },
+        }),
+        turnCompleted,
+      ]),
+      transcript,
+    );
+    const session = await runtime.startSession();
+
+    const events = await drain(session.send("investigue"));
+
+    expect(events.some((event) => event.type === "completion-proposal")).toBe(false);
+    expect(responsesIn(transcript)).toContainEqual({
+      success: false,
+      contentItems: [
+        { type: "inputText", text: expect.stringMatching(/não está disponível/i) as unknown as string },
       ],
     });
     await runtime.close();
@@ -810,7 +838,15 @@ describe("createAgentRuntime", () => {
     const transcript = transcriptPath();
     const { runtime } = await runtimeWith(scriptWith([turnCompleted]), transcript);
 
-    await runtime.startSession({ instructions: "você investiga User Stories" });
+    await runtime.startSession({
+      instructions: "você investiga User Stories",
+      tools: [
+        "ask_operator",
+        "propose_refinement_completion",
+        "submit_refinement_spec",
+        "submit_refinement_tickets",
+      ],
+    });
 
     expect(
       readTranscript(transcript).find((message) => message.method === "thread/start"),

@@ -1128,6 +1128,50 @@ describe("resume", () => {
   });
 });
 
+describe("artifact gates", () => {
+  it("should give the agent the operator-approved Spec when generating Tickets", async () => {
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.updateRefinementPhase({
+      sessionId: SESSION_ID,
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    const submitted = store.submitSpec(SESSION_ID, {
+      problem: "Comissões podem divergir no arredondamento.",
+      solution: "Centralizar a regra bancária.",
+      expectedBehaviors: ["O relatório usa a mesma comissão da folha."],
+      implementationDecisions: ["Reutilizar o módulo de folha."],
+      testStrategy: ["Comparar relatório e folha no limite de meio centavo."],
+      outOfScope: ["Recalcular relatórios históricos."],
+      traceability: ["Agenda de arredondamento resolvida pela sala."],
+    });
+    const approvedMarkdown = submitted.markdown.replace(
+      "- O relatório usa a mesma comissão da folha.",
+      "- O relatório também exibe a regra aplicada em cada linha.",
+    );
+    store.saveSpecDraft({
+      sessionId: SESSION_ID,
+      markdown: approvedMarkdown,
+      base: submitted.markdown,
+      expectedSavedAt: null,
+    });
+    const fake = fakeRuntime([[{ type: "complete" }]]);
+    const ceremony = createCeremony({ runtime: fake.runtime, store, repos });
+
+    await ceremony.approveSpec({ sessionId: SESSION_ID, expectedRevision: 2 });
+
+    expect(fake.prompts[0]).toContain(approvedMarkdown);
+  });
+});
+
 describe("consult", () => {
   const factAnswer = (citations: unknown): AgentEvent => ({
     type: "message",

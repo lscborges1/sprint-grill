@@ -297,6 +297,17 @@ describe("CeremonyDump", () => {
     });
   });
 
+  it("should reject publication when the ceremony failed after artifact approval", async () => {
+    const { azure, dossie, dump, store } = createFixture();
+    store.finishSession(dossie.sessionId, {
+      status: "falhou",
+      message: "o agente caiu depois de submeter os Tickets",
+    });
+
+    await expect(dump.publish(inputFor(dossie))).rejects.toThrow(/cerimônia.*falhou/i);
+    expect(azure.artifactWrites).toEqual([]);
+  });
+
   it("should reject a completed dump retry with a conflicting signed estimate", async () => {
     const fixture = createFixture();
     const input = inputFor(fixture.dossie);

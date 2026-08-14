@@ -233,6 +233,36 @@ describe("openCeremonyStore", () => {
     });
   });
 
+  it("should reject artifact approval after the ceremony fails", () => {
+    const store = open(dbPath());
+    newSession(store);
+    advanceToReviewPhase(store, "revisando-tickets");
+    store.submitTickets("thread-1", STRUCTURED_TICKETS);
+    store.finishSession("thread-1", {
+      status: "falhou",
+      message: "o agente caiu depois de submeter os Tickets",
+    });
+
+    expect(() =>
+      store.approveTickets({ sessionId: "thread-1", expectedRevision: 5 })
+    ).toThrow(/cerimônia.*falh/i);
+  });
+
+  it("should reject reopening refinement after the ceremony fails", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.updateRefinementPhase({
+      sessionId: "thread-1",
+      phase: "revisando-spec",
+      expectedRevision: 0,
+    });
+    store.finishSession("thread-1", { status: "falhou", message: "o agente caiu" });
+
+    expect(() =>
+      store.reopenRefinement({ sessionId: "thread-1", expectedRevision: 1 })
+    ).toThrow(/cerimônia.*falh/i);
+  });
+
   it("should discard stale artifact submissions when refinement is reopened", () => {
     const store = open(dbPath());
     newSession(store);
@@ -1186,6 +1216,21 @@ describe("unansweredQuestions", () => {
 });
 
 describe("saveSpecDraft", () => {
+  it("should reject saving a draft after the ceremony fails", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.finishSession("thread-1", { status: "falhou", message: "o agente caiu" });
+
+    expect(() =>
+      store.saveSpecDraft({
+        sessionId: "thread-1",
+        markdown: validSpec("rascunho tardio"),
+        base: "gerado",
+        expectedSavedAt: null,
+      }),
+    ).toThrow(/cerimônia.*falh/i);
+  });
+
   it("should hand back the edit the Operator saved after a restart", () => {
     const file = dbPath();
     const first = open(file);
@@ -1441,6 +1486,22 @@ describe("saveSpecDraft", () => {
 });
 
 describe("discardSpecDraft", () => {
+  it("should reject discarding a draft after the ceremony fails", () => {
+    const store = open(dbPath());
+    newSession(store);
+    const draft = store.saveSpecDraft({
+      sessionId: "thread-1",
+      markdown: validSpec("rascunho"),
+      base: "gerado",
+      expectedSavedAt: null,
+    });
+    store.finishSession("thread-1", { status: "falhou", message: "o agente caiu" });
+
+    expect(() =>
+      store.discardSpecDraft({ sessionId: "thread-1", expectedSavedAt: draft.savedAt })
+    ).toThrow(/cerimônia.*falh/i);
+  });
+
   it("should drop the edit so the document goes back to what was generated", () => {
     const store = open(dbPath());
     newSession(store);

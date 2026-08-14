@@ -320,6 +320,14 @@ export function openCeremonyStore(
     return session;
   }
 
+  function assertSessionActive(session: CeremonySession): void {
+    if (session.status !== "ativa") {
+      throw new CeremonyError(
+        "a cerimônia encerrada ou com falha não aceita novas alterações no Dossiê.",
+      );
+    }
+  }
+
   function assertDossieMutable(sessionId: string): void {
     const session = requireSession(sessionId);
     switch (session.dump.status) {
@@ -330,8 +338,9 @@ export function openCeremonyStore(
           "a cerimônia já iniciou o despejo e não aceita novas alterações no Dossiê.",
         );
       case "not-started":
-        return;
+        break;
     }
+    assertSessionActive(session);
   }
 
   /** Spec e demais inputs do fingerprint ficam congelados até o despejo concluir. */
@@ -339,7 +348,7 @@ export function openCeremonyStore(
     const session = requireSession(sessionId);
     switch (session.dump.status) {
       case "not-started":
-        return;
+        break;
       case "publishing":
         throw new CeremonyError("a cerimônia está em despejo e não aceita novas alterações.");
       case "retryable":
@@ -349,6 +358,7 @@ export function openCeremonyStore(
       case "completed":
         throw new CeremonyError("a cerimônia já foi despejada e não aceita novas edições.");
     }
+    assertSessionActive(session);
   }
 
   function staleRevision(sessionId: string, expectedRevision: number): CeremonyError {

@@ -36,6 +36,9 @@ export function reservePublication(
     );
   }
   if (dossie.dump.status === "completed") return { kind: "completed" };
+  if (dossie.status === "falhou") {
+    throw new CeremonyError("a cerimônia falhou e não pode ser publicada.");
+  }
   if (dossie.refinement.phase !== "pronto-para-publicar") {
     throw new CeremonyError("aprove a Spec e os Tickets antes de publicar.");
   }

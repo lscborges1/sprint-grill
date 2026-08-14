@@ -792,7 +792,11 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
       changed(input.sessionId);
       await startReviewTurn(
         input.sessionId,
-        "A Spec foi aprovada. Submeta agora os Tickets estruturados como slices verticais completos.",
+        [
+          "A Spec abaixo foi aprovada pelo Operador e é a única fonte para gerar os Tickets:",
+          approval.markdown,
+          "Submeta agora os Tickets estruturados como slices verticais completos.",
+        ].join("\n\n"),
       );
       return approval;
     },

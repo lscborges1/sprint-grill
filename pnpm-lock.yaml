@@ -131,6 +131,9 @@ importers:
 
   packages/ceremony:
     dependencies:
+      '@sprint-griller/ado-client':
+        specifier: workspace:*
+        version: link:../ado-client
       '@sprint-griller/agent-runtime':
         specifier: workspace:*
         version: link:../agent-runtime

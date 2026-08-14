@@ -27,12 +27,12 @@ const REFINEMENT_BADGE = {
   investigada: {
     label: "Investigada",
     className:
-      "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+      "border-amber-500/60 bg-amber-500/10 text-investigated",
   },
   refinada: {
     label: "Refinada",
     className:
-      "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-300",
+      "border-emerald-600/60 bg-emerald-600/10 text-refined",
   },
 } satisfies Record<
   RefinementStatus,

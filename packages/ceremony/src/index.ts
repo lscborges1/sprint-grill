@@ -4,24 +4,9 @@ export type {
   CeremonyLifecycle,
   CreateCeremonyLifecycleOptions,
 } from "./lifecycle";
-export { NAO_E_DECISAO, createCeremony } from "./ceremony";
 export type {
-  Ceremony,
-  ConsultInput,
-  CreateCeremonyOptions,
-  StartCeremonyInput,
-} from "./ceremony";
-export { createCeremonyDump } from "./despejo";
-export type {
-  AssertCanStartCeremonyInput,
-  CeremonyDump,
   CeremonyDumpInput,
-  CreateCeremonyDumpOptions,
 } from "./despejo";
-export { readDossie } from "./dossie";
-export { readPalco } from "./palco";
-export { ceremonyInstructions, ceremonyOpeningPrompt, ceremonyResumePrompt } from "./prompt";
-export type { CeremonyStory } from "./prompt";
 // Os schemas de estado vivem em subpaths: o browser não pode puxar SQLite pelo barril.
 export { palcoStateSchema } from "./palco-state";
 export { dossieStateSchema, signedDumpInputs } from "./session-state";
@@ -40,14 +25,8 @@ export {
   validateTaskDraft,
 } from "./task-draft";
 export type { TaskDraft, TaskDraftValidation } from "./task-draft";
-export { openCeremonyStore } from "./store";
 export type {
-  CeremonyStore,
-  AttachDecisionRecordInput,
-  BeginDumpInput,
-  CreateSessionInput,
   DiscardSpecDraftInput,
-  FinishSessionOutcome,
   RecordDecisionInput,
   SaveSpecDraftInput,
 } from "./store";

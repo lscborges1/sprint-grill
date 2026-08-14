@@ -552,6 +552,126 @@ describe("openCeremonyStore", () => {
 });
 
 describe("refinement agenda", () => {
+  it("should create the first agent-originated Agenda item with a server-owned id", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    const item = store.addAgentRefinementItem("thread-1", "  O cache distribuído expira junto?  ");
+
+    expect(item).toMatchObject({
+      id: "agente-1",
+      question: "O cache distribuído expira junto?",
+      status: "aberto",
+    });
+    expect(store.getSession("thread-1")?.refinement).toEqual({
+      phase: "refinando",
+      revision: 1,
+    });
+  });
+
+  it("should allocate agent ids from only the greatest agent suffix", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.seedRefinementItems("thread-1", [
+      { id: "investigacao-1", question: "Qual serviço já calcula isso?" },
+      { id: "agente-2", question: "A expiração considera o fuso?" },
+      { id: "duvida-99", question: "A regra vale para legado?" },
+    ]);
+
+    const first = store.addAgentRefinementItem("thread-1", "O retry respeita o limite?");
+    const second = store.addAgentRefinementItem("thread-1", "O timeout é configurável?");
+
+    expect([first.id, second.id]).toEqual(["agente-3", "agente-4"]);
+  });
+
+  it("should atomically reopen refinement for a late agent item", () => {
+    const store = open(dbPath());
+    newSession(store);
+    advanceToReviewPhase(store, "pronto-para-publicar");
+
+    const item = store.addAgentRefinementItem("thread-1", "O cache expira com a sessão?");
+
+    expect({
+      item,
+      refinement: store.getSession("thread-1")?.refinement,
+      proposal: store.getRefinementCompletionProposal("thread-1"),
+      approvals: store.getApprovedArtifacts("thread-1"),
+    }).toEqual({
+      item: expect.objectContaining({ id: "agente-1", status: "aberto" }),
+      refinement: { phase: "refinando", revision: 7 },
+      proposal: null,
+      approvals: undefined,
+    });
+  });
+
+  it("should roll back reopening when an agent item insert fails", () => {
+    const file = dbPath();
+    const store = open(file);
+    newSession(store);
+    advanceToReviewPhase(store, "pronto-para-publicar");
+    const before = {
+      refinement: store.getSession("thread-1")?.refinement,
+      proposal: store.getRefinementCompletionProposal("thread-1"),
+      approvals: store.getApprovedArtifacts("thread-1"),
+    };
+    const raw = new Database(file);
+    raw.exec(`
+      CREATE TRIGGER fail_agent_item
+      BEFORE INSERT ON refinement_items
+      WHEN NEW.item_id LIKE 'agente-%'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced agent item failure');
+      END;
+    `);
+    raw.close();
+
+    expect(() => store.addAgentRefinementItem("thread-1", "O cache expira com a sessão?"))
+      .toThrow(/forced agent item failure/);
+    expect({
+      refinement: store.getSession("thread-1")?.refinement,
+      proposal: store.getRefinementCompletionProposal("thread-1"),
+      approvals: store.getApprovedArtifacts("thread-1"),
+    }).toEqual(before);
+    expect(store.listRefinementItems("thread-1")).not.toContainEqual(
+      expect.objectContaining({ id: expect.stringMatching(/^agente-\d+$/) }),
+    );
+  });
+
+  it.each([
+    { status: "encerrada" as const },
+    { status: "falhou" as const },
+  ])("should reject an agent item when the ceremony is $status", ({ status }) => {
+    const store = open(dbPath());
+    newSession(store);
+    store.finishSession("thread-1", status === "falhou"
+      ? { status, message: "runtime parou" }
+      : { status });
+
+    expect(() => store.addAgentRefinementItem("thread-1", "Novo furo"))
+      .toThrow(/encerrada/i);
+  });
+
+  it("should reject a blank agent-originated Agenda item", () => {
+    const store = open(dbPath());
+    newSession(store);
+
+    expect(() => store.addAgentRefinementItem("thread-1", "   "))
+      .toThrow(/descrever o furo/i);
+  });
+
+  it("should reject an agent item after refinement is published", () => {
+    const store = open(dbPath());
+    newSession(store);
+    store.updateRefinementPhase({
+      sessionId: "thread-1",
+      phase: "publicado",
+      expectedRevision: 0,
+    });
+
+    expect(() => store.addAgentRefinementItem("thread-1", "Novo furo"))
+      .toThrow(/encerrada/i);
+  });
+
   it("should reject an unknown persisted item status even when resolution columns look valid", () => {
     const file = dbPath();
     const first = open(file);

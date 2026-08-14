@@ -149,6 +149,7 @@ export interface CeremonyStore {
     input: ArtifactGateInput & { readonly summary: string },
   ): RefinementCompletionProposal;
   getRefinementCompletionProposal(sessionId: string): RefinementCompletionProposal | null;
+  addAgentRefinementItem(sessionId: string, question: string): RefinementItem;
   seedRefinementItems(
     sessionId: string,
     items: readonly SeedRefinementItemInput[],
@@ -757,6 +758,58 @@ export function openCeremonyStore(
       if (spec.revision !== state.spec.revision || tickets.revision !== state.tickets.revision) return undefined;
       if (tickets.specRevision !== spec.revision || tickets.specHash !== spec.hash) return undefined;
       return { spec, tickets };
+    },
+
+    addAgentRefinementItem(sessionId, question) {
+      assertDossieMutable(sessionId);
+      const add = sqlite.transaction((): RefinementItem => {
+        const session = requireSession(sessionId);
+        if (session.status !== "ativa" || session.refinement.phase === "publicado") {
+          throw new CeremonyError("a cerimônia encerrada não aceita novos itens na Agenda.");
+        }
+        const normalizedQuestion = requiredText(
+          question,
+          "o item da agenda precisa descrever o furo.",
+        );
+        if (session.refinement.phase !== "refinando") {
+          invalidateArtifactApprovals(sessionId);
+        }
+        const suffixes = db
+          .select({ itemId: refinementItems.itemId })
+          .from(refinementItems)
+          .where(eq(refinementItems.sessionId, sessionId))
+          .all()
+          .flatMap(({ itemId }) => {
+            const match = /^agente-(\d+)$/.exec(itemId);
+            return match ? [Number.parseInt(match[1]!, 10)] : [];
+          });
+        const itemId = `agente-${Math.max(0, ...suffixes) + 1}`;
+        const now = Date.now();
+        const row = db.insert(refinementItems).values({
+          sessionId,
+          itemId,
+          question: normalizedQuestion,
+          status: "aberto",
+          createdAt: now,
+          updatedAt: now,
+        }).returning().get();
+
+        const update = db.update(sessions)
+          .set({
+            refinementPhase: "refinando",
+            refinementRevision: session.refinement.revision + 1,
+            completionProposalSummary: null,
+            completionProposedAt: null,
+          })
+          .where(and(
+            eq(sessions.id, sessionId),
+            eq(sessions.refinementRevision, session.refinement.revision),
+          ))
+          .run();
+        if (update.changes !== 1) throw staleRevision(sessionId, session.refinement.revision);
+        return toRefinementItem(row);
+      });
+      return add.immediate();
     },
 
     seedRefinementItems(sessionId, items) {

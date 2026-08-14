@@ -5,6 +5,7 @@ import type {
   AgentSession,
   PendingQuestion,
 } from "@sprint-griller/agent-runtime";
+import { AGENT_TOOL_NAMES } from "@sprint-griller/agent-runtime";
 import type { Logger, SquadConfig } from "@sprint-griller/core";
 import { verifyGrounding } from "@sprint-griller/investigation";
 import { CeremonyError } from "./ceremony-error";
@@ -73,13 +74,7 @@ export const NAO_E_DECISAO =
   "Isto não é decisão da sala: sem recomendação sua, é fato que você mesmo tem que " +
   "buscar nos repos. Leia o código e volte com a decisão e a recomendação.";
 
-const CEREMONY_AGENT_TOOLS = [
-  "ask_operator",
-  "resolve_refinement_item",
-  "propose_refinement_completion",
-  "submit_refinement_spec",
-  "submit_refinement_tickets",
-] as const;
+const CEREMONY_AGENT_TOOLS = AGENT_TOOL_NAMES;
 
 /** Turno vivo neste processo. Some no crash — é o que separa `pensando` de `retomavel`. */
 interface LiveTurn {
@@ -235,6 +230,10 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
               }
               break;
 
+            case "agenda-item-submission":
+              await receiveAgendaItemSubmission(sessionId, live, event.item);
+              break;
+
             case "agenda-resolution":
               if (await receiveAgendaResolution(sessionId, event.resolution)) {
                 live.progressed = true;
@@ -330,6 +329,32 @@ export function createCeremony(options: CreateCeremonyOptions): Ceremony {
     });
     changed(sessionId);
     return true;
+  }
+
+  async function receiveAgendaItemSubmission(
+    sessionId: string,
+    live: LiveTurn,
+    pending: Extract<AgentEvent, { readonly type: "agenda-item-submission" }>["item"],
+  ): Promise<void> {
+    try {
+      const item = store.addAgentRefinementItem(sessionId, pending.submission.question);
+      await pending.respond({
+        accepted: true,
+        message: `Item ${item.id} criado na Agenda. Use esse ID para perguntar ou resolver o furo.`,
+      });
+      live.progressed = true;
+      changed(sessionId);
+    } catch (error) {
+      if (error instanceof CeremonyError) {
+        await pending.respond({ accepted: false, message: error.message });
+        return;
+      }
+      await pending.respond({
+        accepted: false,
+        message: "Não foi possível adicionar o item à Agenda. Tente novamente.",
+      });
+      throw error;
+    }
   }
 
   async function receiveAgendaResolution(

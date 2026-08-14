@@ -54,6 +54,7 @@ const agentQuestion = (overrides: Partial<AgentQuestion> = {}): AgentQuestion =>
 
 type Step =
   | { readonly type: "message"; readonly text: string }
+  | { readonly type: "add-item"; readonly question: string }
   | { readonly type: "ask"; readonly questions: readonly AgentQuestion[] }
   | {
       readonly type: "resolve-item";
@@ -116,6 +117,17 @@ function fakeRuntime(
           switch (step.type) {
             case "message":
               yield { type: "message", text: step.text } as const;
+              break;
+            case "add-item":
+              yield {
+                type: "agenda-item-submission",
+                item: {
+                  submission: { question: step.question },
+                  respond: async (verdict: AgentSubmissionVerdict) => {
+                    submissionVerdicts.push(verdict);
+                  },
+                },
+              } as const;
               break;
             case "ask": {
               let release: () => void = () => undefined;
@@ -282,6 +294,139 @@ async function start(ceremony: ReturnType<typeof createCeremony>) {
 }
 
 describe("start", () => {
+  it("should persist a gap discovered by the main agent", async () => {
+    const { ceremony, submissionVerdicts } = ceremonyWith([[
+      { type: "add-item", question: "O cache distribuído expira junto?" },
+    ]]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)).toMatchObject({
+        agenda: [
+          expect.objectContaining({ id: "investigacao-1" }),
+          expect.objectContaining({
+            id: "agente-1",
+            question: "O cache distribuído expira junto?",
+            status: "aberto",
+          }),
+        ],
+      }),
+    );
+    expect(submissionVerdicts).toContainEqual({
+      accepted: true,
+      message:
+        "Item agente-1 criado na Agenda. Use esse ID para perguntar ou resolver o furo.",
+    });
+  });
+
+  it("should resolve a gap discovered by the main agent with its returned ID", async () => {
+    const { ceremony } = ceremonyWith([[
+      { type: "add-item", question: "O cache distribuído expira junto?" },
+      {
+        type: "resolve-item",
+        resolution: {
+          kind: "fact",
+          agendaItemId: "agente-1",
+          answer: "O cache expira junto com a chave de sessão.",
+          citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+        },
+      },
+    ]]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)).toMatchObject({
+        agenda: expect.arrayContaining([
+          expect.objectContaining({
+            id: "agente-1",
+            status: "resolvido",
+            resolution: expect.objectContaining({
+              kind: "fato",
+              answer: "O cache expira junto com a chave de sessão.",
+              citations: [{ repo: "core-api", path: "src/order.ts", symbol: "createOrder" }],
+            }),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it("should ask the room about a gap discovered by the main agent with its returned ID", async () => {
+    const { ceremony } = ceremonyWith([[
+      { type: "add-item", question: "O cache distribuído expira junto?" },
+      {
+        type: "ask",
+        questions: [agentQuestion({ agendaItemId: "agente-1" })],
+      },
+    ]]);
+
+    await start(ceremony);
+
+    await vi.waitFor(() =>
+      expect(ceremony.palco(SESSION_ID)).toMatchObject({
+        current: {
+          phase: "perguntando",
+          question: expect.objectContaining({ agendaItemId: "agente-1" }),
+        },
+        agenda: expect.arrayContaining([
+          expect.objectContaining({ id: "agente-1", status: "aguardando-sala" }),
+        ]),
+      }),
+    );
+  });
+
+  it("should report an unexpected agent agenda item persistence failure without leaking it", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const destination = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        done();
+      },
+    });
+    const store = newStore();
+    store.createSession({
+      id: SESSION_ID,
+      storyId: story.id,
+      storyTitle: story.title,
+      storyUrl: story.url,
+      investigationMarkdown: "## Furos da US",
+      timeZone: "UTC",
+    });
+    store.addAgentRefinementItem = () => {
+      throw new Error("detalhe interno do SQLite");
+    };
+    const fake = fakeRuntime([[
+      { type: "add-item", question: "O cache distribuído expira junto?" },
+    ]]);
+    const ceremony = createCeremony({
+      runtime: fake.runtime,
+      store,
+      repos,
+      logger: createLogger({ destination, level: "info" }),
+    });
+
+    await ceremony.resume(SESSION_ID);
+
+    await vi.waitFor(() =>
+      expect({
+        verdict: fake.submissionVerdicts[0],
+        log: lines.find((line) => line.msg === "cerimônia morreu fora do fluxo de erro"),
+      }).toEqual({
+        verdict: {
+          accepted: false,
+          message: "Não foi possível adicionar o item à Agenda. Tente novamente.",
+        },
+        log: expect.objectContaining({
+          sessionId: SESSION_ID,
+          err: expect.any(Object),
+          msg: "cerimônia morreu fora do fluxo de erro",
+        }),
+      }),
+    );
+  });
+
   it("should persist the ceremony with the investigation as its input", async () => {
     const { ceremony, store, prompts } = ceremonyWith([[{ type: "ask", questions: [agentQuestion()] }]]);
 

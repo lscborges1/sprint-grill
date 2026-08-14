@@ -53,6 +53,13 @@ describe("ceremonyInstructions", () => {
     expect(ceremonyInstructions(repos)).toMatch(/recommendation/);
   });
 
+  it("should tell the main agent to persist newly discovered gaps before progressing them", () => {
+    const instructions = ceremonyInstructions(repos);
+
+    expect(instructions).toContain("add_refinement_item");
+    expect(instructions).toMatch(/ID devolvido para perguntar[\s\S]*resolver/i);
+  });
+
   it("should require a task preview when the agent closes the ceremony", () => {
     expect(ceremonyInstructions(repos)).toContain(TASK_DRAFT_START);
     expect(ceremonyInstructions(repos)).toContain("Critérios de aceite");

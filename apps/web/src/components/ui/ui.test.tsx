@@ -94,6 +94,26 @@ describe("Refina UI primitives", () => {
     }).toEqual({ currentSteps: 0, completedSteps: 3 });
   });
 
+  it("should announce complete and pending progress states without relying on color", () => {
+    const html = renderToStaticMarkup(
+      <StepProgress
+        steps={[
+          { id: "investigar", label: "Investigar" },
+          { id: "refinar", label: "Refinar" },
+          { id: "publicar", label: "Publicar" },
+        ]}
+        progress={{ kind: "active", step: "refinar" }}
+      />,
+    );
+
+    expect({
+      complete: html.includes("Investigar") && html.includes("Concluído"),
+      pending: html.includes("Publicar") && html.includes("Pendente"),
+      nonColorMarker: html.includes("✓") && html.includes("○"),
+      currentStep: html.includes('aria-current="step"'),
+    }).toEqual({ complete: true, pending: true, nonColorMarker: true, currentStep: true });
+  });
+
   it("should reject duplicate step identifiers", () => {
     expect(() => renderToStaticMarkup(
       <StepProgress

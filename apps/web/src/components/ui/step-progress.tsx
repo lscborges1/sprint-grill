@@ -34,6 +34,8 @@ export function StepProgress<StepId extends string>({
           : index === activeIndex
             ? "active"
             : "pending";
+        const marker = state === "complete" ? "✓" : state === "active" ? "•" : "○";
+        const status = state === "complete" ? "Concluído" : state === "active" ? "Em andamento" : "Pendente";
 
         return (
           <li
@@ -42,8 +44,9 @@ export function StepProgress<StepId extends string>({
             className={`flex items-center gap-2 text-xs font-medium ${state === "active" ? "text-foreground" : state === "complete" ? "text-accent" : "text-muted"}`}
             data-state={state}
           >
-            <span aria-hidden="true" className={`size-2 rounded-full ${state === "pending" ? "bg-line" : "bg-accent"}`} />
+            <span aria-hidden="true" className={`flex size-4 items-center justify-center rounded-full text-xs ${state === "pending" ? "border border-muted text-muted" : "bg-accent text-white"}`}>{marker}</span>
             {step.label}
+            <span className="sr-only">{status}</span>
           </li>
         );
       })}

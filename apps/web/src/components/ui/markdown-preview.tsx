@@ -27,7 +27,7 @@ export function MarkdownPreview({ markdown }: { readonly markdown: string }) {
   const html = previewMarkdown.render(markdown.replace(STRUCTURAL_COMMENT, ""));
   return (
     <div
-      className="flex flex-col gap-4 text-sm leading-7"
+      className="markdown-preview flex flex-col gap-4 text-sm leading-7 [&_h1]:font-serif [&_h1]:text-3xl [&_h1]:tracking-tight [&_h2]:font-serif [&_h2]:text-2xl [&_h2]:tracking-tight [&_h3]:font-semibold [&_ul]:list-disc [&_ul]:pl-6 [&_ul_ul]:mt-2 [&_ul_ul]:list-[circle] [&_ol]:list-decimal [&_ol]:pl-6 [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-4 [&_blockquote]:border-l-2 [&_blockquote]:border-accent [&_blockquote]:pl-4 [&_blockquote]:text-muted [&_code]:rounded [&_code]:bg-foreground/5 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-[var(--radius-md)] [&_pre]:bg-foreground/5 [&_pre]:p-4 [&_pre_code]:whitespace-pre"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

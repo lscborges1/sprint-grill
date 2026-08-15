@@ -17,6 +17,28 @@ describe("MarkdownPreview", () => {
     expect(html).toContain('href="https://example.com/spec"');
   });
 
+  it("should apply a readable, scoped style contract to rendered markdown descendants", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownPreview markdown={'# Título\n\n- Item\n  - Aninhado\n\n[Spec](https://example.com/spec)\n\n> Citação\n\n`inline`\n\n```ts\nconst linha = "muito longa";\n```'} />,
+    );
+
+    expect({
+      headings: html.includes("[&amp;_h1]:font-serif") && html.includes("[&amp;_h2]:font-serif"),
+      nestedLists: html.includes("[&amp;_ul]:list-disc") && html.includes("[&amp;_ul_ul]:list-[circle]"),
+      links: html.includes("[&amp;_a]:text-accent") && html.includes("[&amp;_a]:underline"),
+      blockquotes: html.includes("[&amp;_blockquote]:border-l-2"),
+      inlineCode: html.includes("[&amp;_code]:rounded"),
+      fencedCodeOverflow: html.includes("[&amp;_pre]:overflow-x-auto"),
+    }).toEqual({
+      headings: true,
+      nestedLists: true,
+      links: true,
+      blockquotes: true,
+      inlineCode: true,
+      fencedCodeOverflow: true,
+    });
+  });
+
   it("should render canonical markdown without exposing structural or active unsafe content", () => {
     const html = renderToStaticMarkup(
       <MarkdownPreview

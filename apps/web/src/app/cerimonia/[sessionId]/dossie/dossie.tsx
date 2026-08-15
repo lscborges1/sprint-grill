@@ -38,6 +38,12 @@ const REFINEMENT_STEPS = [
 
 type RefinementStepId = (typeof REFINEMENT_STEPS)[number]["id"];
 
+const BASE_NAVIGATION = [
+  { href: "#gate", label: "Gate atual" },
+  { href: "#agenda", label: "Agenda" },
+  { href: "#resolucoes", label: "Resoluções" },
+] as const;
+
 const REFINEMENT_PROGRESS = {
   refinando: { kind: "active", step: "refinar" },
   "aguardando-confirmacao": { kind: "active", step: "confirmar" },
@@ -63,6 +69,8 @@ export function Dossie({ initial }: { initial: DossieState }) {
 
 /** Projeção pura do documento: o stream fica restrito ao controller acima. */
 export function DossieView({ state, connected }: { readonly state: DossieState; readonly connected: boolean }) {
+  const navigation = dossieNavigation(state);
+
   return (
     <OperationalFrame>
       <div className="mx-auto grid w-full max-w-[1440px] flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)]">
@@ -70,12 +78,9 @@ export function DossieView({ state, connected }: { readonly state: DossieState; 
           <details className="lg:contents" open>
             <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-[0.18em] text-muted lg:hidden">Navegação do Dossiê</summary>
             <nav aria-label="Navegação do Dossiê" className="mt-4 flex flex-col gap-2 lg:mt-0">
-              <a href="#gate" className="text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">Gate atual</a>
-              <a href="#agenda" className="text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">Agenda</a>
-              <a href="#resolucoes" className="text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">Resoluções</a>
-              <a href="#spec" className="text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">Spec</a>
-              <a href="#tickets" className="text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">Tickets</a>
-              <a href="#publicacao" className="text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">Publicação</a>
+              {navigation.map((item) => (
+                <a key={item.href} href={item.href} className="text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">{item.label}</a>
+              ))}
             </nav>
           </details>
         </aside>
@@ -95,6 +100,19 @@ export function DossieView({ state, connected }: { readonly state: DossieState; 
       </div>
     </OperationalFrame>
   );
+}
+
+function dossieNavigation(state: DossieState) {
+  const { phase } = state.refinement;
+  const artifact = phase === "revisando-spec"
+    ? state.artifacts.spec ? [{ href: "#spec", label: "Spec" }] : []
+    : phase === "revisando-tickets"
+      ? [{ href: "#tickets", label: "Tickets" }]
+      : phase === "pronto-para-publicar"
+        ? [{ href: "#publicacao", label: "Publicação" }]
+        : [];
+
+  return [...BASE_NAVIGATION, ...artifact];
 }
 
 function PhaseGate({ state }: { readonly state: DossieState }) {
@@ -281,7 +299,7 @@ function TicketsReview({ state }: { state: DossieState }) {
           <ul className="divide-y divide-line border-y border-line">
             {artifact.submission.tickets.map((ticket) => (
               <li key={ticket.id} className="flex flex-col gap-3 py-5">
-                <div className="flex flex-wrap items-baseline justify-between gap-3"><h3 className="font-medium">{ticket.id} · {ticket.title}</h3><a href={ticket.specUrl} target="_blank" rel="noreferrer" className="text-sm text-accent underline underline-offset-2">Abrir Spec</a></div>
+                <div className="flex flex-wrap items-baseline justify-between gap-3"><h3 className="font-medium">{ticket.id} · {ticket.title}</h3><a href={state.story.url} target="_blank" rel="noreferrer" className="text-sm text-accent underline underline-offset-2">Abrir Spec</a></div>
                 <p className="text-sm text-muted">{ticket.description}</p>
                 <div className="grid gap-4 text-sm sm:grid-cols-2"><div><h4 className="font-medium">Critérios de aceite</h4><ul className="mt-2 list-disc space-y-1 pl-5 text-muted">{ticket.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul></div><div><h4 className="font-medium">Dependências</h4>{ticket.blockedBy.length === 0 ? <p className="mt-2 text-muted">Nenhuma.</p> : <ul className="mt-2 list-disc space-y-1 pl-5 text-muted">{ticket.blockedBy.map((dependency) => <li key={dependency}>{dependency}</li>)}</ul>}</div></div>
               </li>

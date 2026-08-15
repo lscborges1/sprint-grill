@@ -21,7 +21,18 @@ It does not change ceremony persistence, Azure DevOps writes, the refinement sta
 
 `MarkdownPreview` remains the public React seam. Its handwritten block and inline parsers will be replaced with `markdown-it`, which is already present in the workspace. The web package will declare the dependency directly because it imports it directly.
 
-The renderer will disable raw HTML and rely on a narrowly configured link policy so external Markdown cannot create active `javascript:` or other unsafe links. The resulting HTML will be inserted only after this controlled rendering step. Canonical report constructs—including hidden section comments, nested lists, blockquotes, and fenced code—must render according to Markdown semantics rather than appearing as parser artifacts.
+The renderer applies this explicit policy before its output reaches React:
+
+| Input | Preview behavior |
+| --- | --- |
+| Exact `<!-- sprint-griller:* -->` structural comments | Removed before Markdown rendering; they remain internal structure and produce no visible output. |
+| Any other raw HTML | Escaped and displayed as text because `markdown-it` runs with `html: false`. |
+| `http:` or `https:` links | Rendered as anchors with `target="_blank"` and `rel="noreferrer"`. |
+| Relative links or any other scheme, including `javascript:`, `data:`, and `mailto:` | The visible label remains, but no active anchor is emitted. |
+| Images | The alt text remains visible, but no `<img>` is emitted and no external request is created. |
+| Nested lists, blockquotes, and fenced code | Rendered with their normal semantic HTML elements. |
+
+Canonical structural comments are recognized by one exact, line-oriented pattern; arbitrary HTML comments do not share that exception. The resulting HTML will be inserted only after this controlled rendering step.
 
 The browser preview and Azure DevOps conversion have different presentation needs, so this change reuses the parser dependency without coupling the browser bundle to the server-oriented `ado-client` barrel.
 
@@ -33,23 +44,34 @@ The server-side mapping from `IterationStory` plus local `InvestigationRun` will
 
 ### Development UI fixtures
 
-`/__dev/ui` remains development-only and keeps its validated `view` and `state` query boundary. Each supported `view` must render the corresponding production view component with a typed, inert fixture:
+`/__dev/ui` remains development-only and validates only a `view` query. The generic `state` query and its sixteen nominal combinations will be deleted because the route needs one representative state per production view, not a parallel state system. Each supported `view` must render the corresponding production view component with a typed, inert fixture:
 
 - Picker renders `Picker` with fixture stories whose actions do not write data.
 - Investigação renders an extracted pure `InvestigationView` used by both the route and fixture gallery.
 - Palco renders the existing `PalcoView` with a fixture state that requires no valid persisted session.
 - Dossiê renders the existing `DossieView` with a fixture state that requires no mutation.
 
-Fixture states may select safe loading, empty, error, or terminal production states. They must not introduce fixture-specific branches into production components and must not call Azure DevOps, SQLite, or agent runtime boundaries.
+The extracted `InvestigationView` receives an `InvestigationViewModel` containing `storyId`, `run`, and `openCeremonyId`, plus an `InvestigationViewActions` object containing the start and publish form actions. The production page remains the controller: it reads `getInvestigation`, resolves `findOpenCeremony`, and supplies the real server actions. The fixture route supplies an already-built model and inert development-only server actions. Neither `InvestigationView` nor its descendants read SQLite or import a concrete write action.
+
+The fixture support matrix is deliberately small:
+
+| Query | Production component | Representative assertion |
+| --- | --- | --- |
+| `view=picker` | `Picker` | Shows a fixture US and its existing-detail action; no write action is exposed. |
+| `view=investigacao` | `InvestigationView` | Shows a completed, rejected report, which exposes no publish or ceremony-start action. |
+| `view=palco` | `PalcoView` | Shows a published terminal session with no usable mutation control. |
+| `view=dossie` | `DossieView` | Shows a published terminal Dossiê with no usable mutation control. |
+
+Missing `view` defaults to Picker. Unknown views return `notFound`. Fixtures must not introduce fixture-specific branches into production components and must not call Azure DevOps, SQLite, or agent runtime boundaries.
 
 ### Workflow progress
 
-`StepProgress` will accept a discriminated progress state rather than a numeric index alone:
+`StepProgress` will accept non-empty steps with stable typed identifiers and a discriminated progress state rather than a numeric index alone:
 
-- `active` identifies exactly one current step.
+- `active` carries the identifier of exactly one current step.
 - `complete` marks every step complete and marks none as current.
 
-Dossiê will derive that state from `DossieState["refinement"]["phase"]` through one exhaustive typed mapping. The mapping replaces the parallel phase array, `indexOf`, and clamping logic. The published phase therefore has an explicit completed representation.
+The component contract requires unique step identifiers. An active identifier absent from the supplied steps is a programmer error and throws an actionable `Error`; the non-empty tuple type rules out an empty progress indicator. Dossiê defines its steps once and derives progress from `DossieState["refinement"]["phase"]` through one exhaustive typed mapping. The mapping replaces the parallel phase array, `indexOf`, and clamping logic. The published phase therefore has an explicit completed representation.
 
 ## Data flow
 
@@ -57,7 +79,7 @@ Server-owned domain data remains canonical:
 
 1. The home route reads Azure DevOps status and any local investigation run.
 2. A pure mapper derives the minimal Picker action before data crosses the client boundary.
-3. Production view components receive their existing domain projections or the reduced Picker presentation model.
+3. Production view components receive their existing domain projections, the reduced Picker presentation model, or the explicit Investigation view model.
 4. The development route supplies typed in-memory fixtures to those same public view components.
 
 No new persistent state or external write path is introduced.
@@ -67,7 +89,7 @@ No new persistent state or external write path is introduced.
 - Raw HTML in Markdown stays inert.
 - Unsafe link destinations do not become active anchors.
 - Existing server-action error handling remains unchanged.
-- Development fixtures are unavailable outside `NODE_ENV=development` and perform no external work.
+- Development fixtures are unavailable outside `NODE_ENV=development`; their chosen terminal/rejected states expose no mutation controls and their action dependencies are inert.
 - Exhaustive TypeScript mappings make newly added refinement phases a compile-time maintenance point.
 
 ## TDD slices
@@ -76,7 +98,7 @@ Work proceeds one vertical slice at a time:
 
 1. Add canonical Markdown examples to the `MarkdownPreview` rendering test and observe failure; replace the parser and make it pass.
 2. Add Picker action contract tests that assert the minimal action value; replace `InvestigationUiStatus` and update the Picker.
-3. Add route/view rendering tests proving each fixture view emits production-specific content; connect typed fixtures to production views.
+3. Add route/view rendering tests proving each accepted `view` emits the production-specific assertion from the fixture matrix; remove the unused state dimension and connect typed fixtures to production views.
 4. Add a `DossieView` rendering test proving published progress has no current step and all steps are complete; introduce the discriminated progress contract.
 
 Each slice runs its focused test before and after implementation. The final verification runs typecheck, lint, the complete test suite, and a production build if the environment permits it.

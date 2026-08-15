@@ -17,14 +17,60 @@ describe("MarkdownPreview", () => {
     expect(html).toContain('href="https://example.com/spec"');
   });
 
-  it("should show HTML and unknown syntax as text instead of executing it", () => {
+  it("should render canonical markdown without exposing structural or active unsafe content", () => {
     const html = renderToStaticMarkup(
-      <MarkdownPreview markdown={'<script>alert("x")</script>\n\n:::unknown\n\n[bad](javascript:alert(1))'} />,
+      <MarkdownPreview
+        markdown={`<!-- sprint-griller:report-section:impacts -->
+
+> Relatório reprovado
+
+- Impacto
+  - \`core-api:src/cache.ts\`
+
+\`\`\`ts
+const ttl = 300;
+\`\`\`
+
+[Spec](https://example.com/spec)
+
+[perigoso](javascript:alert(1))
+
+![pixel](https://tracker.example/pixel.gif)
+
+<em>HTML arbitrário</em>`}
+      />,
     );
 
-    expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
-    expect(html).toContain(":::unknown");
-    expect(html).toContain("[bad](javascript:alert(1))");
+    expect({
+      hidesStructuralComment: !html.includes("sprint-griller:report-section"),
+      rendersBlockquote: html.includes("<blockquote>"),
+      rendersNestedList: (html.match(/<ul>/g) ?? []).length === 2,
+      rendersFence: html.includes('<code class="language-ts">'),
+      securesExternalLink:
+        html.includes('href="https://example.com/spec"') &&
+        html.includes('target="_blank"') &&
+        html.includes('rel="noreferrer"'),
+      disablesUnsafeLink: html.includes("perigoso") && !html.includes("javascript:"),
+      disablesImage: html.includes("pixel") && !html.includes("<img"),
+      escapesArbitraryHtml: html.includes("&lt;em&gt;HTML arbitrário&lt;/em&gt;"),
+    }).toEqual({
+      hidesStructuralComment: true,
+      rendersBlockquote: true,
+      rendersNestedList: true,
+      rendersFence: true,
+      securesExternalLink: true,
+      disablesUnsafeLink: true,
+      disablesImage: true,
+      escapesArbitraryHtml: true,
+    });
+  });
+
+  it("should hide only canonical structural comments", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownPreview markdown={'<!-- sprint-griller:report-section:gaps -->\n\n<!-- comentário comum -->'} />,
+    );
+
+    expect(html).toContain("&lt;!-- comentário comum --&gt;");
+    expect(html).not.toContain("sprint-griller:report-section:gaps");
   });
 });

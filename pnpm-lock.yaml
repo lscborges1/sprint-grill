@@ -35,6 +35,9 @@ importers:
       '@sprint-griller/investigation':
         specifier: workspace:*
         version: link:../../packages/investigation
+      markdown-it:
+        specifier: ^14.3.0
+        version: 14.3.0
       next:
         specifier: 16.3.0
         version: 16.3.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@22.20.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -51,6 +54,9 @@ importers:
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.3.3
+      '@types/markdown-it':
+        specifier: ^14.1.2
+        version: 14.1.2
       '@types/node':
         specifier: ^22.13.0
         version: 22.20.1

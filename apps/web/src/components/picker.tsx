@@ -4,16 +4,16 @@ import type { IterationStory, RefinementStatus } from "@sprint-griller/ado-clien
 import type { RepoConfig } from "@sprint-griller/core";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import type { InvestigationUiStatus } from "@/lib/investigation-ui-status";
+import type { PickerAction } from "@/lib/picker-action";
 import { Button, EmptyState, PageHeader, StatusBadge } from "./ui";
 
 export type PickerFilter = "all" | RefinementStatus;
 
 export type PickerStory = IterationStory & {
-  readonly uiStatus: InvestigationUiStatus;
+  readonly action: PickerAction;
 };
 
-type PickerAction = (formData: FormData) => void | Promise<void>;
+type StartInvestigationAction = (formData: FormData) => void | Promise<void>;
 
 const REFINEMENT_LABEL: Record<PickerFilter, string> = {
   all: "Todos os status",
@@ -55,7 +55,7 @@ export function Picker({
   readonly stories: readonly PickerStory[];
   readonly project: string;
   readonly repos: { readonly primary: RepoConfig; readonly related: readonly RepoConfig[] };
-  readonly startAction: PickerAction;
+  readonly startAction: StartInvestigationAction;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<PickerFilter>("all");
@@ -143,7 +143,7 @@ export function Picker({
   );
 }
 
-function StoryTable({ stories, startAction }: { readonly stories: readonly PickerStory[]; readonly startAction: PickerAction }) {
+function StoryTable({ stories, startAction }: { readonly stories: readonly PickerStory[]; readonly startAction: StartInvestigationAction }) {
   return (
     <div className="overflow-hidden rounded-[var(--radius-md)] border border-line bg-surface">
       <table className="w-full border-collapse text-left text-sm">
@@ -173,7 +173,7 @@ function StoryTable({ stories, startAction }: { readonly stories: readonly Picke
   );
 }
 
-function StoryCompact({ story, startAction }: { readonly story: PickerStory; readonly startAction: PickerAction }) {
+function StoryCompact({ story, startAction }: { readonly story: PickerStory; readonly startAction: StartInvestigationAction }) {
   return (
     <article className="flex flex-col gap-4 rounded-[var(--radius-md)] border border-line bg-surface p-4">
       <div className="flex items-start justify-between gap-3"><StoryIdentity story={story} /><RefinementBadge story={story} /></div>
@@ -191,25 +191,23 @@ function RefinementBadge({ story }: { readonly story: PickerStory }) {
   return <StatusBadge tone={STATUS_TONE[story.refinement]}>{REFINEMENT_LABEL[story.refinement]}</StatusBadge>;
 }
 
-function StoryAction({ story, startAction }: { readonly story: PickerStory; readonly startAction: PickerAction }) {
-  const action = story.uiStatus.kind === "running"
-    ? "Acompanhar execução"
-    : story.uiStatus.kind === "failure"
-      ? "Revisar falha"
-      : story.uiStatus.kind === "review-rejected"
-        ? "Revisar reprovação"
-      : story.uiStatus.kind === "ready"
-        ? story.refinement === "sem-investigacao" ? "Investigar" : "Investigar novamente"
-        : story.uiStatus.kind === "publication-failure"
-          ? "Tentar publicação"
-          : story.uiStatus.kind === "publication-uncertain"
-            ? "Conferir publicação"
-            : "Revisar relatório";
-
-  if (story.uiStatus.kind === "ready") {
-    return <form action={startAction}><input type="hidden" name="storyId" value={story.id} /><Button type="submit" size="sm" variant="secondary">{action}</Button></form>;
+function StoryAction({ story, startAction }: { readonly story: PickerStory; readonly startAction: StartInvestigationAction }) {
+  if (story.action.kind === "start") {
+    return (
+      <form action={startAction}>
+        <input type="hidden" name="storyId" value={story.id} />
+        <Button type="submit" size="sm" variant="secondary">{story.action.label}</Button>
+      </form>
+    );
   }
-  return <Link href={`/investigacao/${story.id}`} className="inline-flex min-h-8 items-center justify-center rounded-[var(--radius-md)] px-3 text-sm font-medium text-accent underline-offset-4 hover:underline">{action}</Link>;
+  return (
+    <Link
+      href={`/investigacao/${story.id}`}
+      className="inline-flex min-h-8 items-center justify-center rounded-[var(--radius-md)] px-3 text-sm font-medium text-accent underline-offset-4 hover:underline"
+    >
+      {story.action.label}
+    </Link>
+  );
 }
 
 function parsePickerFilter(value: string): PickerFilter {

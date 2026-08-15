@@ -11,7 +11,7 @@ const stories: readonly PickerStory[] = [
     assignedTo: "Ana",
     url: "https://example.com/101",
     refinement: "sem-investigacao",
-    uiStatus: { kind: "ready", persisted: "sem-investigacao" },
+    action: { kind: "start", label: "Investigar" },
   },
   {
     id: 102,
@@ -21,7 +21,7 @@ const stories: readonly PickerStory[] = [
     assignedTo: undefined,
     url: "https://example.com/102",
     refinement: "investigada",
-    uiStatus: { kind: "running", persisted: "investigada", startedAt: 1 },
+    action: { kind: "open", label: "Acompanhar execução" },
   },
   {
     id: 103,
@@ -31,7 +31,7 @@ const stories: readonly PickerStory[] = [
     assignedTo: "João",
     url: "https://example.com/103",
     refinement: "investigada",
-    uiStatus: { kind: "review-rejected", persisted: "investigada" },
+    action: { kind: "open", label: "Revisar reprovação" },
   },
 ];
 

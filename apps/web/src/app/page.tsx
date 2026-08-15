@@ -3,8 +3,8 @@ import { Alert, EmptyState, PageHeader } from "@/components/ui";
 import { OperationalFrame } from "@/components/operational-frame";
 import { Picker, type PickerStory } from "@/components/picker";
 import { loadCurrentIteration } from "@/lib/current-iteration";
-import { deriveInvestigationUiStatus } from "@/lib/investigation-ui-status";
 import { getInvestigation } from "@/lib/investigations";
+import { derivePickerAction } from "@/lib/picker-action";
 import { getSquadConfig } from "@/lib/squad-config";
 import { startInvestigationAction } from "./investigacao/actions";
 
@@ -43,6 +43,6 @@ export default async function Home() {
 function pickerStories(iteration: CurrentIteration): readonly PickerStory[] {
   return iteration.stories.map((story) => ({
     ...story,
-    uiStatus: deriveInvestigationUiStatus(story.refinement, getInvestigation(story.id)),
+    action: derivePickerAction(story.refinement, getInvestigation(story.id)),
   }));
 }

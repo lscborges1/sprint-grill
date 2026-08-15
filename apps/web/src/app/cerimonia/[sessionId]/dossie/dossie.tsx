@@ -9,6 +9,7 @@ import { OperationalFrame } from "@/components/operational-frame";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
 import { Alert, Button, ConfirmAction, EmptyState, MarkdownPreview, PageHeader, StepProgress } from "@/components/ui";
+import type { ProgressState } from "@/components/ui";
 import {
   approveSpecAction,
   approveTicketsAction,
@@ -26,6 +27,28 @@ const PHASE_LABEL = {
   "pronto-para-publicar": "Publicar",
   publicado: "Publicado",
 } as const;
+
+const REFINEMENT_STEPS = [
+  { id: "refinar", label: "Refinar" },
+  { id: "confirmar", label: "Confirmar" },
+  { id: "spec", label: "Spec" },
+  { id: "tickets", label: "Tickets" },
+  { id: "publicar", label: "Publicar" },
+] as const;
+
+type RefinementStepId = (typeof REFINEMENT_STEPS)[number]["id"];
+
+const REFINEMENT_PROGRESS = {
+  refinando: { kind: "active", step: "refinar" },
+  "aguardando-confirmacao": { kind: "active", step: "confirmar" },
+  "revisando-spec": { kind: "active", step: "spec" },
+  "revisando-tickets": { kind: "active", step: "tickets" },
+  "pronto-para-publicar": { kind: "active", step: "publicar" },
+  publicado: { kind: "complete" },
+} as const satisfies Record<
+  DossieState["refinement"]["phase"],
+  ProgressState<RefinementStepId>
+>;
 
 export function Dossie({ initial }: { initial: DossieState }) {
   const { state, connected } = useLiveState(
@@ -75,10 +98,12 @@ export function DossieView({ state, connected }: { readonly state: DossieState; 
 }
 
 function PhaseGate({ state }: { readonly state: DossieState }) {
-  const current = ["refinando", "aguardando-confirmacao", "revisando-spec", "revisando-tickets", "pronto-para-publicar", "publicado"].indexOf(state.refinement.phase);
   return (
     <Section id="gate" heading="Gate atual">
-      <StepProgress steps={["Refinar", "Confirmar", "Spec", "Tickets", "Publicar"]} current={Math.min(Math.max(current, 0), 4)} />
+      <StepProgress
+        steps={REFINEMENT_STEPS}
+        progress={REFINEMENT_PROGRESS[state.refinement.phase]}
+      />
       <Status heading={PHASE_LABEL[state.refinement.phase]}>
         {state.completionProposal?.summary ?? gateDescription(state.refinement.phase)}
       </Status>

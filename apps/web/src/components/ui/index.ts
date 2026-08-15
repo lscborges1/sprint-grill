@@ -9,3 +9,4 @@ export { PageHeader } from "./page-header";
 export { StatusBadge } from "./status-badge";
 export type { StatusBadgeTone } from "./status-badge";
 export { StepProgress } from "./step-progress";
+export type { ProgressState, ProgressStep } from "./step-progress";

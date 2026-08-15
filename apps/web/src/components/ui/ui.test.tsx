@@ -12,6 +12,7 @@ import {
   StatusBadge,
   StepProgress,
 } from "./index";
+import type { ProgressState } from "./index";
 
 describe("Refina UI primitives", () => {
   it("should render a primary button with a visible focus contract", () => {
@@ -55,13 +56,17 @@ describe("Refina UI primitives", () => {
     expect(html).toContain("Nenhuma US");
   });
 
-  it("should render a page header and an accessible step progress", () => {
+  it("should render a page header and an accessible active step progress", () => {
     const html = renderToStaticMarkup(
       <>
         <PageHeader eyebrow="Sprint 42" title="Refina" description="Trabalho atual" />
         <StepProgress
-          steps={["Investigar", "Refinar", "Publicar"]}
-          current={1}
+          steps={[
+            { id: "investigar", label: "Investigar" },
+            { id: "refinar", label: "Refinar" },
+            { id: "publicar", label: "Publicar" },
+          ]}
+          progress={{ kind: "active", step: "refinar" }}
         />
       </>,
     );
@@ -69,6 +74,44 @@ describe("Refina UI primitives", () => {
     expect(html).toContain("Refina");
     expect(html).toMatch(/aria-label="Progresso"/);
     expect(html).toMatch(/aria-current="step"/);
+  });
+
+  it("should mark every step complete without identifying a current step", () => {
+    const html = renderToStaticMarkup(
+      <StepProgress
+        steps={[
+          { id: "investigar", label: "Investigar" },
+          { id: "refinar", label: "Refinar" },
+          { id: "publicar", label: "Publicar" },
+        ]}
+        progress={{ kind: "complete" }}
+      />,
+    );
+
+    expect({
+      currentSteps: (html.match(/aria-current="step"/g) ?? []).length,
+      completedSteps: (html.match(/data-state="complete"/g) ?? []).length,
+    }).toEqual({ currentSteps: 0, completedSteps: 3 });
+  });
+
+  it("should reject duplicate step identifiers", () => {
+    expect(() => renderToStaticMarkup(
+      <StepProgress
+        steps={[{ id: "refinar", label: "Refinar" }, { id: "refinar", label: "Duplicado" }]}
+        progress={{ kind: "active", step: "refinar" }}
+      />,
+    )).toThrow("StepProgress requires unique step identifiers.");
+  });
+
+  it("should reject an active step that is absent at runtime", () => {
+    const progress: ProgressState<string> = { kind: "active", step: "ausente" };
+
+    expect(() => renderToStaticMarkup(
+      <StepProgress
+        steps={[{ id: "refinar", label: "Refinar" }]}
+        progress={progress}
+      />,
+    )).toThrow('StepProgress active step "ausente" is not present.');
   });
 
   it("should put a destructive action behind a cancelable native dialog", () => {

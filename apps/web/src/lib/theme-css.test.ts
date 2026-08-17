@@ -50,6 +50,13 @@ describe("theme CSS contract", () => {
       "--accent": "#8DA2FF",
     });
   });
+
+  it("should disable animations when reduced motion is requested", () => {
+    const reducedMotion = blockAfter(css, "@media (prefers-reduced-motion: reduce)");
+    const motionReset = declarationsIn(blockAfter(reducedMotion, "*"));
+
+    expect(motionReset).toMatchObject({ animation: "none !important" });
+  });
 });
 
 function blockAfter(source: string, marker: string): string {

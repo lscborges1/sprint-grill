@@ -5,8 +5,8 @@ export type StatusBadgeTone = "neutral" | "info" | "success" | "warning" | "dang
 const TONE_CLASSES = {
   neutral: "border-line bg-foreground/[0.04] text-muted",
   info: "border-accent/40 bg-accent/10 text-accent",
-  success: "border-emerald-700/40 bg-emerald-700/10 text-emerald-700 dark:text-emerald-300",
-  warning: "border-amber-700/40 bg-amber-700/10 text-amber-800 dark:text-amber-300",
+  success: "border-emerald-700/40 bg-emerald-700/10 text-refined",
+  warning: "border-amber-700/40 bg-amber-700/10 text-investigated",
   danger: "border-red-700/40 bg-red-700/10 text-red-700 dark:text-red-300",
 } as const satisfies Record<StatusBadgeTone, string>;
 

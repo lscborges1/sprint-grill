@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Button } from "./button";
+import { StatusBadge } from "./status-badge";
 import { StepProgress } from "./step-progress";
 
 const css = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf8");
@@ -28,6 +29,31 @@ describe("accent foreground", () => {
       darkForeground: "#111110",
       primaryButton: true,
       progressMarkers: true,
+    });
+  });
+
+  it("should bind status badge text to explicit-theme semantic colors", () => {
+    const lightPalette = declarationsIn(blockAfter(css, ':root[data-theme="light"]'));
+    const darkPalette = declarationsIn(blockAfter(css, ':root[data-theme="dark"]'));
+    const warning = renderToStaticMarkup(<StatusBadge tone="warning">Investigada</StatusBadge>);
+    const success = renderToStaticMarkup(<StatusBadge tone="success">Refinada</StatusBadge>);
+
+    expect({
+      lightInvestigated: lightPalette["--investigated"],
+      darkInvestigated: darkPalette["--investigated"],
+      lightRefined: lightPalette["--refined"],
+      darkRefined: darkPalette["--refined"],
+      warningUsesSemanticColor: warning.includes("text-investigated"),
+      successUsesSemanticColor: success.includes("text-refined"),
+      statusColorsIgnoreOsDarkVariant: !warning.includes("dark:") && !success.includes("dark:"),
+    }).toEqual({
+      lightInvestigated: "#8A5A00",
+      darkInvestigated: "#E5B55E",
+      lightRefined: "#177245",
+      darkRefined: "#79D09D",
+      warningUsesSemanticColor: true,
+      successUsesSemanticColor: true,
+      statusColorsIgnoreOsDarkVariant: true,
     });
   });
 });

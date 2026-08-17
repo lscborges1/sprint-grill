@@ -192,11 +192,13 @@ function RefinementBadge({ story }: { readonly story: PickerStory }) {
 }
 
 function StoryAction({ story, startAction }: { readonly story: PickerStory; readonly startAction: StartInvestigationAction }) {
+  const accessibleLabel = `${story.action.label} — US #${story.id}: ${story.title}`;
+
   if (story.action.kind === "start") {
     return (
       <form action={startAction}>
         <input type="hidden" name="storyId" value={story.id} />
-        <Button type="submit" size="sm" variant="secondary">{story.action.label}</Button>
+        <Button type="submit" size="sm" variant="secondary" aria-label={accessibleLabel}>{story.action.label}</Button>
       </form>
     );
   }
@@ -204,6 +206,7 @@ function StoryAction({ story, startAction }: { readonly story: PickerStory; read
     <Link
       href={`/investigacao/${story.id}`}
       className="inline-flex min-h-8 items-center justify-center rounded-[var(--radius-md)] px-3 text-sm font-medium text-accent underline-offset-4 hover:underline"
+      aria-label={accessibleLabel}
     >
       {story.action.label}
     </Link>

@@ -67,6 +67,23 @@ describe("Picker", () => {
     expect(html).toContain("Config da squad");
   });
 
+  it("should distinguish action targets by User Story", () => {
+    const html = renderToStaticMarkup(
+      <Picker
+        iterationName="Sprint 42"
+        stories={stories}
+        project="Plataforma"
+        repos={{ primary: { name: "api", path: "/tmp/api" }, related: [] }}
+        startAction={() => undefined}
+      />,
+    );
+
+    expect({
+      start: html.includes('aria-label="Investigar — US #101: Exportar relatório"'),
+      open: html.includes('aria-label="Acompanhar execução — US #102: Calcular parcelas"'),
+    }).toEqual({ start: true, open: true });
+  });
+
   it("should explain when no User Story matches the search", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);

@@ -34,6 +34,17 @@ const rejectedRun = {
   }],
 } as const satisfies InvestigationRun;
 
+const failedRun = {
+  storyId: 117,
+  story: rejectedRun.story,
+  startedAt: 1,
+  finishedAt: 2,
+  previous: undefined,
+  publication: undefined,
+  status: "falhou",
+  message: "O agente caiu.",
+} as const satisfies InvestigationRun;
+
 function inertAction(_formData: FormData): void {
   void _formData;
   return undefined;
@@ -53,11 +64,34 @@ describe("InvestigationView", () => {
       showsRejection: html.includes("Relatório reprovado na checagem de citações"),
       hasNoPublish: !html.includes(">Publicar<"),
       hasNoCeremonyStart: !html.includes("Refinar com a sala"),
+      hasNoRetry: !html.includes("Investigar novamente"),
     }).toEqual({
       identifiesStory: true,
       showsRejection: true,
       hasNoPublish: true,
       hasNoCeremonyStart: true,
+      hasNoRetry: true,
     });
+  });
+
+  it.each([
+    ["falhou", failedRun],
+    ["reprovado", rejectedRun],
+  ] as const)("should expose redispatch after an investigation is %s", (_status, run) => {
+    const html = renderToStaticMarkup(
+      <InvestigationView
+        model={{ storyId: 117, run, openCeremonyId: undefined }}
+        actions={{
+          startCeremony: inertAction,
+          publishInvestigation: inertAction,
+          retryInvestigation: inertAction,
+        }}
+      />,
+    );
+
+    expect({
+      retry: html.includes("Investigar novamente"),
+      storyId: html.includes('name="storyId" value="117"'),
+    }).toEqual({ retry: true, storyId: true });
   });
 });

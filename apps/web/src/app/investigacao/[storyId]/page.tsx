@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { startCeremonyAction } from "@/app/cerimonia/actions";
 import { findOpenCeremony } from "@/lib/ceremonies";
 import { getInvestigation, storyIdSchema } from "@/lib/investigations";
-import { publishInvestigationAction } from "../actions";
+import { publishInvestigationAction, startInvestigationAction } from "../actions";
 import { InvestigationView } from "./investigation-view";
 
 // O preview mostra o estado do turno agora; nada aqui é pré-renderizável.
@@ -28,6 +28,7 @@ export default async function InvestigationPage({
       actions={{
         startCeremony: startCeremonyAction,
         publishInvestigation: publishInvestigationAction,
+        retryInvestigation: startInvestigationAction,
       }}
     />
   );

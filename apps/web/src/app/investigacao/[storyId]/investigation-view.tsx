@@ -39,6 +39,7 @@ export type InvestigationFormAction = (formData: FormData) => void | Promise<voi
 export interface InvestigationViewActions {
   readonly startCeremony: InvestigationFormAction;
   readonly publishInvestigation: InvestigationFormAction;
+  readonly retryInvestigation?: InvestigationFormAction;
 }
 
 export function InvestigationView({
@@ -59,7 +60,11 @@ export function InvestigationView({
           back={<Link href="/" className="text-sm text-muted underline underline-offset-4">← Voltar ao Picker</Link>}
           description={run?.story ? <a href={run.story.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">Abrir no Azure DevOps</a> : undefined}
         />
-        <Outcome run={run} publishAction={actions.publishInvestigation} />
+        <Outcome
+          run={run}
+          publishAction={actions.publishInvestigation}
+          retryAction={actions.retryInvestigation}
+        />
         {run?.status === "aprovado" && (
           <RefinementCallToAction
             storyId={storyId}
@@ -134,9 +139,11 @@ function RefinementCallToAction({
 function Outcome({
   run,
   publishAction,
+  retryAction,
 }: {
   readonly run: InvestigationRun | undefined;
   readonly publishAction: InvestigationFormAction;
+  readonly retryAction: InvestigationFormAction | undefined;
 }) {
   if (!run) {
     return (
@@ -163,6 +170,7 @@ function Outcome({
         <Alert heading="A Investigação não terminou">
           <p className="text-base text-muted">{run.message}</p>
         </Alert>
+        <RetryInvestigation storyId={run.storyId} action={retryAction} />
         <Previous run={run.previous} />
       </>
     );
@@ -171,10 +179,30 @@ function Outcome({
   return (
     <>
       <Result run={run} />
+      {run.status === "reprovado" && (
+        <RetryInvestigation storyId={run.storyId} action={retryAction} />
+      )}
       {/* Só o relatório em cena publica: o do disparo anterior aparece em
           `Previous`, e a própria tela já o chamou de antigo. */}
       {run.status === "aprovado" && <Publish run={run} action={publishAction} />}
     </>
+  );
+}
+
+function RetryInvestigation({
+  storyId,
+  action,
+}: {
+  readonly storyId: number;
+  readonly action: InvestigationFormAction | undefined;
+}) {
+  if (action === undefined) return null;
+
+  return (
+    <form action={action}>
+      <input type="hidden" name="storyId" value={storyId} />
+      <Button type="submit" variant="secondary">Investigar novamente</Button>
+    </form>
   );
 }
 

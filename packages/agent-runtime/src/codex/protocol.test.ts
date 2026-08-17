@@ -3,6 +3,7 @@ import {
   agendaResolutionArgumentsSchema,
   askOperatorArgumentsSchema,
   completionProposalArgumentsSchema,
+  refinementTicketsSubmissionSchema,
 } from "./protocol";
 
 const baseQuestion = {
@@ -115,5 +116,34 @@ describe("agendaResolutionArgumentsSchema", () => {
         justification: "   ",
       }).success,
     ).toBe(false);
+  });
+});
+
+const ticket = {
+  id: "ticket-1",
+  title: "Implementar exportação",
+  description: "Entrega o CSV da US.",
+  acceptanceCriteria: ["Retorna CSV em UTF-8."],
+  specUrl: "https://dev.azure.com/org/project/_workitems/edit/117",
+  blockedBy: [],
+} as const;
+
+describe("refinementTicketsSubmissionSchema", () => {
+  it("should reject duplicate ticket ids", () => {
+    const parsed = refinementTicketsSubmissionSchema.safeParse({
+      tickets: [
+        ticket,
+        { ...ticket, title: "Validar exportação" },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it.each([
+    ["critérios de aceite", { ...ticket, acceptanceCriteria: ["Duplicado", "Duplicado"] }],
+    ["dependências", { ...ticket, blockedBy: ["ticket-0", "ticket-0"] }],
+  ] as const)("should reject duplicate %s", (_label, candidate) => {
+    expect(refinementTicketsSubmissionSchema.safeParse({ tickets: [candidate] }).success).toBe(false);
   });
 });

@@ -2,6 +2,7 @@
 
 import type { CeremonyDumpState, RefinementPhase } from "@sprint-griller/ceremony";
 import { CEREMONY_ESTIMATES } from "@sprint-griller/ceremony/estimate";
+import { Alert, Button } from "../../../../components/ui";
 import { useDumpGate } from "./use-dump-gate";
 
 export interface DumpGateProps {
@@ -14,10 +15,10 @@ export function DumpGate({ sessionId, phase, dump }: DumpGateProps) {
   const gate = useDumpGate(dump);
 
   if (gate.view.status === "completed") {
-    return <p role="status" className="rounded-lg border border-line px-5 py-4">Publicação concluída.</p>;
+    return <p role="status" className="rounded-[var(--radius-md)] border border-line bg-surface px-5 py-4">Publicação concluída.</p>;
   }
   if (gate.view.status === "publishing") {
-    return <p role="status" className="rounded-lg border border-line px-5 py-4">Publicação em andamento…</p>;
+    return <p role="status" aria-busy="true" className="rounded-[var(--radius-md)] border border-line bg-surface px-5 py-4">Publicação em andamento…</p>;
   }
   if (phase !== "pronto-para-publicar") {
     return <p role="status" className="text-sm text-muted">Aprove a Spec e os Tickets antes de publicar.</p>;
@@ -32,7 +33,7 @@ export function DumpGate({ sessionId, phase, dump }: DumpGateProps) {
         {retryable ? (
           <>
             <input type="hidden" name="estimate" value={gate.view.estimate} />
-            <output id="estimate" className="rounded-lg border border-line px-4 py-3 text-base">
+            <output id="estimate" className="rounded-[var(--radius-md)] border border-line bg-surface px-4 py-3 text-base">
               {gate.view.estimate}
             </output>
           </>
@@ -43,7 +44,7 @@ export function DumpGate({ sessionId, phase, dump }: DumpGateProps) {
             required
             disabled={gate.dumping}
             defaultValue=""
-            className="rounded-lg border border-line bg-transparent px-4 py-3 text-base"
+            className="rounded-[var(--radius-md)] border border-line bg-surface px-4 py-3 text-base"
           >
             <option value="" disabled>Selecione a estimativa</option>
             {CEREMONY_ESTIMATES.map((estimate) => (
@@ -52,15 +53,15 @@ export function DumpGate({ sessionId, phase, dump }: DumpGateProps) {
           </select>
         )}
       </label>
-      <button
+      <Button
         type="submit"
+        variant="primary"
         disabled={gate.dumping}
-        className="rounded-xl border border-foreground bg-foreground px-6 py-3 font-medium text-background disabled:opacity-50"
       >
         {gate.dumping ? "Publicando…" : retryable ? "Tentar publicação novamente" : "Publicar"}
-      </button>
+      </Button>
       {gate.result.status === "error" && (
-        <p role="alert" className="text-sm text-red-600">{gate.result.message}</p>
+        <Alert heading="A publicação não foi concluída">{gate.result.message}</Alert>
       )}
     </form>
   );

@@ -31,6 +31,10 @@ vi.mock("@/lib/ceremonies", async () => {
       questionId: z.string().min(1),
       answer: z.string().trim().min(1),
     }),
+    decisionFormSchema: z.discriminatedUnion("answerKind", [
+      z.object({ sessionId, questionId: z.string().min(1), answerKind: z.literal("option"), answer: z.string().trim().min(1) }),
+      z.object({ sessionId, questionId: z.string().min(1), answerKind: z.literal("free-text"), answer: z.string().trim().min(1) }),
+    ]),
     discardSpecDraftSchema: z.object({
       sessionId,
       expectedSavedAt: z.coerce.number().nullable(),
@@ -70,6 +74,7 @@ describe("Refina server actions", () => {
     const form = new FormData();
     form.set("sessionId", "session-1");
     form.set("questionId", "q1");
+    form.set("answerKind", "option");
     form.set("answer", "Regra bancária");
     form.set("decidedBy", "campo forjado");
 

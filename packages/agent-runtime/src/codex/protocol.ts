@@ -316,24 +316,64 @@ export const refinementSpecSubmissionToolSpec = {
   inputSchema: z.toJSONSchema(refinementSpecSubmissionSchema, { io: "input", target: "draft-7" }),
 } as const;
 
-export const refinementTicketSubmissionSchema = z.object({
+const ticketListEntrySchema = z.string().min(1);
+const acceptanceCriteriaInputSchema = z.array(ticketListEntrySchema).min(1).describe(
+  "Critérios de aceite sem entradas repetidas.",
+);
+const blockedByInputSchema = z.array(ticketListEntrySchema).describe(
+  "IDs de Tickets bloqueadores sem entradas repetidas.",
+);
+
+const refinementTicketSubmissionInputSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
-  acceptanceCriteria: z.array(z.string().min(1)).min(1),
+  acceptanceCriteria: acceptanceCriteriaInputSchema,
   specUrl: z.string().url(),
-  blockedBy: z.array(z.string().min(1)),
+  blockedBy: blockedByInputSchema,
 });
 
+export const refinementTicketSubmissionSchema = refinementTicketSubmissionInputSchema.extend({
+  acceptanceCriteria: acceptanceCriteriaInputSchema.refine(
+    (entries) => new Set(entries).size === entries.length,
+    { message: "os critérios de aceite não podem se repetir" },
+  ),
+  blockedBy: blockedByInputSchema.refine(
+    (entries) => new Set(entries).size === entries.length,
+    { message: "as dependências não podem se repetir" },
+  ),
+});
+
+const refinementTicketsSubmissionInputSchema = z.object({
+  tickets: z.array(refinementTicketSubmissionInputSchema).min(1),
+});
+
+const refinementTicketSubmissionsSchema = z
+  .array(refinementTicketSubmissionSchema)
+  .min(1)
+  .superRefine((tickets, ctx) => {
+    const ids = new Set<string>();
+    for (const [index, ticket] of tickets.entries()) {
+      if (ids.has(ticket.id)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `id de Ticket duplicado: ${ticket.id}`,
+          path: [index, "id"],
+        });
+      }
+      ids.add(ticket.id);
+    }
+  });
+
 export const refinementTicketsSubmissionSchema = z.object({
-  tickets: z.array(refinementTicketSubmissionSchema).min(1),
+  tickets: refinementTicketSubmissionsSchema,
 });
 
 export const refinementTicketsSubmissionToolSpec = {
   type: "function",
   name: TICKETS_SUBMISSION_TOOL_NAME,
   description: "Submete Tickets estruturados para o gate de revisão da cerimônia.",
-  inputSchema: z.toJSONSchema(refinementTicketsSubmissionSchema, {
+  inputSchema: z.toJSONSchema(refinementTicketsSubmissionInputSchema, {
     io: "input",
     target: "draft-7",
   }),

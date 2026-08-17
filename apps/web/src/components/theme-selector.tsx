@@ -40,7 +40,7 @@ export function ThemeSelector(): ReactElement {
   }
 
   return (
-    <div className="fixed top-3 right-3 z-50 h-11 w-11">
+    <div className="relative h-10 w-10">
       <select
         id="theme-preference"
         aria-label={controlLabel}
@@ -56,7 +56,7 @@ export function ThemeSelector(): ReactElement {
         ))}
       </select>
       <span
-        className="pointer-events-none flex h-full w-full items-center justify-center rounded-full border border-line bg-background/95 text-muted shadow-sm backdrop-blur peer-hover:bg-foreground/5 peer-hover:text-foreground peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent"
+        className="pointer-events-none flex h-full w-full items-center justify-center rounded-full border border-line bg-surface text-muted shadow-sm peer-hover:bg-foreground/5 peer-hover:text-foreground peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent"
       >
         <ThemeIcon preference={preference} />
       </span>

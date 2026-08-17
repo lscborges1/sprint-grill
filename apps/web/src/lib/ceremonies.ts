@@ -27,10 +27,29 @@ export const consultationSchema = z.object({
   question: z.string().trim().min(1, "escreva a dúvida"),
 });
 
+const decisionAnswerSchema = z.string().trim().min(1, "escolha ou escreva a resposta da sala");
+
+/** Forma que o browser envia: o tipo impede misturar opção e texto livre. */
+export const decisionFormSchema = z.discriminatedUnion("answerKind", [
+  z.object({
+    sessionId: sessionIdSchema,
+    questionId: z.string().min(1),
+    answerKind: z.literal("option"),
+    answer: decisionAnswerSchema,
+  }),
+  z.object({
+    sessionId: sessionIdSchema,
+    questionId: z.string().min(1),
+    answerKind: z.literal("free-text"),
+    answer: decisionAnswerSchema,
+  }),
+]);
+
+/** Contrato de domínio: a origem da resposta não atravessa a fronteira. */
 export const decisionSchema = z.object({
   sessionId: sessionIdSchema,
   questionId: z.string().min(1),
-  answer: z.string().trim().min(1, "escolha ou escreva a resposta da sala"),
+  answer: decisionAnswerSchema,
 });
 
 export const artifactGateSchema = z.object({

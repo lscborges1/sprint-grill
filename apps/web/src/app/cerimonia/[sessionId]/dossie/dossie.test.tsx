@@ -1,0 +1,242 @@
+// @vitest-environment happy-dom
+
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { DOSSIE_STATE } from "@/app/__dev/ui/fixtures";
+import { discardSpecDraftAction, reopenRefinementAction } from "../../actions";
+import { DossieView } from "./dossie";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+vi.mock("../../actions", () => ({
+  approveSpecAction: vi.fn(),
+  approveTicketsAction: vi.fn(),
+  discardSpecDraftAction: vi.fn(),
+  reopenRefinementAction: vi.fn(),
+  saveSpecDraftAction: vi.fn(),
+}));
+
+describe("DossieView", () => {
+  it("should reopen navigation on desktop and restore its collapsed mobile state", async () => {
+    const serverHtml = renderToStaticMarkup(<DossieView state={DOSSIE_STATE} connected />);
+    expect(serverHtml).toMatch(/<details[^>]*open/);
+
+    window.happyDOM.setViewport({ width: 768, height: 1024 });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(<DossieView state={DOSSIE_STATE} connected />));
+      const details = container.querySelector("details");
+      const summary = details?.querySelector("summary");
+      if (!(details instanceof HTMLDetailsElement) || !(summary instanceof HTMLElement)) {
+        throw new Error("expected the Dossiê navigation disclosure");
+      }
+
+      await act(async () => summary.click());
+      expect(details.open).toBe(false);
+
+      await act(async () => window.happyDOM.setViewport({ width: 1280, height: 800 }));
+      expect(details.open).toBe(true);
+
+      await act(async () => window.happyDOM.setViewport({ width: 768, height: 1024 }));
+      expect(details.open).toBe(false);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      window.happyDOM.setViewport({ width: 1024, height: 768 });
+    }
+  });
+
+  it("should describe the active Spec gate when the completion proposal is retained", () => {
+    const proposal = "A Agenda foi resolvida e a sala confirmou o avanço.";
+    const state = {
+      ...DOSSIE_STATE,
+      refinement: { ...DOSSIE_STATE.refinement, phase: "revisando-spec" as const },
+      completionProposal: { summary: proposal, proposedAt: 7 },
+    };
+
+    const html = renderToStaticMarkup(<DossieView state={state} connected />);
+
+    expect(html).toContain("A Spec está disponível para leitura e aprovação.");
+    expect(html).toContain(`Proposta de conclusão: ${proposal}`);
+  });
+
+  it("should expose Spec reconciliation while read mode blocks approval", () => {
+    const state = {
+      ...DOSSIE_STATE,
+      refinement: { ...DOSSIE_STATE.refinement, phase: "revisando-spec" as const },
+      spec: {
+        generated: "# Spec atualizada",
+        draft: { markdown: "# Rascunho anterior", base: "# Spec anterior", savedAt: 7 },
+      },
+    };
+
+    const html = renderToStaticMarkup(<DossieView state={state} connected />);
+
+    expect(html).toContain("A Spec precisa ser reconciliada");
+    expect(html).toContain("Regenerar da versão atual");
+  });
+
+  it("should show a regeneration failure without entering edit mode", async () => {
+    const state = {
+      ...DOSSIE_STATE,
+      refinement: { ...DOSSIE_STATE.refinement, phase: "revisando-spec" as const },
+      spec: {
+        generated: "# Spec atualizada",
+        draft: { markdown: "# Rascunho anterior", base: "# Spec anterior", savedAt: 7 },
+      },
+    };
+    vi.mocked(discardSpecDraftAction).mockImplementation(async (_previous, formData) => ({
+      status: "error",
+      requestId: String(formData.get("requestId")),
+      message: "A Spec mudou durante a regeneração.",
+    }));
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(<DossieView state={state} connected />));
+      const regenerateButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Regenerar da versão atual",
+      );
+      if (regenerateButton === undefined) throw new Error("expected the regeneration button");
+
+      await act(async () => regenerateButton.click());
+
+      expect({
+        error: container.textContent?.includes("A Spec mudou durante a regeneração."),
+        editLabel: container.textContent?.includes("Markdown aprovado da Spec"),
+      }).toEqual({ error: true, editLabel: false });
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.mocked(discardSpecDraftAction).mockReset();
+    }
+  });
+
+  it("should link ticket review to the canonical User Story URL when a ticket supplies a forged URL", () => {
+    const state = {
+      ...DOSSIE_STATE,
+      refinement: { ...DOSSIE_STATE.refinement, phase: "revisando-tickets" as const },
+      artifacts: {
+        ...DOSSIE_STATE.artifacts,
+        tickets: {
+          ...DOSSIE_STATE.artifacts.tickets,
+          submission: {
+            tickets: [{
+              ...DOSSIE_STATE.artifacts.tickets.submission.tickets[0],
+              specUrl: "https://forged.example/redirect",
+            }],
+          },
+        },
+      },
+    };
+
+    const html = renderToStaticMarkup(<DossieView state={state} connected />);
+
+    expect(html).toContain(`href="${DOSSIE_STATE.story.url}"`);
+    expect(html).not.toContain("https://forged.example/redirect");
+  });
+
+  it("should present a published Dossiê as a completed workflow", () => {
+    const html = renderToStaticMarkup(<DossieView state={DOSSIE_STATE} connected />);
+
+    expect({
+      published: html.includes("Refinamento publicado"),
+      noCurrentStep: !html.includes('aria-current="step"'),
+      completedSteps: (html.match(/data-state="complete"/g) ?? []).length,
+    }).toEqual({ published: true, noCurrentStep: true, completedSteps: 5 });
+  });
+
+  it("should not advertise unpublished artifact anchors in a published Dossiê", () => {
+    const html = renderToStaticMarkup(<DossieView state={DOSSIE_STATE} connected />);
+
+    expect({
+      keepsRenderedSections: html.includes('href="#gate"') && html.includes('href="#agenda"') && html.includes('href="#resolucoes"'),
+      hidesDeadArtifactAnchors: !html.includes('href="#spec"') && !html.includes('href="#tickets"') && !html.includes('href="#publicacao"'),
+    }).toEqual({ keepsRenderedSections: true, hidesDeadArtifactAnchors: true });
+  });
+
+  it("should announce a failed reopen inside the open confirmation dialog", async () => {
+    vi.mocked(reopenRefinementAction).mockResolvedValue("A revisão mudou; recarregue o Dossiê.");
+    const state = {
+      ...DOSSIE_STATE,
+      refinement: { ...DOSSIE_STATE.refinement, phase: "revisando-tickets" as const },
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(<DossieView state={state} connected />));
+      const openButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Reabrir Refinamento",
+      );
+      if (openButton === undefined) throw new Error("expected the reopen trigger");
+      await act(async () => openButton.click());
+
+      const dialog = container.querySelector("dialog");
+      const confirmButton = Array.from(dialog?.querySelectorAll("button") ?? []).find(
+        (button) => button.textContent === "Confirmar reabertura",
+      );
+      if (!(dialog instanceof HTMLDialogElement) || confirmButton === undefined) {
+        throw new Error("expected the reopen dialog");
+      }
+      await act(async () => confirmButton.click());
+
+      expect({
+        open: dialog.open,
+        alert: dialog.querySelector('[role="alert"]')?.textContent,
+      }).toEqual({ open: true, alert: "A revisão mudou; recarregue o Dossiê." });
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.mocked(reopenRefinementAction).mockReset();
+    }
+  });
+
+  it("should disable destructive confirmation while reopen is pending", async () => {
+    let finish: ((result: string | null) => void) | undefined;
+    vi.mocked(reopenRefinementAction).mockImplementation(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    const state = {
+      ...DOSSIE_STATE,
+      refinement: { ...DOSSIE_STATE.refinement, phase: "revisando-tickets" as const },
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(<DossieView state={state} connected />));
+      const openButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Reabrir Refinamento",
+      );
+      if (openButton === undefined) throw new Error("expected the reopen trigger");
+      await act(async () => openButton.click());
+
+      const dialog = container.querySelector("dialog");
+      const confirmButton = Array.from(dialog?.querySelectorAll("button") ?? []).find(
+        (button) => button.textContent === "Confirmar reabertura",
+      );
+      if (confirmButton === undefined) throw new Error("expected the confirm button");
+      act(() => confirmButton.click());
+
+      await vi.waitFor(() => expect({
+        disabled: confirmButton.disabled,
+        busy: confirmButton.getAttribute("aria-busy"),
+      }).toEqual({ disabled: true, busy: "true" }));
+    } finally {
+      await act(async () => finish?.(null));
+      await act(async () => root.unmount());
+      container.remove();
+      vi.mocked(reopenRefinementAction).mockReset();
+    }
+  });
+});

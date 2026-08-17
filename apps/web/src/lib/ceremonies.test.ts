@@ -62,6 +62,7 @@ vi.stubEnv(
 const {
   artifactGateSchema,
   decisionSchema,
+  decisionFormSchema,
   dumpCeremonySchema,
   sessionIdSchema,
   specDraftSchema,
@@ -110,6 +111,35 @@ describe("ceremony input parsing", () => {
 
     expect(answer).toEqual({ sessionId: "session-1", questionId: "q1", answer: "Sim" });
     expect(answer).not.toHaveProperty("decidedBy");
+  });
+
+  it("should parse an option decision form as a discriminated input", () => {
+    expect(decisionFormSchema.parse({
+      sessionId: "session-1",
+      questionId: "q1",
+      answerKind: "option",
+      answer: "Sim",
+    })).toEqual({
+      sessionId: "session-1",
+      questionId: "q1",
+      answerKind: "option",
+      answer: "Sim",
+    });
+  });
+
+  it("should parse a free-text decision form without changing the domain answer", () => {
+    const form = decisionFormSchema.parse({
+      sessionId: "session-1",
+      questionId: "q1",
+      answerKind: "free-text",
+      answer: "Uma regra própria",
+    });
+
+    expect(decisionSchema.parse(form)).toEqual({
+      sessionId: "session-1",
+      questionId: "q1",
+      answer: "Uma regra própria",
+    });
   });
 
   it("should coerce the guarded workflow revision", () => {

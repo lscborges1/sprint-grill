@@ -3,7 +3,7 @@
 import type { IterationStory, RefinementStatus } from "@sprint-griller/ado-client";
 import type { RepoConfig } from "@sprint-griller/core";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { PickerAction } from "@/lib/picker-action";
 import { Button, EmptyState, PageHeader, StatusBadge } from "./ui";
 
@@ -59,7 +59,7 @@ export function Picker({
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<PickerFilter>("all");
-  const visibleStories = useMemo(() => filterPickerStories(stories, query, filter), [filter, query, stories]);
+  const visibleStories = filterPickerStories(stories, query, filter);
   const hasFilters = query !== "" || filter !== "all";
 
   function clearFilters(): void {

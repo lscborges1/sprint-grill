@@ -1,4 +1,5 @@
 import MarkdownIt from "markdown-it";
+import type { ReactElement } from "react";
 
 const STRUCTURAL_COMMENT = /^<!-- sprint-griller:[A-Za-z0-9:._-]+ -->[\t ]*$/gm;
 const previewMarkdown = new MarkdownIt({ html: false, linkify: false });
@@ -23,7 +24,7 @@ previewMarkdown.renderer.rules.image = (tokens, index, options, env, renderer) =
     renderer.renderInlineAsText(tokens[index]?.children ?? [], options, env),
   );
 
-export function MarkdownPreview({ markdown }: { readonly markdown: string }) {
+export function MarkdownPreview({ markdown }: { readonly markdown: string }): ReactElement {
   const html = previewMarkdown.render(markdown.replace(STRUCTURAL_COMMENT, ""));
   return (
     <div

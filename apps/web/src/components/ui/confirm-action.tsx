@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, type ReactNode } from "react";
+import { useId, useRef, type ReactElement, type ReactNode } from "react";
 import { Button, type ButtonProps } from "./button";
 
 export function ConfirmAction({
@@ -23,7 +23,7 @@ export function ConfirmAction({
   readonly children?: ReactNode;
   readonly error?: string | null;
   readonly pending?: boolean;
-}) {
+}): ReactElement {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();

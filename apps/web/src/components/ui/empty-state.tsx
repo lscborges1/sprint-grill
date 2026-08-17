@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 export function EmptyState({
   heading,
@@ -8,7 +8,7 @@ export function EmptyState({
   readonly heading: string;
   readonly children?: ReactNode;
   readonly action?: ReactNode;
-}) {
+}): ReactElement {
   return (
     <div className="flex flex-col items-start gap-2 rounded-[var(--radius-md)] border border-dashed border-line px-5 py-6">
       <h2 className="text-base font-semibold tracking-tight">{heading}</h2>

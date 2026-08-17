@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 export type StatusBadgeTone = "neutral" | "info" | "success" | "warning" | "danger";
 
@@ -16,10 +16,9 @@ export function StatusBadge({
 }: {
   readonly tone?: StatusBadgeTone;
   readonly children: ReactNode;
-}) {
+}): ReactElement {
   return (
     <span
-      role="status"
       className={`inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-medium ${TONE_CLASSES[tone]}`}
     >
       {children}

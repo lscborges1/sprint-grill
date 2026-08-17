@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactElement, ReactNode } from "react";
 
 export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger";
 export type ButtonSize = "sm" | "md" | "lg";
@@ -45,7 +45,7 @@ export function Button({
   className,
   children,
   ...props
-}: ButtonProps) {
+}: ButtonProps): ReactElement {
   return (
     <button
       {...props}
@@ -72,7 +72,7 @@ export function IconButton({
   className,
   children,
   ...props
-}: IconButtonProps) {
+}: IconButtonProps): ReactElement {
   return (
     <button
       {...props}

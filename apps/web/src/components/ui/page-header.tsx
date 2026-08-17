@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 export function PageHeader({
   eyebrow,
@@ -12,7 +12,7 @@ export function PageHeader({
   readonly description?: ReactNode;
   readonly actions?: ReactNode;
   readonly back?: ReactNode;
-}) {
+}): ReactElement {
   return (
     <header className="flex flex-col gap-3 border-b border-line pb-6">
       {back}

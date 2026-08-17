@@ -42,16 +42,20 @@ describe("Refina UI primitives", () => {
     expect(html).toContain("Informe uma busca");
   });
 
-  it("should render status, alert, and empty states with semantic roles", () => {
+  it("should keep a presentation-only badge outside live regions", () => {
+    const html = renderToStaticMarkup(<StatusBadge tone="success">Publicado</StatusBadge>);
+
+    expect(html).not.toMatch(/role="status"/);
+  });
+
+  it("should render alert and empty states with their semantic contracts", () => {
     const html = renderToStaticMarkup(
       <>
-        <StatusBadge tone="success">Publicado</StatusBadge>
         <Alert heading="Falha">Tente novamente.</Alert>
         <EmptyState heading="Nenhuma US">Ajuste os filtros.</EmptyState>
       </>,
     );
 
-    expect(html).toMatch(/role="status"/);
     expect(html).toMatch(/role="alert"/);
     expect(html).toContain("Nenhuma US");
   });

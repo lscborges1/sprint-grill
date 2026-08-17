@@ -12,7 +12,7 @@ export function Field({
   readonly hint?: string;
   readonly error?: string;
   readonly children: ReactElement | ReactNode;
-}) {
+}): ReactElement {
   const hintId = hint === undefined ? undefined : `${id}-hint`;
   const errorId = error === undefined ? undefined : `${id}-error`;
   const describedBy = [hintId, errorId].filter((value): value is string => value !== undefined).join(" ");

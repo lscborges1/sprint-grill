@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { Button, type ButtonProps } from "./button";
 
 export function Alert({
@@ -11,7 +11,7 @@ export function Alert({
   readonly children?: ReactNode;
   readonly tone?: "danger" | "warning" | "info";
   readonly action?: { readonly label: string; readonly props?: ButtonProps };
-}) {
+}): ReactElement {
   const toneClasses = {
     danger: "border-red-700/40 bg-red-700/[0.06]",
     warning: "border-amber-700/40 bg-amber-700/[0.06]",

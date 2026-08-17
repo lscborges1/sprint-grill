@@ -129,6 +129,17 @@ const ticket = {
 } as const;
 
 describe("refinementTicketsSubmissionSchema", () => {
+  it("should reject duplicate ticket ids", () => {
+    const parsed = refinementTicketsSubmissionSchema.safeParse({
+      tickets: [
+        ticket,
+        { ...ticket, title: "Validar exportação" },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it.each([
     ["critérios de aceite", { ...ticket, acceptanceCriteria: ["Duplicado", "Duplicado"] }],
     ["dependências", { ...ticket, blockedBy: ["ticket-0", "ticket-0"] }],

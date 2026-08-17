@@ -348,8 +348,25 @@ const refinementTicketsSubmissionInputSchema = z.object({
   tickets: z.array(refinementTicketSubmissionInputSchema).min(1),
 });
 
+const refinementTicketSubmissionsSchema = z
+  .array(refinementTicketSubmissionSchema)
+  .min(1)
+  .superRefine((tickets, ctx) => {
+    const ids = new Set<string>();
+    for (const [index, ticket] of tickets.entries()) {
+      if (ids.has(ticket.id)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `id de Ticket duplicado: ${ticket.id}`,
+          path: [index, "id"],
+        });
+      }
+      ids.add(ticket.id);
+    }
+  });
+
 export const refinementTicketsSubmissionSchema = z.object({
-  tickets: z.array(refinementTicketSubmissionSchema).min(1),
+  tickets: refinementTicketSubmissionsSchema,
 });
 
 export const refinementTicketsSubmissionToolSpec = {

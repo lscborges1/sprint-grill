@@ -1,6 +1,12 @@
+// @vitest-environment happy-dom
+
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { filterPickerStories, Picker, type PickerStory } from "./picker";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const stories: readonly PickerStory[] = [
   {
@@ -61,11 +67,30 @@ describe("Picker", () => {
     expect(html).toContain("Config da squad");
   });
 
-  it("should explain a contextual empty filter result", () => {
-    const html = renderToStaticMarkup(
-      <Picker iterationName="Sprint 42" stories={stories} project="Plataforma" repos={{ primary: { name: "api", path: "/tmp/api" }, related: [] }} startAction={() => undefined} />,
-    );
+  it("should explain when no User Story matches the search", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
 
-    expect(html).toContain("Limpar filtros");
+    try {
+      await act(async () => {
+        root.render(
+          <Picker iterationName="Sprint 42" stories={stories} project="Plataforma" repos={{ primary: { name: "api", path: "/tmp/api" }, related: [] }} startAction={() => undefined} />,
+        );
+      });
+
+      const search = container.querySelector('[aria-label="Buscar na sprint atual"]');
+      if (!(search instanceof HTMLInputElement)) throw new Error("expected the Picker search input");
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (setValue === undefined) throw new Error("expected the native input value setter");
+
+      await act(async () => {
+        setValue.call(search, "ausente");
+        search.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+
+      expect(container.textContent).toContain("Nenhuma US corresponde aos filtros");
+    } finally {
+      await act(async () => root.unmount());
+    }
   });
 });

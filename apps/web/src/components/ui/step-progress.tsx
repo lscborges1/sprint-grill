@@ -44,7 +44,7 @@ export function StepProgress<StepId extends string>({
             className={`flex items-center gap-2 text-xs font-medium ${state === "active" ? "text-foreground" : state === "complete" ? "text-accent" : "text-muted"}`}
             data-state={state}
           >
-            <span aria-hidden="true" className={`flex size-4 items-center justify-center rounded-full text-xs ${state === "pending" ? "border border-muted text-muted" : "bg-accent text-white"}`}>{marker}</span>
+            <span aria-hidden="true" className={`flex size-4 items-center justify-center rounded-full text-xs ${state === "pending" ? "border border-muted text-muted" : "bg-accent text-accent-foreground"}`}>{marker}</span>
             {step.label}
             <span className="sr-only">{status}</span>
           </li>

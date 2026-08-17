@@ -4,7 +4,7 @@ export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger";
 export type ButtonSize = "sm" | "md" | "lg";
 
 const VARIANT_CLASSES = {
-  primary: "border-accent bg-accent text-white hover:bg-accent/90",
+  primary: "border-accent bg-accent text-accent-foreground hover:bg-accent/90",
   secondary: "border-line bg-surface text-foreground hover:bg-foreground/[0.04]",
   quiet: "border-transparent bg-transparent text-muted hover:bg-foreground/[0.05] hover:text-foreground",
   danger: "border-red-600/60 bg-red-600 text-white hover:bg-red-700",

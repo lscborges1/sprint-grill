@@ -116,6 +116,10 @@ function dossieNavigation(state: DossieState) {
 }
 
 function PhaseGate({ state }: { readonly state: DossieState }) {
+  const description = state.refinement.phase === "aguardando-confirmacao"
+    ? state.completionProposal?.summary ?? gateDescription(state.refinement.phase)
+    : gateDescription(state.refinement.phase);
+
   return (
     <Section id="gate" heading="Gate atual">
       <StepProgress
@@ -123,7 +127,7 @@ function PhaseGate({ state }: { readonly state: DossieState }) {
         progress={REFINEMENT_PROGRESS[state.refinement.phase]}
       />
       <Status heading={PHASE_LABEL[state.refinement.phase]}>
-        {state.completionProposal?.summary ?? gateDescription(state.refinement.phase)}
+        {description}
       </Status>
     </Section>
   );
@@ -224,11 +228,12 @@ function SubmittedSpecReview({ state, revision }: { state: DossieState; revision
   return (
     <Section id="spec" heading={`Revisar Spec · versão ${revision}`}>
       <div className="flex flex-col gap-4 rounded-[var(--radius-md)] border border-line bg-surface px-5 py-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Documento</p><p className="mt-1 text-sm text-muted">A leitura é a vista padrão. A edição mantém rascunho, CAS e conflito.</p></div>
-          <Button type="button" variant="secondary" onClick={() => setEditing((value) => !value)}>{editing ? "Fechar editor" : "Editar Markdown"}</Button>
-        </div>
-        {editing ? <SpecEditor state={state} editor={editor} /> : <MarkdownPreview markdown={state.spec.draft?.markdown ?? state.spec.generated} />}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Documento</p><p className="mt-1 text-sm text-muted">A leitura é a vista padrão. A edição mantém rascunho, CAS e conflito.</p></div>
+            <Button type="button" variant="secondary" onClick={() => setEditing((value) => !value)}>{editing ? "Fechar editor" : "Editar Markdown"}</Button>
+          </div>
+          <SpecReconciliation state={state} editor={editor} />
+          {editing ? <SpecEditor state={state} editor={editor} /> : <MarkdownPreview markdown={state.spec.draft?.markdown ?? state.spec.generated} />}
       </div>
       <ArtifactGateForm
         action={approveSpecAction}
@@ -243,29 +248,37 @@ function SubmittedSpecReview({ state, revision }: { state: DossieState; revision
   );
 }
 
+function SpecReconciliation({ state, editor }: {
+  readonly state: DossieState;
+  readonly editor: SpecEditorController;
+}) {
+  if (editor.conflict === null && !editor.stale) return null;
+
+  return (
+    <Alert heading="A Spec precisa ser reconciliada" tone="warning">
+      <p>A Spec mudou em outra revisão. Recarregue o documento antes de aprovar.</p>
+      {editor.remoteDraftConflict ? (
+        <Button type="button" size="sm" onClick={editor.adoptRemote}>
+          Usar edição salva
+        </Button>
+      ) : (
+        <form action={editor.regenerate}>
+          <input type="hidden" name="sessionId" value={state.sessionId} />
+          <input type="hidden" name="expectedSavedAt" value={editor.expectedSavedAt ?? ""} />
+          <Button type="submit" size="sm">
+            Regenerar da versão atual
+          </Button>
+        </form>
+      )}
+    </Alert>
+  );
+}
+
 function SpecEditor({ state, editor }: { state: DossieState; editor: SpecEditorController }) {
   const blocked = editor.busy || editor.conflict !== null || editor.stale;
 
   return (
     <div className="flex flex-col gap-4">
-      {(editor.conflict !== null || editor.stale) && (
-        <Alert heading="A Spec precisa ser reconciliada" tone="warning">
-          <p>A Spec mudou em outra revisão. Recarregue o documento antes de aprovar.</p>
-          {editor.remoteDraftConflict ? (
-            <Button type="button" size="sm" onClick={editor.adoptRemote}>
-              Usar edição salva
-            </Button>
-          ) : (
-            <form action={editor.regenerate}>
-              <input type="hidden" name="sessionId" value={state.sessionId} />
-              <input type="hidden" name="expectedSavedAt" value={editor.expectedSavedAt ?? ""} />
-              <Button type="submit" size="sm">
-                Regenerar da versão atual
-              </Button>
-            </form>
-          )}
-        </Alert>
-      )}
       <form action={editor.save} className="flex flex-col gap-4">
         <input type="hidden" name="sessionId" value={state.sessionId} />
         <input type="hidden" name="base" value={editor.base} />

@@ -3,6 +3,7 @@ import type {
   CeremonyQuestion,
   PalcoState,
 } from "@sprint-griller/ceremony";
+import { ResponsiveDetails } from "../../../components/ui";
 
 /**
  * A árvore de decisões: o que a sala já decidiu, depois o que ela ainda tem
@@ -43,8 +44,11 @@ export function DecisionRail({ state }: { readonly state: PalcoState }) {
 
   return (
     <aside className="order-2 border-t border-line bg-background lg:order-1 lg:col-start-1 lg:row-start-1 lg:sticky lg:top-0 lg:min-h-dvh lg:border-r lg:border-t-0">
-      <details className="group lg:contents" open>
-        <summary className="cursor-pointer list-none px-4 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-muted marker:hidden lg:hidden">Trilho e histórico · {state.decisions.length} resoluções</summary>
+      <ResponsiveDetails
+        className="group lg:contents"
+        summary={`Trilho e histórico · ${state.decisions.length} resoluções`}
+        summaryClassName="cursor-pointer list-none px-4 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-muted marker:hidden lg:hidden"
+      >
         <div className="flex min-h-0 flex-col gap-5 px-4 pb-6 sm:px-6 sm:pb-7 lg:sticky lg:top-0 lg:min-h-dvh lg:px-6 lg:py-7">
           <div>
             <p className="mb-2 font-mono text-xs text-muted">US #{state.story.id}</p>
@@ -97,7 +101,7 @@ export function DecisionRail({ state }: { readonly state: PalcoState }) {
             {pendingCount} {pendingCount === 1 ? "pergunta ativa" : "perguntas ativas"}
           </p>
         </div>
-      </details>
+      </ResponsiveDetails>
     </aside>
   );
 }

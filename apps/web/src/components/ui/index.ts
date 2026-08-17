@@ -5,6 +5,7 @@ export { ConfirmAction } from "./confirm-action";
 export { EmptyState } from "./empty-state";
 export { Field } from "./field";
 export { MarkdownPreview } from "./markdown-preview";
+export { ResponsiveDetails } from "./responsive-details";
 export { PageHeader } from "./page-header";
 export { StatusBadge } from "./status-badge";
 export type { StatusBadgeTone } from "./status-badge";

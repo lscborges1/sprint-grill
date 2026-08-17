@@ -228,12 +228,13 @@ function SubmittedSpecReview({ state, revision }: { state: DossieState; revision
   return (
     <Section id="spec" heading={`Revisar Spec · versão ${revision}`}>
       <div className="flex flex-col gap-4 rounded-[var(--radius-md)] border border-line bg-surface px-5 py-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Documento</p><p className="mt-1 text-sm text-muted">A leitura é a vista padrão. A edição mantém rascunho, CAS e conflito.</p></div>
-            <Button type="button" variant="secondary" onClick={() => setEditing((value) => !value)}>{editing ? "Fechar editor" : "Editar Markdown"}</Button>
-          </div>
-          <SpecReconciliation state={state} editor={editor} />
-          {editing ? <SpecEditor state={state} editor={editor} /> : <MarkdownPreview markdown={state.spec.draft?.markdown ?? state.spec.generated} />}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Documento</p><p className="mt-1 text-sm text-muted">A leitura é a vista padrão. A edição mantém rascunho, CAS e conflito.</p></div>
+          <Button type="button" variant="secondary" onClick={() => setEditing((value) => !value)}>{editing ? "Fechar editor" : "Editar Markdown"}</Button>
+        </div>
+        <SpecReconciliation state={state} editor={editor} />
+        {editor.error && <p role="alert" className="text-sm text-red-600">{editor.error}</p>}
+        {editing ? <SpecEditor state={state} editor={editor} /> : <MarkdownPreview markdown={state.spec.draft?.markdown ?? state.spec.generated} />}
       </div>
       <ArtifactGateForm
         action={approveSpecAction}
@@ -297,7 +298,6 @@ function SpecEditor({ state, editor }: { state: DossieState; editor: SpecEditorC
         <Button type="submit" disabled={blocked}>
           {editor.busy ? "Salvando…" : "Salvar edição da Spec"}
         </Button>
-        {editor.error && <p role="alert" className="text-sm text-red-600">{editor.error}</p>}
       </form>
     </div>
   );

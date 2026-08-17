@@ -8,7 +8,7 @@ import { useActionState, useState } from "react";
 import { OperationalFrame } from "@/components/operational-frame";
 import { useLiveState } from "@/components/live-state";
 import { Section } from "@/components/section";
-import { Alert, Button, ConfirmAction, EmptyState, MarkdownPreview, PageHeader, StepProgress } from "@/components/ui";
+import { Alert, Button, ConfirmAction, EmptyState, MarkdownPreview, PageHeader, ResponsiveDetails, StepProgress } from "@/components/ui";
 import type { ProgressState } from "@/components/ui";
 import {
   approveSpecAction,
@@ -75,14 +75,17 @@ export function DossieView({ state, connected }: { readonly state: DossieState; 
     <OperationalFrame>
       <div className="mx-auto grid w-full max-w-[1440px] flex-1 grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)]">
         <aside className="border-b border-line px-4 py-4 lg:sticky lg:top-0 lg:min-h-[calc(100dvh-4rem)] lg:border-b-0 lg:border-r lg:px-5 lg:py-8">
-          <details className="lg:contents" open>
-            <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-[0.18em] text-muted lg:hidden">Navegação do Dossiê</summary>
+          <ResponsiveDetails
+            className="lg:contents"
+            summary="Navegação do Dossiê"
+            summaryClassName="cursor-pointer list-none text-xs font-semibold uppercase tracking-[0.18em] text-muted lg:hidden"
+          >
             <nav aria-label="Navegação do Dossiê" className="mt-4 flex flex-col gap-2 lg:mt-0">
               {navigation.map((item) => (
                 <a key={item.href} href={item.href} className="text-sm text-muted underline-offset-4 hover:text-foreground hover:underline">{item.label}</a>
               ))}
             </nav>
-          </details>
+          </ResponsiveDetails>
         </aside>
         <main className="flex min-w-0 flex-col gap-8 px-4 py-8 sm:px-6 lg:px-12 lg:py-10">
           <PageHeader

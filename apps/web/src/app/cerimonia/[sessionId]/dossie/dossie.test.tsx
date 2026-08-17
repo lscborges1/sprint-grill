@@ -19,6 +19,38 @@ vi.mock("../../actions", () => ({
 }));
 
 describe("DossieView", () => {
+  it("should reopen navigation on desktop and restore its collapsed mobile state", async () => {
+    const serverHtml = renderToStaticMarkup(<DossieView state={DOSSIE_STATE} connected />);
+    expect(serverHtml).toMatch(/<details[^>]*open/);
+
+    window.happyDOM.setViewport({ width: 768, height: 1024 });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(<DossieView state={DOSSIE_STATE} connected />));
+      const details = container.querySelector("details");
+      const summary = details?.querySelector("summary");
+      if (!(details instanceof HTMLDetailsElement) || !(summary instanceof HTMLElement)) {
+        throw new Error("expected the Dossiê navigation disclosure");
+      }
+
+      await act(async () => summary.click());
+      expect(details.open).toBe(false);
+
+      await act(async () => window.happyDOM.setViewport({ width: 1280, height: 800 }));
+      expect(details.open).toBe(true);
+
+      await act(async () => window.happyDOM.setViewport({ width: 768, height: 1024 }));
+      expect(details.open).toBe(false);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      window.happyDOM.setViewport({ width: 1024, height: 768 });
+    }
+  });
+
   it("should describe the active Spec gate when the completion proposal is retained", () => {
     const proposal = "A Agenda foi resolvida e a sala confirmou o avanço.";
     const state = {

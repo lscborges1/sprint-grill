@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DOSSIE_STATE } from "@/app/__dev/ui/fixtures";
-import { discardSpecDraftAction } from "../../actions";
+import { discardSpecDraftAction, reopenRefinementAction } from "../../actions";
 import { DossieView } from "./dossie";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -128,5 +128,83 @@ describe("DossieView", () => {
       keepsRenderedSections: html.includes('href="#gate"') && html.includes('href="#agenda"') && html.includes('href="#resolucoes"'),
       hidesDeadArtifactAnchors: !html.includes('href="#spec"') && !html.includes('href="#tickets"') && !html.includes('href="#publicacao"'),
     }).toEqual({ keepsRenderedSections: true, hidesDeadArtifactAnchors: true });
+  });
+
+  it("should announce a failed reopen inside the open confirmation dialog", async () => {
+    vi.mocked(reopenRefinementAction).mockResolvedValue("A revisão mudou; recarregue o Dossiê.");
+    const state = {
+      ...DOSSIE_STATE,
+      refinement: { ...DOSSIE_STATE.refinement, phase: "revisando-tickets" as const },
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(<DossieView state={state} connected />));
+      const openButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Reabrir Refinamento",
+      );
+      if (openButton === undefined) throw new Error("expected the reopen trigger");
+      await act(async () => openButton.click());
+
+      const dialog = container.querySelector("dialog");
+      const confirmButton = Array.from(dialog?.querySelectorAll("button") ?? []).find(
+        (button) => button.textContent === "Confirmar reabertura",
+      );
+      if (!(dialog instanceof HTMLDialogElement) || confirmButton === undefined) {
+        throw new Error("expected the reopen dialog");
+      }
+      await act(async () => confirmButton.click());
+
+      expect({
+        open: dialog.open,
+        alert: dialog.querySelector('[role="alert"]')?.textContent,
+      }).toEqual({ open: true, alert: "A revisão mudou; recarregue o Dossiê." });
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.mocked(reopenRefinementAction).mockReset();
+    }
+  });
+
+  it("should disable destructive confirmation while reopen is pending", async () => {
+    let finish: ((result: string | null) => void) | undefined;
+    vi.mocked(reopenRefinementAction).mockImplementation(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    const state = {
+      ...DOSSIE_STATE,
+      refinement: { ...DOSSIE_STATE.refinement, phase: "revisando-tickets" as const },
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(<DossieView state={state} connected />));
+      const openButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Reabrir Refinamento",
+      );
+      if (openButton === undefined) throw new Error("expected the reopen trigger");
+      await act(async () => openButton.click());
+
+      const dialog = container.querySelector("dialog");
+      const confirmButton = Array.from(dialog?.querySelectorAll("button") ?? []).find(
+        (button) => button.textContent === "Confirmar reabertura",
+      );
+      if (confirmButton === undefined) throw new Error("expected the confirm button");
+      act(() => confirmButton.click());
+
+      await vi.waitFor(() => expect({
+        disabled: confirmButton.disabled,
+        busy: confirmButton.getAttribute("aria-busy"),
+      }).toEqual({ disabled: true, busy: "true" }));
+    } finally {
+      await act(async () => finish?.(null));
+      await act(async () => root.unmount());
+      container.remove();
+      vi.mocked(reopenRefinementAction).mockReset();
+    }
   });
 });

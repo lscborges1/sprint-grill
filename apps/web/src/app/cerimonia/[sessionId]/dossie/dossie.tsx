@@ -379,11 +379,12 @@ function ReopenForm({ state }: { state: DossieState }) {
         confirmLabel={pending ? "Reabrindo…" : "Confirmar reabertura"}
         action={reopen}
         triggerProps={{ variant: "quiet", disabled: pending }}
+        error={error}
+        pending={pending}
       >
         <input type="hidden" name="sessionId" value={state.sessionId} />
         <input type="hidden" name="expectedRevision" value={state.refinement.revision} />
       </ConfirmAction>
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
     </div>
   );
 }

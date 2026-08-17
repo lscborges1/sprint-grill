@@ -11,6 +11,8 @@ export function ConfirmAction({
   action,
   triggerProps,
   children,
+  error,
+  pending = false,
 }: {
   readonly triggerLabel: string;
   readonly title: string;
@@ -19,6 +21,8 @@ export function ConfirmAction({
   readonly action: (formData: FormData) => void | Promise<void>;
   readonly triggerProps?: Omit<ButtonProps, "children" | "type">;
   readonly children?: ReactNode;
+  readonly error?: string | null;
+  readonly pending?: boolean;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -44,13 +48,14 @@ export function ConfirmAction({
             <h2 id={titleId} className="font-serif text-2xl tracking-tight">{title}</h2>
             <p id={descriptionId} className="text-sm text-muted">{description}</p>
           </div>
+          {!pending && error && <p role="alert" className="text-sm text-red-600">{error}</p>}
           <div className="flex flex-wrap justify-end gap-2">
             <form method="dialog">
               <Button type="submit" variant="quiet">Cancelar</Button>
             </form>
             <form action={action}>
               {children}
-              <Button type="submit" variant="danger">{confirmLabel}</Button>
+              <Button type="submit" variant="danger" disabled={pending} aria-busy={pending}>{confirmLabel}</Button>
             </form>
           </div>
         </div>

@@ -2,7 +2,7 @@
 
 Type: task
 Status: resolved
-Assignee: lucas
+Assignee: Operador
 Blocked by: 07, 08, 09, 10, 12, 13
 
 ## Question

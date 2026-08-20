@@ -4,7 +4,7 @@ Label: wayfinder:map
 
 ## Destination
 
-Um `spec.md` de MVP **de-riscado** para a ferramenta de refinamento: posicionamento validado (ou reposicionado), escopo mínimo cortado, arquitetura e stack decididos, estratégia de qualidade de IA e métricas de sucesso definidas — pronto para virar plano de implementação. Primeiro cliente: a própria squad do Lucas (dogfood, Azure DevOps).
+Um `spec.md` de MVP **de-riscado** para a ferramenta de refinamento: posicionamento validado (ou reposicionado), escopo mínimo cortado, arquitetura e stack decididos, estratégia de qualidade de IA e métricas de sucesso definidas — pronto para virar plano de implementação. Primeiro cliente: a squad piloto (dogfood, Azure DevOps).
 
 ## Notes
 
@@ -30,7 +30,7 @@ Um `spec.md` de MVP **de-riscado** para a ferramenta de refinamento: posicioname
 - [Métricas: medir retrabalho objetivamente](issues/09-metricas-de-retrabalho.md) — fato da squad: só rolagem de sprint é confiável no ADO. Trio anti-vaidade: taxa de rolagem (resultado, baseline retroativa ~6 sprints via WIQL), cobertura de refinamento (adoção, monitora falsificação) e dúvidas abertas no despejo (qualidade). Script por sprint, revisão na retro; veredito vem do ADO cru, não da ferramenta.
 - [Protótipo da UI de sessão](issues/12-prototipo-ui-de-sessao.md) — 3 variantes descartáveis ([HTML](prototype/ui-de-sessao.PROTOTYPE.html)); vence **A (Palco)**: pergunta+recomendação em tipografia editorial gigante, árvore no trilho — roubando da B o dossiê como aba do operador (preview editável do despejo) e da C a barra de progresso/pendências no topo. UI com dois modos: Palco (sala) e Dossiê (operador).
 - [Plano de adoção na squad](issues/13-plano-de-adocao.md) — demo do piloto manual ao PO antes de qualquer pitch; piloto de 2 US dentro da cerimônia atual; baseline apresentada na largada como problema do processo (agregada, auditável, veredito na retro); kill criteria pré-registrados com checkpoint na retro da 6ª sprint; rampa puxada pela demanda (3 retros sem expansão = desinteresse).
-- [Arquitetura e stack](issues/10-arquitetura-e-stack.md) — fato novo: assinatura do Lucas migra para Codex + GLM 5.2 → runtime = **codex app-server** via módulo `agent-runtime` (JSON-RPC fino, HITL nativo; GLM fora do MVP, costura pronta). Next.js processo único + SSE; `ado-client` REST tipado como única porta de escrita (LLM redige, código grava); SQLite/Drizzle para estado de cerimônia. ADRs 0001–0003 em `docs/adr/`.
+- [Arquitetura e stack](issues/10-arquitetura-e-stack.md) — fato novo: assinatura do Operador migra para Codex + GLM 5.2 → runtime = **codex app-server** via módulo `agent-runtime` (JSON-RPC fino, HITL nativo; GLM fora do MVP, costura pronta). Next.js processo único + SSE; `ado-client` REST tipado como única porta de escrita (LLM redige, código grava); SQLite/Drizzle para estado de cerimônia. ADRs 0001–0003 em `docs/adr/`.
 - [Montar spec.md e roadmap](issues/11-montar-spec-e-roadmap.md) — spec entregue em [`spec.md`](spec.md): formato to-spec estendido (26 user stories, princípios de qualidade testáveis, 6 unknowns explícitos com dono) + roadmap triando os 20 itens do backlog em fases com critério observável de entrada (7 já cobertos pelo MVP; Fase 1 cerimônia; Fase 2 escala; Fase 3 orquestração; Mercado só com destino redesenhado). **Fecha o mapa — o destino foi alcançado; o caminho agora é implementação.**
 
 ## Not yet specified

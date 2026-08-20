@@ -29,7 +29,7 @@ Linguagem ubíqua do domínio de refinamento. Os identificadores internos
 
 **US madura** — estado que uma US atinge quando a Agenda do refinamento não tem mais itens abertos: nuances mapeadas, resoluções registradas, sem dúvidas silenciosamente assumidas.
 
-**Operador** — a pessoa que dispara a Investigação e conduz o Refinamento coletivo. No MVP há um único operador (o Lucas); a squad e o PO participam das resoluções, mas não operam a ferramenta.
+**Operador** — a pessoa que dispara a Investigação e conduz o Refinamento coletivo. No MVP há um único operador; a squad e o PO participam das resoluções, mas não operam a ferramenta.
 
 **UI de sessão** — a única superfície própria do produto: uma tela web que a sala inteira acompanha durante o Refinamento coletivo (pergunta atual, recomendação do agente, decisão capturada, árvore de decisões). Ao final da cerimônia, despeja os artefatos no Azure DevOps.
 

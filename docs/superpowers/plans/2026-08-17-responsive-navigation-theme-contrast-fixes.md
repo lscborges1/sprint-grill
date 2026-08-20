@@ -433,7 +433,7 @@ Use `apply_patch` to create `.context/review-build-config.json` with this exact 
   "repos": {
     "primary": {
       "name": "sprint-griller",
-      "path": "/Users/lucasborges/conductor/workspaces/sprint-griller/belgrade"
+      "path": "/path/to/sprint-griller"
     },
     "related": []
   }
@@ -443,7 +443,7 @@ Use `apply_patch` to create `.context/review-build-config.json` with this exact 
 - [ ] **Step 4: Run the production build and diff check**
 
 ```bash
-SPRINT_GRILLER_CONFIG=/Users/lucasborges/conductor/workspaces/sprint-griller/belgrade/.context/review-build-config.json \
+SPRINT_GRILLER_CONFIG=/path/to/sprint-griller/.context/review-build-config.json \
 AZURE_DEVOPS_PAT=review-placeholder \
 rtk pnpm build
 rtk git diff --check origin/master...HEAD

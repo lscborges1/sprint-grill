@@ -1,7 +1,7 @@
 # Anatomia das skills `grill-with-docs`, `to-spec` e `to-tickets` (mattpocock-skills v1.2.1)
 
 > Fonte primária: código do plugin em
-> `/Users/lucasborges/.claude/plugins/cache/claude-plugins-official/mattpocock-skills/1.2.1/`
+> `/path/to/mattpocock-skills/1.2.1/`
 > Todos os caminhos abaixo são relativos a essa raiz, salvo indicação em contrário.
 > Pipeline oficial (documentado em `docs/engineering/grill-with-docs.md`):
 > `grill-with-docs → to-spec → to-tickets → implement → code-review`.

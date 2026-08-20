@@ -14,7 +14,7 @@ Causa-raiz: o custo humano da investigação cross-repo (horas de um sênior, "p
 
 ## Solution
 
-Uma **cunha fina**, não uma plataforma ([Posicionamento](issues/06-posicionamento-plataforma-vs-cunha.md)) — o instrumento do **Operador** (único no MVP: o Lucas), com dois momentos:
+Uma **cunha fina**, não uma plataforma ([Posicionamento](issues/06-posicionamento-plataforma-vs-cunha.md)) — o instrumento do **Operador** (único no MVP), com dois momentos:
 
 1. **Antes da cerimônia (AFK):** o Operador dispara a **Investigação** — um agente lê a US no Azure DevOps + os repos locais da squad, mapeia furos e impacto cross-repo com citação obrigatória de evidência, e publica o resultado como comment na própria US.
 2. **Na cerimônia (ao vivo):** a **UI de sessão** — uma única tela web, premium e legível numa sala — conduz o **grilling coletivo**: pergunta atual com recomendação do agente, decisão capturada com confirmação humana, árvore de decisões sempre visível. Ao final, o **Despejo** grava tudo no Azure DevOps: **Spec da US**, **tasks agent-ready** filhas, estimativa da squad e **Registros de decisão**.

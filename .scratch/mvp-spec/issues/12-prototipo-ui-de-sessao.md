@@ -8,7 +8,7 @@ Blocked by: 07
 
 Como é a tela da cerimônia? Prototipar (via /prototype, descartável) a UI mínima de sessão do grilling coletivo: pergunta atual + recomendação do agente em tipografia legível numa sala, captura da decisão, árvore de decisões sempre visível, e o momento de "despejo" para o Azure DevOps. Aplicar a linguagem visual de referência (Witek: tipografia, espaçamento, minimalismo, animações discretas — sem copiar layout).
 
-Reagir ao protótipo com o Lucas decide: layout da sessão, o que é visível para a sala vs só para o operador, e como o fim da cerimônia se apresenta. O protótipo é insumo da spec, não código de produção.
+Reagir ao protótipo com o Operador decide: layout da sessão, o que é visível para a sala vs só para o operador, e como o fim da cerimônia se apresenta. O protótipo é insumo da spec, não código de produção.
 
 ## Answer
 
@@ -18,7 +18,7 @@ Protótipo entregue como HTML autocontido e descartável (o repo ainda não tem 
 - **B — Dossiê** (clara, documento-first): à esquerda a spec da US se formando ao vivo (Investigação, "Não verificado", decisões com quem/quando, pendências); à direita painel sticky "Em discussão" com botão de despejo e contagem de pendências.
 - **C — Trilha** (escura, fluxo-first): feed cronológico de eventos da cerimônia; pergunta atual ancorada embaixo estilo composer; barra de progresso compacta no topo com botão de despejo.
 
-**Veredito do Lucas**: acatou a leitura recomendada — **A (Palco) como base** da UI de sessão, roubando:
+**Veredito do Operador**: acatou a leitura recomendada — **A (Palco) como base** da UI de sessão, roubando:
 
 - da **B**: o **dossiê como segunda tela/aba** — vira a superfície do preview editável do despejo (a spec da US se formando é exatamente o que se revisa antes de despejar);
 - da **C**: a **barra de progresso compacta no topo** (segmentos por decisão + acesso ao despejo com contagem de pendências).

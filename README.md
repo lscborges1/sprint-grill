@@ -13,6 +13,8 @@ User Stories costumam chegar cruas ao refinamento, e dependências importantes a
 
 ![Fluxo do Refina em quatro etapas conectadas: Investigar, Refinar, Revisar e Publicar](docs/assets/readme/workflow.svg)
 
+*Da investigação da User Story à publicação dos artefatos aprovados.*
+
 ## O produto em três momentos
 
 ### Picker

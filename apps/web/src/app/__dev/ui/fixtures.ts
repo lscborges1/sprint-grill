@@ -24,20 +24,42 @@ const DECISION = {
   question: "Qual formato será exportado?",
   recommendation: "CSV em UTF-8.",
   answer: "CSV em UTF-8.",
-  decidedAt: 1,
+  decidedAt: 1768478400000,
 } as const;
 
 const SPEC_MARKDOWN = "# Spec da US #117 — Exportar relatório\n";
 const TICKETS_MARKDOWN = "## Implementar exportação\n";
 
-export const PICKER_STORIES = [{
-  ...STORY,
-  type: "User Story",
-  state: "Active",
-  assignedTo: "Ana",
-  refinement: "investigada",
-  action: { kind: "open", label: "Revisar relatório" },
-}] as const satisfies readonly PickerStory[];
+export const PICKER_STORIES = [
+  {
+    ...STORY,
+    type: "User Story",
+    state: "Active",
+    assignedTo: undefined,
+    refinement: "sem-investigacao",
+    action: { kind: "start", label: "Investigar" },
+  },
+  {
+    id: 118,
+    title: "Revisar critérios de aceite",
+    url: "https://example.com/118",
+    type: "User Story",
+    state: "Active",
+    assignedTo: undefined,
+    refinement: "investigada",
+    action: { kind: "open", label: "Revisar relatório" },
+  },
+  {
+    id: 119,
+    title: "Publicar resumo da sprint",
+    url: "https://example.com/119",
+    type: "User Story",
+    state: "Active",
+    assignedTo: undefined,
+    refinement: "refinada",
+    action: { kind: "open", label: "Revisar relatório" },
+  },
+] as const satisfies readonly PickerStory[];
 
 export const INVESTIGATION_MODEL = {
   storyId: STORY.id,
@@ -75,17 +97,34 @@ export const INVESTIGATION_MODEL = {
 export const PALCO_STATE = {
   sessionId: "fixture-session",
   story: STORY,
-  refinement: { phase: "publicado", revision: 6 },
+  refinement: { phase: "refinando", revision: 1 },
   completionProposal: null,
   agenda: [],
-  decisionCount: 1,
-  decisions: [DECISION],
+  decisionCount: 0,
+  decisions: [],
   pendingQuestions: [],
-  lastDecision: DECISION,
+  lastDecision: null,
   consultation: null,
   pending: [],
-  live: false,
-  current: { phase: "encerrada" },
+  live: true,
+  current: {
+    phase: "perguntando",
+    question: {
+      questionSeq: 1,
+      id: "question-1",
+      agendaItemId: "agenda-1",
+      source: "agent",
+      header: "Publicação",
+      question: "Como o resumo deve ser publicado?",
+      recommendation: "Publicar um resumo objetivo com os acordos da sprint.",
+      evidence: ["Acordos registrados", "Critérios de aceite revisados"],
+      options: [
+        { label: "No resumo da sprint", description: "Concentra os acordos em um único registro." },
+        { label: "Em tickets separados", description: "Permite acompanhar cada acordo individualmente." },
+      ],
+      allowFreeText: true,
+    },
+  },
 } as const satisfies PalcoState;
 
 export const DOSSIE_STATE = {

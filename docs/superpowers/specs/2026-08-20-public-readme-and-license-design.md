@@ -57,9 +57,11 @@ Os arquivos ficarão em `docs/assets/readme/`:
 - `dossie.png`: revisão da Spec, dos Tickets e dos gates de publicação.
 
 Os screenshots serão capturados da interface real usando somente fixtures
-fictícias. Nenhum asset mostrará organização, projeto, repositório, User Story,
-nome de pessoa, domínio ou URL reais. As imagens serão recortadas em proporções
-legíveis no GitHub e revisadas visualmente antes de serem versionadas.
+fictícias da rota de desenvolvimento `/dev-ui?view=picker|palco|dossie`, com
+viewport e tema fixos para que a captura seja reproduzível. Nenhum asset mostrará
+organização, projeto, repositório, User Story, nome de pessoa, domínio ou URL
+reais. As imagens serão recortadas em proporções legíveis no GitHub e revisadas
+visualmente antes de serem versionadas.
 
 ## Higienização para publicação
 
@@ -95,8 +97,12 @@ repositório.
 - validar o SVG e abrir cada PNG para revisão visual;
 - verificar que o Markdown mantém hierarquia e links válidos;
 - repetir a auditoria de identificadores em arquivos rastreados;
+- inspecionar metadados dos PNGs para impedir que caminhos, software local ou
+  outros dados não visíveis sejam publicados;
 - executar `pnpm check` para garantir que a higienização não alterou contratos
   ou fixtures de forma incompatível;
+- conferir `git status` para incluir todos os arquivos novos esperados e nenhum
+  artefato de trabalho;
 - revisar `git diff origin/master...` antes da entrega.
 
 ## Fora de escopo

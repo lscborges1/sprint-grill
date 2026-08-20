@@ -1,6 +1,6 @@
 # README público, imagens e licença — Design
 
-**Data:** 2026-08-20  
+**Data:** 2026-08-20
 **Status:** aprovado para planejamento
 
 ## Objetivo

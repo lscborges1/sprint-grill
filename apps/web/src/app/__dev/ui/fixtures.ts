@@ -30,6 +30,30 @@ const DECISION = {
 const SPEC_MARKDOWN = "# Spec da US #117 — Exportar relatório\n";
 const TICKETS_MARKDOWN = "## Implementar exportação\n";
 
+const ACTIVE_QUESTION = {
+  questionSeq: 1,
+  id: "question-1",
+  agendaItemId: "agenda-1",
+  source: "agent",
+  header: "Publicação",
+  question: "Como o resumo deve ser publicado?",
+  recommendation: "Publicar um resumo objetivo com os acordos da sprint.",
+  evidence: ["Acordos registrados", "Critérios de aceite revisados"],
+  options: [
+    { label: "No resumo da sprint", description: "Concentra os acordos em um único registro." },
+    { label: "Em tickets separados", description: "Permite acompanhar cada acordo individualmente." },
+  ],
+  allowFreeText: true,
+} as const satisfies PalcoState["pendingQuestions"][number];
+
+const ACTIVE_AGENDA_ITEM = {
+  id: ACTIVE_QUESTION.agendaItemId,
+  question: ACTIVE_QUESTION.question,
+  createdAt: 1,
+  updatedAt: 1,
+  status: "aguardando-sala",
+} as const satisfies PalcoState["agenda"][number];
+
 export const PICKER_STORIES = [
   {
     ...STORY,
@@ -99,31 +123,17 @@ export const PALCO_STATE = {
   story: STORY,
   refinement: { phase: "refinando", revision: 1 },
   completionProposal: null,
-  agenda: [],
+  agenda: [ACTIVE_AGENDA_ITEM],
   decisionCount: 0,
   decisions: [],
-  pendingQuestions: [],
+  pendingQuestions: [ACTIVE_QUESTION],
   lastDecision: null,
   consultation: null,
   pending: [],
   live: true,
   current: {
     phase: "perguntando",
-    question: {
-      questionSeq: 1,
-      id: "question-1",
-      agendaItemId: "agenda-1",
-      source: "agent",
-      header: "Publicação",
-      question: "Como o resumo deve ser publicado?",
-      recommendation: "Publicar um resumo objetivo com os acordos da sprint.",
-      evidence: ["Acordos registrados", "Critérios de aceite revisados"],
-      options: [
-        { label: "No resumo da sprint", description: "Concentra os acordos em um único registro." },
-        { label: "Em tickets separados", description: "Permite acompanhar cada acordo individualmente." },
-      ],
-      allowFreeText: true,
-    },
+    question: ACTIVE_QUESTION,
   },
 } as const satisfies PalcoState;
 

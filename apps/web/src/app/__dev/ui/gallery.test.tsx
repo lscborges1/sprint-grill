@@ -36,6 +36,8 @@ it("should render an active Palco decision for the public gallery", () => {
   const html = renderToStaticMarkup(<UiGalleryView view="palco" action={inertAction} />);
 
   expect(html).toContain("Como o resumo deve ser publicado?");
+  expect((html.match(/Como o resumo deve ser publicado\?/g) ?? []).length).toBe(3);
+  expect(html).toContain("1 pergunta ativa");
   expect(html).toContain("Recomendação do agente:");
   expect(html).toContain("Publicar um resumo objetivo com os acordos da sprint.");
   expect(html).toContain("Registrar decisão");

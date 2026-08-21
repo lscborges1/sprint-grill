@@ -26,7 +26,6 @@ export function UiGalleryView({ view, action }: UiGalleryViewProps): ReactElemen
       return (
         <OperationalFrame>
           <Picker
-            iterationName="Sprint fixture"
             stories={PICKER_STORIES}
             project="Projeto Exemplo"
             repos={{ primary: { name: "core-api", path: "/fixture/core-api" }, related: [] }}

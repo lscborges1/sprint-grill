@@ -1,6 +1,6 @@
 "use client";
 
-import type { IterationStory, RefinementStatus } from "@sprint-griller/ado-client";
+import type { BacklogStory, RefinementStatus } from "@sprint-griller/ado-client";
 import type { RepoConfig } from "@sprint-griller/core";
 import Link from "next/link";
 import { useState, type ReactElement } from "react";
@@ -9,7 +9,7 @@ import { Button, EmptyState, PageHeader, StatusBadge } from "./ui";
 
 export type PickerFilter = "all" | RefinementStatus;
 
-export type PickerStory = IterationStory & {
+export type PickerStory = BacklogStory & {
   readonly action: PickerAction;
 };
 
@@ -45,13 +45,11 @@ export function filterPickerStories(
 }
 
 export function Picker({
-  iterationName,
   stories,
   project,
   repos,
   startAction,
 }: {
-  readonly iterationName: string;
   readonly stories: readonly PickerStory[];
   readonly project: string;
   readonly repos: { readonly primary: RepoConfig; readonly related: readonly RepoConfig[] };
@@ -70,19 +68,19 @@ export function Picker({
   return (
     <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-8 px-4 py-8 sm:px-6 lg:px-10 lg:py-12">
       <PageHeader
-        eyebrow={`Picker · ${iterationName}`}
+        eyebrow="Picker · Backlog"
         title="Refina"
-        description={`US da sprint atual de ${project}. Busque por ID ou título; os filtros valem somente para esta tela.`}
+        description={`US do backlog de ${project}, do topo da prioridade para baixo. Busque por ID ou título; os filtros valem somente para esta tela.`}
       />
 
       <section aria-labelledby="picker-controls" className="flex flex-col gap-4">
         <h2 id="picker-controls" className="sr-only">Filtros do Picker</h2>
         <div className="flex flex-col gap-3 md:flex-row md:items-end">
           <label htmlFor="picker-search" className="flex min-w-0 flex-1 flex-col gap-1.5 text-sm font-medium">
-            Buscar na sprint atual
+            Buscar no backlog
             <input
               id="picker-search"
-              aria-label="Buscar na sprint atual"
+              aria-label="Buscar no backlog"
               type="search"
               value={query}
               onChange={(event) => setQuery(event.currentTarget.value)}
@@ -111,8 +109,8 @@ export function Picker({
       </section>
 
       {visibleStories.length === 0 ? (
-        <EmptyState heading={hasFilters ? "Nenhuma US corresponde aos filtros" : "A sprint não tem US"}>
-          {hasFilters ? "Limpe a busca ou escolha outro status de refinamento." : "Quando uma US entrar na iteration atual, ela aparecerá aqui."}
+        <EmptyState heading={hasFilters ? "Nenhuma US corresponde aos filtros" : "O backlog não tem US"}>
+          {hasFilters ? "Limpe a busca ou escolha outro status de refinamento." : "Quando o PO criar uma US no backlog do Azure DevOps, ela aparecerá aqui."}
         </EmptyState>
       ) : (
         <>
@@ -147,7 +145,7 @@ function StoryTable({ stories, startAction }: { readonly stories: readonly Picke
   return (
     <div className="overflow-hidden rounded-[var(--radius-md)] border border-line bg-surface">
       <table className="w-full border-collapse text-left text-sm">
-        <caption className="sr-only">User Stories da sprint atual</caption>
+        <caption className="sr-only">User Stories do backlog</caption>
         <thead className="border-b border-line text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <th scope="col" className="px-4 py-3 font-medium">US / tipo</th>

@@ -6,8 +6,8 @@ import type { AdoClientOptions, AdoRest } from "../rest/ado-rest";
 import { escapeWiql, wiqlIdsSchema } from "../rest/wiql";
 import { fetchBacklogItemTypes } from "../work-items/work-item-types";
 
-/** Uma US da iteration como o picker precisa dela: identidade + onde ela está. */
-export interface IterationStory {
+/** Uma US do backlog como o picker precisa dela: identidade + onde ela está. */
+export interface BacklogStory {
   readonly id: number;
   readonly title: string;
   readonly type: string;
@@ -18,20 +18,21 @@ export interface IterationStory {
   readonly refinement: RefinementStatus;
 }
 
-export interface CurrentIteration {
-  readonly name: string;
-  readonly path: string;
-  readonly stories: readonly IterationStory[];
-}
+/**
+ * O backlog inteiro não cabe (nem deveria caber) numa tela de escolha: o topo
+ * é onde o Operador escolhe o que refinar para a próxima sprint.
+ */
+const BACKLOG_LIMIT = 100;
 
-const teamIterationsSchema = z.object({
-  value: z.array(
-    z.object({
-      name: z.string(),
-      path: z.string(),
-    }),
-  ),
-});
+/**
+ * Campos de ordem de backlog por processo: Scrum/CMMI gravam
+ * `BacklogPriority`, Agile gravava `StackRank`. Um existe, o outro não —
+ * ordenar por um campo inexistente faz a WIQL inteira falhar.
+ */
+const PRIORITY_FIELD_CANDIDATES = [
+  "Microsoft.VSTS.Common.BacklogPriority",
+  "Microsoft.VSTS.Common.StackRank",
+] as const;
 
 const workItemsBatchSchema = z.object({
   value: z.array(
@@ -53,52 +54,42 @@ const commentsSchema = z.object({
   comments: z.array(z.object({ text: z.string() })).default([]),
 });
 
+const typeFieldsSchema = z.object({
+  value: z.array(z.object({ referenceName: z.string() })),
+});
+
 /**
- * As US da iteration atual do time padrão do projeto, cada uma com o status de
- * refinamento inferido dos artefatos que existem (ou não) no próprio ADO.
- * Devolve `undefined` quando o time não tem iteration corrente — ausência de
- * sprint não é falha.
+ * As US do backlog do produto — qualquer iteration, sem as `Removed` — cada uma
+ * com o status de refinamento inferido dos artefatos que existem (ou não) no
+ * próprio ADO. Backlog sempre existe: vazio é lista vazia, não caso especial.
  */
-export async function fetchCurrentIteration(
+export async function fetchBacklog(
   options: AdoClientOptions,
-): Promise<CurrentIteration | undefined> {
+): Promise<readonly BacklogStory[]> {
   const rest = createAdoRest(options);
 
-  const iterations = await rest.request({
-    operation: "a iteration atual",
-    path: "_apis/work/teamsettings/iterations",
-    query: { $timeframe: "current" },
-    schema: teamIterationsSchema,
-  });
+  const types = await fetchBacklogItemTypes(rest);
+  if (types.length === 0) return [];
 
-  const iteration = iterations.value[0];
-  if (!iteration) {
-    rest.logger.info("nenhuma iteration corrente no Azure DevOps");
-    return undefined;
-  }
+  const stories = await fetchStories(rest, types);
 
-  const stories = await fetchStories(rest, iteration.path);
+  rest.logger.info({ stories: stories.length }, "backlog lido");
 
-  rest.logger.info(
-    { iteration: iteration.name, stories: stories.length },
-    "iteration atual lida",
-  );
-
-  return { name: iteration.name, path: iteration.path, stories };
+  return stories;
 }
 
 async function fetchStories(
   rest: AdoRest,
-  iterationPath: string,
-): Promise<readonly IterationStory[]> {
-  const types = await fetchBacklogItemTypes(rest);
-  if (types.length === 0) return [];
+  types: readonly string[],
+): Promise<readonly BacklogStory[]> {
+  const priorityField = await resolvePriorityField(rest, types);
 
   const { workItems } = await rest.request({
-    operation: "as US da iteration",
+    operation: "as US do backlog",
     path: "_apis/wit/wiql",
+    query: { $top: String(BACKLOG_LIMIT) },
     schema: wiqlIdsSchema,
-    body: { query: backlogItemsQuery(iterationPath, types) },
+    body: { query: backlogItemsQuery(types, priorityField) },
   });
 
   const ids = workItems.map(({ id }) => id);
@@ -145,9 +136,31 @@ async function fetchStories(
             description: fields["System.Description"],
             comments,
           }),
-        } satisfies IterationStory;
+        } satisfies BacklogStory;
       }),
   );
+}
+
+/**
+ * O campo de ordem de backlog do processo, lido dos campos do primeiro tipo de
+ * item de backlog: os tipos da RequirementCategory compartilham os campos de
+ * prioridade. Sem nenhum candidato, ordena por `[System.Id]` e segue.
+ */
+async function resolvePriorityField(
+  rest: AdoRest,
+  types: readonly string[],
+): Promise<string | undefined> {
+  const [firstType] = types;
+  if (firstType === undefined) return undefined;
+
+  const { value } = await rest.request({
+    operation: "os campos do tipo de item de backlog",
+    path: `_apis/wit/workitemtypes/${encodeURIComponent(firstType)}/fields`,
+    schema: typeFieldsSchema,
+  });
+
+  const declared = new Set(value.map(({ referenceName }) => referenceName));
+  return PRIORITY_FIELD_CANDIDATES.find((field) => declared.has(field));
 }
 
 /**
@@ -172,20 +185,26 @@ async function fetchComments(
 }
 
 /**
- * Só itens de backlog: tasks e test cases são o ruído da iteration, o picker
- * lista o que se refina. `UNDER` porque sprints podem ter iterations filhas.
- * Aspas simples são escapadas dobrando, como manda a WIQL.
+ * Todo o backlog do produto, não só a sprint corrente: o refinamento acontece
+ * antes do planejamento, com a US ainda fora de sprint. `Removed` é a única
+ * exclusão — o status de refinamento, não o estado do board, diz ao Operador
+ * o que falta refinar. Só itens de backlog: tasks e test cases são o ruído que
+ * o picker não lista. Aspas simples são escapadas dobrando, como manda a WIQL.
  */
 function backlogItemsQuery(
-  iterationPath: string,
   types: readonly string[],
+  priorityField: string | undefined,
 ): string {
   const typeList = types.map((type) => `'${escapeWiql(type)}'`).join(", ");
+  const orderBy =
+    priorityField === undefined
+      ? "ORDER BY [System.Id]"
+      : `ORDER BY [${priorityField}] ASC, [System.Id] ASC`;
 
   return (
     "SELECT [System.Id] FROM WorkItems " +
-    `WHERE [System.IterationPath] UNDER '${escapeWiql(iterationPath)}' ` +
-    `AND [System.WorkItemType] IN (${typeList}) ` +
-    "ORDER BY [System.Id]"
+    `WHERE [System.WorkItemType] IN (${typeList}) ` +
+    "AND [System.State] <> 'Removed' " +
+    orderBy
   );
 }

@@ -42,7 +42,7 @@ const stories: readonly PickerStory[] = [
 ];
 
 describe("Picker", () => {
-  it("should filter the current sprint by title and refinement status", () => {
+  it("should filter the backlog by title and refinement status", () => {
     expect(filterPickerStories(stories, "parcelas", "all")).toHaveLength(1);
     expect(filterPickerStories(stories, "", "sem-investigacao")).toHaveLength(1);
     expect(filterPickerStories(stories, "ausente", "all")).toHaveLength(0);
@@ -51,7 +51,6 @@ describe("Picker", () => {
   it("should render a responsive story table with the next action", () => {
     const html = renderToStaticMarkup(
       <Picker
-        iterationName="Sprint 42"
         stories={stories}
         project="Plataforma"
         repos={{ primary: { name: "api", path: "/tmp/api" }, related: [] }}
@@ -59,18 +58,17 @@ describe("Picker", () => {
       />,
     );
 
-    expect(html).toContain("Sprint 42");
+    expect(html).toContain("Backlog");
     expect(html).toContain("Exportar relatório");
     expect(html).toContain("Acompanhar execução");
     expect(html).toContain("Revisar reprovação");
-    expect(html).toContain('aria-label="Buscar na sprint atual"');
+    expect(html).toContain('aria-label="Buscar no backlog"');
     expect(html).toContain("Config da squad");
   });
 
   it("should distinguish action targets by User Story", () => {
     const html = renderToStaticMarkup(
       <Picker
-        iterationName="Sprint 42"
         stories={stories}
         project="Plataforma"
         repos={{ primary: { name: "api", path: "/tmp/api" }, related: [] }}
@@ -91,11 +89,11 @@ describe("Picker", () => {
     try {
       await act(async () => {
         root.render(
-          <Picker iterationName="Sprint 42" stories={stories} project="Plataforma" repos={{ primary: { name: "api", path: "/tmp/api" }, related: [] }} startAction={() => undefined} />,
+          <Picker stories={stories} project="Plataforma" repos={{ primary: { name: "api", path: "/tmp/api" }, related: [] }} startAction={() => undefined} />,
         );
       });
 
-      const search = container.querySelector('[aria-label="Buscar na sprint atual"]');
+      const search = container.querySelector('[aria-label="Buscar no backlog"]');
       if (!(search instanceof HTMLInputElement)) throw new Error("expected the Picker search input");
       const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       if (setValue === undefined) throw new Error("expected the native input value setter");

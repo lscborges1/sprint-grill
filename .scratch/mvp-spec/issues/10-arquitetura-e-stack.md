@@ -14,7 +14,7 @@ Saída: decisões de arquitetura registradas (ADRs onde a decisão for difícil 
 
 ## Answer
 
-Resolvido em grilling com o Lucas (4 decisões confirmadas). **Fato novo da sessão:** o Lucas migra a assinatura pessoal para Codex com GLM 5.2 como fallback na próxima sprint — isso derrubou a recomendação preliminar (Claude Agent SDK) por custo; research adicional em [research/codex-glm-runtime.md](../research/codex-glm-runtime.md).
+Resolvido em grilling com o Operador (4 decisões confirmadas). **Fato novo da sessão:** o Operador migra a assinatura pessoal para Codex com GLM 5.2 como fallback na próxima sprint — isso derrubou a recomendação preliminar (Claude Agent SDK) por custo; research adicional em [research/codex-glm-runtime.md](../research/codex-glm-runtime.md).
 
 **Arquitetura consolidada:**
 

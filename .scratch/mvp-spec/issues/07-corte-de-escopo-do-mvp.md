@@ -12,7 +12,7 @@ Saída: lista fechada de capacidades do MVP + lista explícita do que foi cortad
 
 ## Answer
 
-Resolvido em grilling com o Lucas (5 perguntas confirmadas). **Revelação da sessão:** o consumidor final das tasks é uma futura **orquestração de agentes** que implementa pegando tasks sem bloqueio — o despejo produz artefatos agent-ready, mas a orquestração em si ficou fora do mapa (Out of scope).
+Resolvido em grilling com o Operador (5 perguntas confirmadas). **Revelação da sessão:** o consumidor final das tasks é uma futura **orquestração de agentes** que implementa pegando tasks sem bloqueio — o despejo produz artefatos agent-ready, mas a orquestração em si ficou fora do mapa (Out of scope).
 
 **O MVP faz exatamente isto (lista fechada, 6 capacidades):**
 

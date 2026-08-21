@@ -12,9 +12,9 @@ Desafiar a premissa "aplicação web com dashboard e sprints". Alternativas a pe
 
 ## Answer
 
-Resolvido em grilling com o Lucas (3 sub-decisões + síntese confirmada).
+Resolvido em grilling com o Operador (3 sub-decisões + síntese confirmada).
 
-**Forma: cunha fina, não plataforma.** A ferramenta é o instrumento do *operador do refinamento* (o Lucas — operador único no MVP; disparo automático via webhook é evolução; "qualquer dev opera" talvez nunca), com dois momentos:
+**Forma: cunha fina, não plataforma.** A ferramenta é o instrumento do *operador do refinamento* (o Operador — operador único no MVP; disparo automático via webhook é evolução; "qualquer dev opera" talvez nunca), com dois momentos:
 
 1. **Antes da cerimônia (AFK):** o operador dispara a **Investigação** — agente lê a US no Azure DevOps + os repos da squad, mapeia furos e impacto cross-repo, publica o resultado como comment na própria US.
 2. **Na cerimônia (ao vivo):** a **UI mínima de sessão** — uma única tela web, premium e legível numa sala — conduz o grilling coletivo sobre a Investigação: pergunta atual, recomendação do agente, decisão capturada, árvore de decisões sempre visível. Ao final, despeja tudo no Azure DevOps: Registros de decisão como comments, tasks como work items filhos, estimativa nos campos, ata na wiki.

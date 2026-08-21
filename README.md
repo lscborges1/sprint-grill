@@ -1,5 +1,48 @@
 # Refina
 
+[![Licença MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-2ea44f.svg)](LICENSE)
+![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933.svg)
+
+Refina transforma User Stories cruas em decisões explícitas, uma Spec revisável e Tickets prontos para publicação no Azure DevOps.
+
+## Por que existe
+
+User Stories costumam chegar cruas ao refinamento, e dependências importantes aparecem tarde, quando a sala já está tentando decidir. O Refina antecipa a investigação do código, conduz uma decisão por vez e mantém o que foi aprovado rastreável até a publicação.
+
+## Como funciona
+
+![Fluxo do Refina em quatro etapas conectadas: Investigar, Refinar, Revisar e Publicar](docs/assets/readme/workflow.svg)
+
+*Da investigação da User Story à publicação dos artefatos aprovados.*
+
+## O produto em três momentos
+
+### Picker
+
+O Picker reúne as User Stories da sprint e deixa visível o estado de refinamento de cada uma.
+
+![Picker do Refina com três User Stories fictícias nos estados sem investigação, investigada e refinada](docs/assets/readme/picker.png)
+
+*A sprint em uma tela: o que ainda precisa ser investigado e o que já avançou no fluxo.*
+
+### Palco
+
+O Palco conduz o refinamento coletivo com uma pergunta ativa, recomendação, evidências e opções para a sala.
+
+![Palco do Refina com uma pergunta de publicação, recomendação do agente e opções de resposta para a sala](docs/assets/readme/palco.png)
+
+*Uma decisão por vez, com contexto suficiente para a sala responder.*
+
+### Dossiê
+
+O Dossiê concentra os gates, a Agenda, as resoluções e o estado de publicação dos artefatos aprovados.
+
+![Dossiê do Refina com os gates concluídos, Agenda vazia e uma resolução fictícia registrada](docs/assets/readme/dossie.png)
+
+*A prova revisável do que foi decidido antes de publicar Spec e Tickets.*
+
+## Visão técnica
+
 Ferramenta de refinamento da squad: **Investigação** antes da sala e um fluxo persistente de **Refinar → Revisar Spec → Revisar Tickets → Publicar** no Azure DevOps.
 
 Roda na máquina do **Operador**, em processo único. O Azure DevOps é a fonte da verdade ([ADR 0003](docs/adr/0003-azure-devops-como-fonte-da-verdade.md)); glossário do domínio em [CONTEXT.md](CONTEXT.md), spec do MVP em [`.scratch/mvp-spec/spec.md`](.scratch/mvp-spec/spec.md).
@@ -223,3 +266,7 @@ idempotentes pelos marcadores `sprint-griller:*`.
 
 O banco local é descartável. Mudanças incompatíveis sobem `SCHEMA_VERSION`, e
 uma versão antiga é recusada com a orientação de apagar o arquivo.
+
+## Licença
+
+Distribuído sob a [licença MIT](LICENSE).

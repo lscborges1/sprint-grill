@@ -12,7 +12,7 @@ Saída: 2–3 métricas com fonte de dado, forma de coleta e baseline.
 
 ## Answer
 
-Resolvido em grilling com o Lucas. Fato-chave da squad: **só a rolagem de sprint é registrada de forma confiável no ADO hoje** — estimativas não são revisadas e tasks imprevistas nem sempre viram work item. O desenho se apoia nisso:
+Resolvido em grilling com o Operador. Fato-chave da squad: **só a rolagem de sprint é registrada de forma confiável no ADO hoje** — estimativas não são revisadas e tasks imprevistas nem sempre viram work item. O desenho se apoia nisso:
 
 1. **Taxa de rolagem** *(resultado — a métrica que importa)*: % de US que entram numa sprint e não concluem nela. Fonte: iterations do ADO via WIQL, zero disciplina nova. **Baseline retroativa** sobre as últimas ~6 sprints antes do rollout (sem efeito Hawthorne). Meta de sucesso fixada quando a baseline sair (ordem de grandeza: cair para menos da metade em ~3 meses).
 2. **Cobertura de refinamento** *(adoção)*: % das US da sprint que passaram pela cerimônia completa (Investigação + grilling + despejo) antes de entrar. Fonte: os artefatos que a própria ferramenta grava no ADO. Dobra como monitor dos critérios de falsificação (b)/(c) do [problema nº 1](05-o-problema-certo.md).

@@ -12,7 +12,7 @@ Saída: princípios de qualidade que a spec incorpora como requisitos testáveis
 
 ## Answer
 
-Resolvido em grilling com o Lucas (5 perguntas confirmadas). Quatro princípios, todos com teste objetivo:
+Resolvido em grilling com o Operador (5 perguntas confirmadas). Quatro princípios, todos com teste objetivo:
 
 1. **Grounding com citação obrigatória** — toda afirmação de impacto da Investigação ancora em evidência do repo (caminho/símbolo); o não-ancorável vai para a seção **"Não verificado"**, nunca para o corpo como fato. *Teste: checagem mecânica pré-publicação (não-LLM) — caminho citado não existe ⇒ Investigação não publica.*
 2. **HITL estrito com divisão de trabalho** — perguntas exibidas na UI de sessão são só *decisões* (sempre com recomendação do agente + evidência); dúvida factual surgida na cerimônia o agente resolve ao vivo lendo o código (nunca "alguém verifica depois"); nenhuma decisão é registrada sem confirmação humana. *Teste: não existe caminho no código que grave Registro de decisão sem input humano.*

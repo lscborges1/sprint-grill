@@ -6,7 +6,7 @@ import {
   INVESTIGATION_MARKER,
   SPEC_MARKER,
 } from "../refinement/refinement-status";
-import { fetchCurrentIteration } from "./current-iteration";
+import { fetchBacklog } from "./backlog";
 
 const AZURE_DEVOPS = { organization: "acme", project: "Plataforma" };
 const CREDENTIALS = { pat: "pat-de-teste" };
@@ -32,32 +32,20 @@ interface FakeWorkItem {
 }
 
 interface FakeAdoState {
-  readonly iteration?: { readonly name: string; readonly path: string } | null;
   readonly backlogItemTypes?: readonly string[];
+  readonly priorityFields?: readonly string[];
   readonly workItems?: readonly FakeWorkItem[];
 }
 
 /** Azure DevOps de mentira: responde as rotas que o picker consome. */
 function fakeAdo(state: FakeAdoState = {}) {
-  const iteration =
-    state.iteration === undefined
-      ? { name: "Sprint 42", path: "Plataforma\\Sprint 42" }
-      : state.iteration;
   const workItems = state.workItems ?? [];
   const wiqlQueries: string[] = [];
+  const wiqlUrls: string[] = [];
 
   const fetchMock = vi.fn(
     async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = String(input);
-
-      if (url.includes("/_apis/work/teamsettings/iterations?")) {
-        return json({
-          count: iteration ? 1 : 0,
-          value: iteration
-            ? [{ id: "it-1", name: iteration.name, path: iteration.path }]
-            : [],
-        });
-      }
 
       if (url.includes("/_apis/wit/workitemtypecategories/")) {
         return json({
@@ -67,12 +55,21 @@ function fakeAdo(state: FakeAdoState = {}) {
         });
       }
 
+      if (url.includes("/_apis/wit/workitemtypes/") && url.includes("/fields")) {
+        return json({
+          value: (state.priorityFields ?? [
+            "Microsoft.VSTS.Common.BacklogPriority",
+          ]).map((referenceName) => ({ referenceName })),
+        });
+      }
+
       if (url.includes("/_apis/wit/wiql")) {
         wiqlQueries.push(
           String(
             (JSON.parse(String(init?.body)) as { query: unknown }).query,
           ),
         );
+        wiqlUrls.push(url);
         return json({
           workItems: workItems.map(({ id }) => ({ id })),
         });
@@ -114,7 +111,7 @@ function fakeAdo(state: FakeAdoState = {}) {
     },
   );
 
-  return Object.assign(fetchMock, { wiqlQueries });
+  return Object.assign(fetchMock, { wiqlQueries, wiqlUrls });
 }
 
 function json(body: unknown, status = 200): Response {
@@ -124,9 +121,9 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** Aponta o client para o ADO de mentira, com o resto da config já preenchido. */
+/** Aponta o client para o ADO de mentira, com o resto da config já preenchida. */
 function pickerAgainst(state: FakeAdoState = {}) {
-  return fetchCurrentIteration({
+  return fetchBacklog({
     azureDevOps: AZURE_DEVOPS,
     credentials: CREDENTIALS,
     logger: SILENT_LOGGER,
@@ -134,9 +131,9 @@ function pickerAgainst(state: FakeAdoState = {}) {
   });
 }
 
-describe("fetchCurrentIteration", () => {
-  it("should return the current iteration's user stories with a link to the ADO board", async () => {
-    const iteration = await fetchCurrentIteration({
+describe("fetchBacklog", () => {
+  it("should return backlog user stories with a link to the ADO board", async () => {
+    const stories = await fetchBacklog({
       azureDevOps: AZURE_DEVOPS,
       credentials: CREDENTIALS,
       logger: SILENT_LOGGER,
@@ -152,26 +149,22 @@ describe("fetchCurrentIteration", () => {
       }),
     });
 
-    expect(iteration).toMatchObject({
-      name: "Sprint 42",
-      path: "Plataforma\\Sprint 42",
-      stories: [
-        {
-          id: 4321,
-          title: "Exportar relatório em CSV",
-          type: "User Story",
-          state: "New",
-          assignedTo: "Ana Souza",
-          url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4321",
-        },
-      ],
-    });
+    expect(stories).toMatchObject([
+      {
+        id: 4321,
+        title: "Exportar relatório em CSV",
+        type: "User Story",
+        state: "New",
+        assignedTo: "Ana Souza",
+        url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4321",
+      },
+    ]);
   });
 
-  it("should ask only for the backlog item types the project's process declares, not every work item in the sprint", async () => {
+  it("should query the whole backlog — no iteration filter, no Removed, capped at the top 100", async () => {
     const ado = fakeAdo({ backlogItemTypes: ["Product Backlog Item", "Bug"] });
 
-    await fetchCurrentIteration({
+    await fetchBacklog({
       azureDevOps: AZURE_DEVOPS,
       credentials: CREDENTIALS,
       logger: SILENT_LOGGER,
@@ -180,14 +173,49 @@ describe("fetchCurrentIteration", () => {
 
     expect(ado.wiqlQueries[0]).toBe(
       "SELECT [System.Id] FROM WorkItems " +
-        "WHERE [System.IterationPath] UNDER 'Plataforma\\Sprint 42' " +
-        "AND [System.WorkItemType] IN ('Product Backlog Item', 'Bug') " +
-        "ORDER BY [System.Id]",
+        "WHERE [System.WorkItemType] IN ('Product Backlog Item', 'Bug') " +
+        "AND [System.State] <> 'Removed' " +
+        "ORDER BY [Microsoft.VSTS.Common.BacklogPriority] ASC, [System.Id] ASC",
+    );
+    const wiqlUrl = ado.wiqlUrls[0];
+    if (wiqlUrl === undefined) throw new Error("expected a WIQL request");
+    expect(new URL(wiqlUrl).searchParams.get("$top")).toBe("100");
+  });
+
+  it("should order by StackRank when the process is Agile and has no BacklogPriority", async () => {
+    const ado = fakeAdo({
+      priorityFields: ["Microsoft.VSTS.Common.StackRank"],
+    });
+
+    await fetchBacklog({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger: SILENT_LOGGER,
+      fetch: ado,
+    });
+
+    expect(ado.wiqlQueries[0]).toContain(
+      "ORDER BY [Microsoft.VSTS.Common.StackRank] ASC, [System.Id] ASC",
     );
   });
 
+  it("should fall back to id order when the process declares no backlog priority field", async () => {
+    const ado = fakeAdo({ priorityFields: [] });
+
+    await fetchBacklog({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger: SILENT_LOGGER,
+      fetch: ado,
+    });
+
+    expect(ado.wiqlQueries[0]).toContain("ORDER BY [System.Id]");
+    expect(ado.wiqlQueries[0]).not.toContain("BacklogPriority");
+    expect(ado.wiqlQueries[0]).not.toContain("StackRank");
+  });
+
   it("should tell apart the three refinement states from the artifacts on each US", async () => {
-    const iteration = await pickerAgainst({
+    const stories = await pickerAgainst({
       workItems: [
         { id: 1, title: "Crua" },
         {
@@ -203,15 +231,15 @@ describe("fetchCurrentIteration", () => {
       ],
     });
 
-    expect(iteration?.stories.map((story) => story.refinement)).toEqual([
+    expect(stories.map((story) => story.refinement)).toEqual([
       "sem-investigacao",
       "investigada",
       "refinada",
     ]);
   });
 
-  it("should return nothing when the team has no current iteration, since that is not a failure", async () => {
-    await expect(pickerAgainst({ iteration: null })).resolves.toBeUndefined();
+  it("should return an empty backlog as an empty list, not as a special case", async () => {
+    await expect(pickerAgainst({ workItems: [] })).resolves.toEqual([]);
   });
 
   it("should point at the PAT when Azure DevOps refuses the credential", async () => {
@@ -262,7 +290,7 @@ describe("fetchCurrentIteration", () => {
 async function pickerFails(
   respond: () => Promise<Response>,
 ): Promise<AdoError> {
-  const failing = await fetchCurrentIteration({
+  const failing = await fetchBacklog({
     azureDevOps: AZURE_DEVOPS,
     credentials: CREDENTIALS,
     logger: SILENT_LOGGER,

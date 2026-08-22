@@ -106,7 +106,7 @@ O harness mostra o turno streamando, pergunta no terminal quando o agente pede i
 
 ## Status de refinamento no picker
 
-A tela inicial lista as US da iteration atual e mostra em que ponto do fluxo cada uma está — **sem Investigação**, **investigada** ou **refinada**. Não existe banco de status: o `ado-client` procura marcadores HTML que a própria ferramenta embute nos artefatos que grava no Azure DevOps.
+A tela inicial lista as US do backlog do produto — qualquer iteration, sem as `Removed`, do topo da prioridade para baixo — e mostra em que ponto do fluxo cada uma está — **sem Investigação**, **investigada** ou **refinada**. Não existe banco de status: o `ado-client` procura marcadores HTML que a própria ferramenta embute nos artefatos que grava no Azure DevOps.
 
 | Marcador | Artefato que o carrega | Status resultante |
 |---|---|---|

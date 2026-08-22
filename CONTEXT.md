@@ -9,7 +9,7 @@ Linguagem ubíqua do domínio de refinamento. Os identificadores internos
 
 **Investigação** — mapeamento dos furos de uma US e do seu impacto na codebase (inclusive entre repositórios), produzido por um agente *antes* da cerimônia de refinamento. Existe porque esse trabalho não cabe na agenda de nenhum humano da squad.
 
-**Picker** — a tela inicial: as US da iteration atual com o Status de refinamento de cada uma. A única sobra legítima de "dashboard" no produto — existe para o Operador escolher o que investigar, não para acompanhar sprint (isso é papel do Azure DevOps).
+**Picker** — a tela inicial: as US do backlog do produto (de qualquer iteration, ordenadas pela prioridade do backlog) com o Status de refinamento de cada uma. A única sobra legítima de "dashboard" no produto — existe para o Operador escolher o que investigar, não para acompanhar sprint (isso é papel do Azure DevOps).
 
 **Status de refinamento** — onde uma US está no fluxo: *sem Investigação*, *investigada* ou *refinada*. Não é estado da ferramenta: é o nome do artefato mais avançado que ela já gravou no Azure DevOps (a Investigação como comment, a Spec da US no despejo). Some do picker se alguém apagar o artefato — e é assim que tem que ser.
 

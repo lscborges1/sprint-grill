@@ -1,7 +1,7 @@
 import { Writable } from "node:stream";
 import { createLogger } from "@sprint-griller/core";
 import { describe, expect, it, vi } from "vitest";
-import { fetchCurrentIteration } from "../iteration/current-iteration";
+import { fetchBacklog } from "../backlog/backlog";
 import { publishInvestigation } from "./publish-investigation";
 
 /**
@@ -45,14 +45,14 @@ function fakeAdo() {
         return json({ comments: comments.map((text) => ({ text })) });
       }
 
-      if (url.includes("/_apis/work/teamsettings/iterations?")) {
-        return json({
-          value: [{ name: "Sprint 42", path: "Plataforma\\Sprint 42" }],
-        });
-      }
-
       if (url.includes("/_apis/wit/workitemtypecategories/")) {
         return json({ workItemTypes: [{ name: "User Story" }] });
+      }
+
+      if (url.includes("/_apis/wit/workitemtypes/") && url.includes("/fields")) {
+        return json({
+          value: [{ referenceName: "Microsoft.VSTS.Common.BacklogPriority" }],
+        });
       }
 
       if (url.includes("/_apis/wit/wiql")) {
@@ -89,14 +89,14 @@ function json(body: unknown): Response {
 
 describe("publicar a Investigação e voltar ao picker", () => {
   it("should leave the US sem-investigacao while nothing has been published", async () => {
-    const iteration = await fetchCurrentIteration({
+    const stories = await fetchBacklog({
       azureDevOps: AZURE_DEVOPS,
       credentials: CREDENTIALS,
       logger: SILENT_LOGGER,
       fetch: fakeAdo(),
     });
 
-    expect(iteration?.stories[0]?.refinement).toBe("sem-investigacao");
+    expect(stories[0]?.refinement).toBe("sem-investigacao");
   });
 
   it("should show the US as investigada once the Investigação is published", async () => {
@@ -111,8 +111,8 @@ describe("publicar a Investigação e voltar ao picker", () => {
       storyId: STORY_ID,
       markdown: "# Investigação — US #4211\n\nO TTL hoje é fixo.\n",
     });
-    const iteration = await fetchCurrentIteration(options);
+    const stories = await fetchBacklog(options);
 
-    expect(iteration?.stories[0]?.refinement).toBe("investigada");
+    expect(stories[0]?.refinement).toBe("investigada");
   });
 });

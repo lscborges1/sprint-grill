@@ -30,11 +30,8 @@ export type {
   PublishedDecisionRecord,
   StorySpecToPublish,
 } from "./refinement/publish-refinement";
-export { fetchCurrentIteration } from "./iteration/current-iteration";
-export type {
-  CurrentIteration,
-  IterationStory,
-} from "./iteration/current-iteration";
+export { fetchBacklog } from "./backlog/backlog";
+export type { BacklogStory } from "./backlog/backlog";
 export { renderRolloverReport } from "./metrics/rollover-report";
 export type { RolloverReportOptions } from "./metrics/rollover-report";
 export { fetchRolloverBaseline } from "./metrics/rollover";

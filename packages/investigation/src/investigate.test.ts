@@ -106,13 +106,13 @@ const EXPECTED_WIKI_GAPS = [
   },
   {
     question:
-      "O que ficou fora da página de Wiki https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/11?",
-    why: "O conteúdo foi cortado ao atingir o limite de 100.000 caracteres da Investigação.",
+      "Qual contexto da Wiki em https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/12 precisa ser considerado?",
+    why: "O Refina não conseguiu ler essa página: Página não encontrada.",
   },
   {
     question:
-      "Qual contexto da Wiki em https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/12 precisa ser considerado?",
-    why: "O Refina não conseguiu ler essa página: Página não encontrada.",
+      "O que ficou fora da página de Wiki https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/11?",
+    why: "O conteúdo foi cortado ao atingir o limite de 100.000 caracteres da Investigação.",
   },
   {
     question: "Quais referências de Wiki ficaram fora desta Investigação?",
@@ -345,7 +345,7 @@ describe("runInvestigation", () => {
     ]);
   });
 
-  it("should append deterministic Wiki gaps after agent gaps in reference order", async () => {
+  it("should group unavailable gaps before truncated gaps while preserving relative order", async () => {
     const fake = fakeRuntime([reportMessage("src/session.ts"), TURN_COMPLETED]);
 
     const outcome = await runInvestigation({
@@ -373,8 +373,10 @@ describe("runInvestigation", () => {
     const markdown = outcome.status !== "falhou" ? outcome.markdown : "";
     const questions = [AGENT_GAP, ...EXPECTED_WIKI_GAPS].map(({ question }) => question);
 
-    expect(questions.map((question) => markdown.indexOf(question))).toEqual(
-      questions.map((_, index) => markdown.indexOf(questions[index]!)).toSorted((a, b) => a - b),
-    );
+    for (const question of questions) {
+      expect(markdown).toContain(question);
+    }
+    const positions = questions.map((question) => markdown.indexOf(question));
+    expect(positions).toEqual(positions.toSorted((a, b) => a - b));
   });
 });

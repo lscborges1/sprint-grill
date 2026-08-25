@@ -162,7 +162,11 @@ function enrichReportWithWikiGaps(
         question: `Qual contexto da Wiki em ${reference.target.canonicalUrl} precisa ser considerado?`,
         why: `O Refina não conseguiu ler essa página: ${reference.message}`,
       });
-    } else if (reference.truncated) {
+    }
+  }
+
+  for (const reference of wikiContext.references) {
+    if (reference.status === "loaded" && reference.truncated) {
       gaps.push({
         question: `O que ficou fora da página de Wiki ${reference.target.canonicalUrl}?`,
         why: "O conteúdo foi cortado ao atingir o limite de 100.000 caracteres da Investigação.",

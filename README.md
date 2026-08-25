@@ -144,6 +144,12 @@ O que o agente não conseguiu ancorar em código sai em **Não verificado**, e
 suspeita de impacto em repo fora do config sai em **Impacto suspeito fora do
 config** — nenhum dos dois entra no corpo como fato.
 
+Links de Wiki encontrados na descrição da US são lidos automaticamente antes do
+turno. A busca segue somente os links das páginas diretamente vinculadas (até
+profundidade 1) e usa um orçamento fixo de 10 tentativas de página e 100.000
+caracteres de conteúdo por Investigação; páginas indisponíveis ou deixadas fora
+desse orçamento aparecem como furos explícitos no relatório.
+
 O turno roda em sandbox read-only, e não há humano na sala: todo pedido de
 aprovação é recusado (é sempre um pedido para sair do sandbox — leitura dentro
 dele não pergunta). Se o agente fizer uma pergunta, a resposta é que ninguém está
@@ -169,8 +175,8 @@ novo: `HTTP 4xx` garante que nada foi gravado, mas `5xx`, conexão que cai no me
 ou resposta fora do contrato podem ter deixado o comment lá — republicar às cegas
 é o que produz comment duplicado na US.
 
-> O PAT precisa do escopo **Work Items (leitura e escrita)** para publicar a
-> Spec, as Tasks, a estimativa e os Registros de decisão na própria US.
+> O PAT precisa dos escopos **Work Items (leitura e escrita)** para ler e
+> publicar na US e **Wiki (read)** para carregar as páginas vinculadas.
 
 ## Trio anti-vaidade por sprint
 

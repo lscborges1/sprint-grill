@@ -1,5 +1,6 @@
 import { Writable } from "node:stream";
 import { AdoError } from "@sprint-griller/ado-client";
+import type { StoryDetails } from "@sprint-griller/ado-client";
 import { createLogger } from "@sprint-griller/core";
 import type { InvestigationOutcome } from "@sprint-griller/investigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +8,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const fetchStory = vi.hoisted(() => vi.fn());
 const publishToAdo = vi.hoisted(() => vi.fn());
 const createAgentRuntime = vi.hoisted(() => vi.fn());
-const runInvestigation = vi.hoisted(() => vi.fn());
+const runInvestigation = vi.hoisted(() =>
+  vi.fn<typeof import("@sprint-griller/investigation").runInvestigation>(),
+);
 
 vi.mock("@sprint-griller/ado-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@sprint-griller/ado-client")>()),
@@ -38,6 +41,42 @@ vi.stubEnv("AZURE_DEVOPS_PAT", "pat-de-teste");
 const { getInvestigation, publishInvestigation, startInvestigation } =
   await import("./investigations");
 
+const WIKI_CONTEXT = {
+  references: [
+    {
+      status: "loaded",
+      target: {
+        project: "Plataforma",
+        wiki: "Arquitetura",
+        canonicalUrl:
+          "https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/42",
+        page: { kind: "id", id: 42 },
+      },
+      depth: 0,
+      pageId: 42,
+      pagePath: "/Sessões/Expiração",
+      content: "O TTL padrão é 3.600 segundos.",
+      truncated: false,
+    },
+    {
+      status: "unavailable",
+      target: {
+        project: "Plataforma",
+        wiki: "Arquitetura",
+        canonicalUrl:
+          "https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/43",
+        page: { kind: "id", id: 43 },
+      },
+      depth: 1,
+      reason: "auth",
+      message: "PAT sem Wiki (read).",
+    },
+  ],
+  omitted: [],
+  attempts: 2,
+  contentCharacters: 30,
+} as const;
+
 const STORY = {
   id: 1,
   title: "TTL de sessão configurável",
@@ -45,7 +84,8 @@ const STORY = {
   state: "New",
   description: "O TTL hoje é fixo.",
   url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/1",
-};
+  wikiContext: WIKI_CONTEXT,
+} as const satisfies StoryDetails;
 
 const APPROVED_MARKDOWN = "# Investigação\n";
 
@@ -82,6 +122,26 @@ beforeEach(() => {
 });
 
 describe("startInvestigation", () => {
+  it("should pass loaded and unavailable Wiki context unchanged after one story fetch", async () => {
+    const storyId = nextStoryId;
+    const fetchedStory = { ...STORY, id: storyId };
+    fetchStory.mockResolvedValueOnce(fetchedStory);
+
+    startInvestigation(storyId);
+
+    await vi.waitFor(() => expect(runInvestigation).toHaveBeenCalled());
+    const investigationStory = runInvestigation.mock.calls[0]?.[0]?.story;
+    expect({
+      fetchStoryCalls: fetchStory.mock.calls.length,
+      sameStory: investigationStory === fetchedStory,
+      wikiStatuses: investigationStory?.wikiContext.references.map(({ status }) => status),
+    }).toEqual({
+      fetchStoryCalls: 1,
+      sameStory: true,
+      wikiStatuses: ["loaded", "unavailable"],
+    });
+  });
+
   it("should return before the agent turn finishes so the operator can walk away", () => {
     const run = startInvestigation(nextStoryId);
 

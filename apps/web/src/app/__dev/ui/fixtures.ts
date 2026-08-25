@@ -95,6 +95,12 @@ export const INVESTIGATION_MODEL = {
       type: "User Story",
       state: "Active",
       description: "Exportar o relatório em CSV.",
+      wikiContext: {
+        references: [],
+        omitted: [],
+        attempts: 0,
+        contentCharacters: 0,
+      },
     },
     startedAt: 1,
     finishedAt: 2,

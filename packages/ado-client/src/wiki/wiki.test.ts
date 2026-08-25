@@ -95,6 +95,35 @@ describe("fetchWikiContext", () => {
     expect(new URL(String(doFetch.mock.calls[0]?.[0])).searchParams.get("path")).toBe("/A&B");
   });
 
+  it.each([
+    { encodedPath: "%2FRunbook.", pagePath: "/Runbook." },
+    { encodedPath: "%2FRunbook)", pagePath: "/Runbook)" },
+  ])("should preserve terminal punctuation when pagePath ends in $pagePath", async ({
+    encodedPath,
+    pagePath,
+  }) => {
+    const doFetch = vi.fn<typeof globalThis.fetch>(async () =>
+      wikiPage(10, pagePath),
+    );
+
+    const result = await fetchWikiContext(options(doFetch), {
+      storyId: 4211,
+      description:
+        `<a href="https://dev.azure.com/acme/Plataforma/_wiki/wikis/Produto.wiki?pagePath=${encodedPath}">Runbook</a>`,
+    });
+
+    const reference = result.references[0];
+    expect({
+      targetPath:
+        reference?.target.page.kind === "path"
+          ? reference.target.page.path
+          : undefined,
+      requestedPath: new URL(String(doFetch.mock.calls[0]?.[0])).searchParams.get(
+        "path",
+      ),
+    }).toEqual({ targetPath: pagePath, requestedPath: pagePath });
+  });
+
   it("should not request Azure DevOps when the description has no Wiki links", async () => {
     const doFetch = vi.fn<typeof globalThis.fetch>();
 
@@ -298,19 +327,17 @@ describe("fetchWikiContext", () => {
   it.each([
     new AdoError("conflict", "conflito deliberado"),
     new Error("falha desconhecida"),
-  ])("should propagate non-recoverable errors", async (failure) => {
-    const logger = createLogger({
-      destination: new Writable({ write(_chunk, _encoding, done) { done(); } }),
-      level: "debug",
-    });
-    logger.child = vi.fn(() => { throw failure; });
+  ])("should propagate non-recoverable errors when response access fails", async (failure) => {
+    const doFetch = vi.fn<typeof globalThis.fetch>(async () =>
+      new Proxy(wikiPage(7, "/Página"), {
+        get(target, property, receiver) {
+          if (property === "ok") throw failure;
+          return Reflect.get(target, property, receiver);
+        },
+      }),
+    );
 
-    await expect(fetchWikiContext({
-      azureDevOps: AZURE_DEVOPS,
-      credentials: CREDENTIALS,
-      fetch: vi.fn(async () => wikiPage(7, "/Página")),
-      logger,
-    }, {
+    await expect(fetchWikiContext(options(doFetch), {
       storyId: 4211,
       description: "https://dev.azure.com/acme/Plataforma/_wiki/wikis/Produto.wiki/7/Pagina",
     })).rejects.toBe(failure);

@@ -276,7 +276,9 @@ function extractWikiTargets(
   const decoded = decodeAmpersands(source);
   const matches = decoded.match(/https:\/\/[^\s"'<>]+/giu) ?? [];
   return matches.flatMap((raw) => {
-    const target = parseWikiTarget(trimTrailingPunctuation(raw), organization);
+    const target =
+      parseWikiTarget(raw, organization) ??
+      parseWikiTarget(trimExternalClosingDelimiters(raw), organization);
     return target === undefined ? [] : [target];
   });
 }
@@ -388,6 +390,24 @@ function decodeAmpersands(value: string): string {
   return value.replace(/&(?:amp|#0*38|#x0*26);/giu, "&");
 }
 
-function trimTrailingPunctuation(value: string): string {
-  return value.replace(/[),.;:!?]+$/u, "");
+function trimExternalClosingDelimiters(value: string): string {
+  let result = value;
+  const delimiters = [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+  ] as const;
+  while (true) {
+    const delimiter = delimiters.find(([, closing]) =>
+      result.endsWith(closing),
+    );
+    if (delimiter === undefined) return result;
+    const [opening, closing] = delimiter;
+    if (count(result, closing) <= count(result, opening)) return result;
+    result = result.slice(0, -1);
+  }
+}
+
+function count(value: string, character: string): number {
+  return [...value].filter((candidate) => candidate === character).length;
 }

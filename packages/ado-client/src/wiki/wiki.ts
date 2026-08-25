@@ -274,11 +274,16 @@ function extractWikiTargets(
   organization: string,
 ): readonly WikiPageTarget[] {
   const decoded = decodeAmpersands(source);
-  const matches = decoded.match(/https:\/\/[^\s"'<>]+/giu) ?? [];
-  return matches.flatMap((raw) => {
-    const target =
-      parseWikiTarget(raw, organization) ??
-      parseWikiTarget(trimExternalClosingDelimiters(raw), organization);
+  const matches = decoded.matchAll(
+    /href\s*=\s*(["'])(https:\/\/[^\s"'<>]+)\1|(https:\/\/[^\s"'<>]+)/giu,
+  );
+  return Array.from(matches).flatMap((match) => {
+    const quotedHref = match[2];
+    const raw = quotedHref ?? match[3];
+    if (raw === undefined) return [];
+    const candidate =
+      quotedHref === undefined ? trimExternalClosingDelimiters(raw) : raw;
+    const target = parseWikiTarget(candidate, organization);
     return target === undefined ? [] : [target];
   });
 }

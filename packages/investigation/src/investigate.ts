@@ -121,8 +121,9 @@ function grade(
     return { status: "falhou", message: parsed.message };
   }
 
-  const grounding = verifyGrounding(parsed.report.impacts, [repos.primary, ...repos.related]);
-  const markdown = renderReportMarkdown(story, parsed.report, grounding);
+  const report = enrichReportWithWikiGaps(parsed.report, story.wikiContext);
+  const grounding = verifyGrounding(report.impacts, [repos.primary, ...repos.related]);
+  const markdown = renderReportMarkdown(story, report, grounding);
 
   if (grounding.status === "reprovado") {
     logger.warn(
@@ -131,7 +132,7 @@ function grade(
     );
     return {
       status: "reprovado",
-      report: parsed.report,
+      report,
       markdown,
       violations: grounding.violations,
     };
@@ -139,14 +140,56 @@ function grade(
 
   logger.info(
     {
-      impacts: parsed.report.impacts.length,
-      gaps: parsed.report.gaps.length,
-      unverified: parsed.report.unverified.length,
-      externalRepos: parsed.report.externalRepos.map((repo) => repo.repo),
+      impacts: report.impacts.length,
+      gaps: report.gaps.length,
+      unverified: report.unverified.length,
+      externalRepos: report.externalRepos.map((repo) => repo.repo),
     },
     "investigação aprovada",
   );
-  return { status: "aprovado", report: parsed.report, markdown };
+  return { status: "aprovado", report, markdown };
+}
+
+function enrichReportWithWikiGaps(
+  report: InvestigationReport,
+  wikiContext: InvestigationStory["wikiContext"],
+): InvestigationReport {
+  const gaps: InvestigationReport["gaps"] = [...report.gaps];
+
+  for (const reference of wikiContext.references) {
+    if (reference.status === "unavailable") {
+      gaps.push({
+        question: `Qual contexto da Wiki em ${reference.target.canonicalUrl} precisa ser considerado?`,
+        why: `O Refina não conseguiu ler essa página: ${reference.message}`,
+      });
+    }
+  }
+
+  for (const reference of wikiContext.references) {
+    if (reference.status === "loaded" && reference.truncated) {
+      gaps.push({
+        question: `O que ficou fora da página de Wiki ${reference.target.canonicalUrl}?`,
+        why: "O conteúdo foi cortado ao atingir o limite de 100.000 caracteres da Investigação.",
+      });
+    }
+  }
+
+  if (wikiContext.omitted.length > 0) {
+    const reasons = [
+      ...(wikiContext.omitted.some(({ reason }) => reason === "page-limit")
+        ? ["limite de 10 páginas"]
+        : []),
+      ...(wikiContext.omitted.some(({ reason }) => reason === "content-limit")
+        ? ["limite de 100.000 caracteres"]
+        : []),
+    ];
+    gaps.push({
+      question: "Quais referências de Wiki ficaram fora desta Investigação?",
+      why: `O Refina deixou ${wikiContext.omitted.length} referências de Wiki de fora por atingir: ${reasons.join(" e ")}.`,
+    });
+  }
+
+  return { ...report, gaps };
 }
 
 function afkAnswers(

@@ -29,7 +29,6 @@ const INVESTIGATION = renderReportMarkdown(
   {
     id: 4242,
     title: "Exportar relatório de comissões",
-    description: undefined,
     url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4242",
   },
   {
@@ -435,7 +434,6 @@ describe("readDossie", () => {
       {
         id: 4242,
         title: "Exportar relatório de comissões",
-        description: undefined,
         url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4242",
       },
       {
@@ -466,7 +464,6 @@ describe("readDossie", () => {
       {
         id: 4242,
         title: "Exportar relatório de comissões",
-        description: undefined,
         url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4242",
       },
       {

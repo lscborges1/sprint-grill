@@ -24,7 +24,7 @@ import type { ReportSectionName } from "./vocabulary";
  * do config" é informação, e seção que some vira dúvida sobre o que o agente fez.
  */
 export function renderReportMarkdown(
-  story: InvestigationStory,
+  story: Pick<InvestigationStory, "id" | "title" | "url">,
   report: InvestigationReport,
   grounding: GroundingResult,
 ): string {

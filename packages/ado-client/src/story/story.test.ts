@@ -58,6 +58,12 @@ describe("fetchStory", () => {
       state: "New",
       description: "<div>O TTL hoje é fixo.</div>",
       url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+      wikiContext: {
+        references: [],
+        omitted: [],
+        attempts: 0,
+        contentCharacters: 0,
+      },
     });
   });
 
@@ -75,5 +81,49 @@ describe("fetchStory", () => {
     await expect(
       storyFrom({ "System.Title": "sumiu" }, 404),
     ).rejects.toBeInstanceOf(AdoError);
+  });
+
+  it("should load Wiki context only after validating the story response", async () => {
+    const routes: string[] = [];
+    const doFetch = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      routes.push(url.pathname);
+      if (url.pathname.endsWith("/_apis/wit/workitems/4211")) {
+        return new Response(JSON.stringify({
+          id: 4211,
+          fields: {
+            "System.Title": "Com Wiki",
+            "System.WorkItemType": "User Story",
+            "System.State": "New",
+            "System.Description":
+              "https://dev.azure.com/acme/Docs/_wiki/wikis/Produto.wiki/8/Contrato",
+          },
+        }), { headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname.endsWith("/acme/Docs/_apis/wiki/wikis/Produto.wiki/pages/8")) {
+        return new Response(JSON.stringify({ id: 8, path: "/Contrato", content: "conteúdo" }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`rota inesperada: ${url}`);
+    });
+
+    const story = await fetchStory({
+      azureDevOps: AZURE_DEVOPS,
+      credentials: CREDENTIALS,
+      logger: SILENT_LOGGER,
+      fetch: doFetch,
+    }, 4211);
+
+    expect({
+      routes,
+      wikiStatus: story.wikiContext.references[0]?.status,
+    }).toEqual({
+      routes: [
+        "/acme/Plataforma/_apis/wit/workitems/4211",
+        "/acme/Docs/_apis/wiki/wikis/Produto.wiki/pages/8",
+      ],
+      wikiStatus: "loaded",
+    });
   });
 });

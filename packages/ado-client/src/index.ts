@@ -59,3 +59,14 @@ export type { RefinementStatus } from "./refinement/refinement-status";
 export type { AdoClientOptions } from "./rest/ado-rest";
 export { fetchStory } from "./story/story";
 export type { StoryDetails } from "./story/story";
+export { fetchWikiContext } from "./wiki/wiki";
+export type {
+  WikiContext,
+  WikiContextLoaded,
+  WikiContextOmitted,
+  WikiContextReference,
+  WikiContextUnavailable,
+  WikiPageSelector,
+  WikiPageTarget,
+  WikiUnavailableReason,
+} from "./wiki/wiki";

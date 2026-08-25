@@ -391,23 +391,53 @@ function decodeAmpersands(value: string): string {
 }
 
 function trimExternalClosingDelimiters(value: string): string {
-  let result = value;
-  const delimiters = [
-    ["(", ")"],
-    ["[", "]"],
-    ["{", "}"],
-  ] as const;
-  while (true) {
-    const delimiter = delimiters.find(([, closing]) =>
-      result.endsWith(closing),
-    );
-    if (delimiter === undefined) return result;
-    const [opening, closing] = delimiter;
-    if (count(result, closing) <= count(result, opening)) return result;
-    result = result.slice(0, -1);
+  // Uma varredura para os balanços e uma para o sufixo: entrada não confiável
+  // nunca transforma a extração de links numa operação quadrática.
+  let parentheses = 0;
+  let brackets = 0;
+  let braces = 0;
+  for (const character of value) {
+    switch (character) {
+      case "(":
+        parentheses += 1;
+        break;
+      case ")":
+        parentheses -= 1;
+        break;
+      case "[":
+        brackets += 1;
+        break;
+      case "]":
+        brackets -= 1;
+        break;
+      case "{":
+        braces += 1;
+        break;
+      case "}":
+        braces -= 1;
+        break;
+    }
   }
-}
 
-function count(value: string, character: string): number {
-  return [...value].filter((candidate) => candidate === character).length;
+  let end = value.length;
+  while (end > 0) {
+    switch (value[end - 1]) {
+      case ")":
+        if (parentheses >= 0) return value.slice(0, end);
+        parentheses += 1;
+        break;
+      case "]":
+        if (brackets >= 0) return value.slice(0, end);
+        brackets += 1;
+        break;
+      case "}":
+        if (braces >= 0) return value.slice(0, end);
+        braces += 1;
+        break;
+      default:
+        return value.slice(0, end);
+    }
+    end -= 1;
+  }
+  return "";
 }

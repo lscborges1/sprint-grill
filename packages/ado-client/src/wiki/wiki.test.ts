@@ -1,4 +1,5 @@
 import { Writable } from "node:stream";
+import { performance } from "node:perf_hooks";
 import { createLogger } from "@sprint-griller/core";
 import { describe, expect, it, vi } from "vitest";
 import { AdoError } from "../ado-error";
@@ -135,6 +136,31 @@ describe("fetchWikiContext", () => {
     expect({ result, requests: doFetch.mock.calls.length }).toEqual({
       result: { references: [], omitted: [], attempts: 0, contentCharacters: 0 },
       requests: 0,
+    });
+  });
+
+  it("should reject a long invalid delimiter suffix within a linear-time budget", {
+    timeout: 10_000,
+  }, async () => {
+    const doFetch = vi.fn<typeof globalThis.fetch>();
+    const description =
+      "https://dev.azure.com/acme/not-a-wiki" + ")]}".repeat(6_000);
+
+    const startedAt = performance.now();
+    const result = await fetchWikiContext(options(doFetch), {
+      storyId: 4211,
+      description,
+    });
+    const elapsedMilliseconds = performance.now() - startedAt;
+
+    expect({
+      result,
+      requests: doFetch.mock.calls.length,
+      withinBudget: elapsedMilliseconds < 1_000,
+    }).toEqual({
+      result: { references: [], omitted: [], attempts: 0, contentCharacters: 0 },
+      requests: 0,
+      withinBudget: true,
     });
   });
 

@@ -43,15 +43,97 @@ const STORY = {
   title: "TTL de sessão configurável",
   description: "O TTL hoje é fixo.",
   url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
+  wikiContext: {
+    references: [],
+    omitted: [],
+    attempts: 0,
+    contentCharacters: 0,
+  },
 };
 
-function reportMessage(citationPath: string): AgentEvent {
+const WIKI_TARGETS = [10, 11, 12, 13, 14].map(
+  (id) =>
+    ({
+      project: "Plataforma",
+      wiki: "Arquitetura",
+      canonicalUrl: `https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/${id}`,
+      page: { kind: "id", id },
+    }) as const,
+);
+
+const WIKI_STORY = {
+  ...STORY,
+  wikiContext: {
+    references: [
+      {
+        status: "unavailable",
+        target: WIKI_TARGETS[0]!,
+        depth: 0,
+        reason: "auth",
+        message: "PAT sem Wiki (read).",
+      },
+      {
+        status: "loaded",
+        target: WIKI_TARGETS[1]!,
+        depth: 0,
+        pageId: 11,
+        pagePath: "/Sessões",
+        content: "Conteúdo parcial.",
+        truncated: true,
+      },
+      {
+        status: "unavailable",
+        target: WIKI_TARGETS[2]!,
+        depth: 1,
+        reason: "not-found",
+        message: "Página não encontrada.",
+      },
+    ],
+    omitted: [
+      { target: WIKI_TARGETS[3]!, depth: 1, reason: "page-limit" },
+      { target: WIKI_TARGETS[4]!, depth: 1, reason: "content-limit" },
+    ],
+    attempts: 10,
+    contentCharacters: 100_000,
+  },
+} as const;
+
+const EXPECTED_WIKI_GAPS = [
+  {
+    question:
+      "Qual contexto da Wiki em https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/10 precisa ser considerado?",
+    why: "O Refina não conseguiu ler essa página: PAT sem Wiki (read).",
+  },
+  {
+    question:
+      "O que ficou fora da página de Wiki https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/11?",
+    why: "O conteúdo foi cortado ao atingir o limite de 100.000 caracteres da Investigação.",
+  },
+  {
+    question:
+      "Qual contexto da Wiki em https://dev.azure.com/acme/Plataforma/_wiki/wikis/Arquitetura/12 precisa ser considerado?",
+    why: "O Refina não conseguiu ler essa página: Página não encontrada.",
+  },
+  {
+    question: "Quais referências de Wiki ficaram fora desta Investigação?",
+    why:
+      "O Refina deixou 2 referências de Wiki de fora por atingir: limite de 10 páginas e limite de 100.000 caracteres.",
+  },
+] as const;
+
+const AGENT_GAP = {
+  question: "Qual deve ser o novo TTL?",
+  why: "A US não informa o valor esperado.",
+} as const;
+
+function reportMessage(citationPath: string, gaps = [AGENT_GAP]): AgentEvent {
   return {
     type: "message",
     text:
       "```json\n" +
       JSON.stringify({
         summary: "A US mexe no cache de sessão.",
+        gaps,
         impacts: [
           {
             claim: "O TTL precisa virar configurável.",
@@ -261,5 +343,38 @@ describe("runInvestigation", () => {
       { kind: "command", decision: "decline" },
       { kind: "file-change", decision: "decline" },
     ]);
+  });
+
+  it("should append deterministic Wiki gaps after agent gaps in reference order", async () => {
+    const fake = fakeRuntime([reportMessage("src/session.ts"), TURN_COMPLETED]);
+
+    const outcome = await runInvestigation({
+      runtime: fake.runtime,
+      story: WIKI_STORY,
+      repos: REPOS,
+      logger: SILENT_LOGGER,
+    });
+
+    expect(outcome.status !== "falhou" && outcome.report.gaps).toEqual([
+      AGENT_GAP,
+      ...EXPECTED_WIKI_GAPS,
+    ]);
+  });
+
+  it("should render the enriched Wiki gaps in the same order as the returned report", async () => {
+    const fake = fakeRuntime([reportMessage("src/session.ts"), TURN_COMPLETED]);
+
+    const outcome = await runInvestigation({
+      runtime: fake.runtime,
+      story: WIKI_STORY,
+      repos: REPOS,
+      logger: SILENT_LOGGER,
+    });
+    const markdown = outcome.status !== "falhou" ? outcome.markdown : "";
+    const questions = [AGENT_GAP, ...EXPECTED_WIKI_GAPS].map(({ question }) => question);
+
+    expect(questions.map((question) => markdown.indexOf(question))).toEqual(
+      questions.map((_, index) => markdown.indexOf(questions[index]!)).toSorted((a, b) => a - b),
+    );
   });
 });

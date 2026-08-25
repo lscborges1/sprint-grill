@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { createAdoRest } from "../rest/ado-rest";
 import type { AdoClientOptions } from "../rest/ado-rest";
+import { fetchWikiContext } from "../wiki/wiki";
+import type { WikiContext } from "../wiki/wiki";
 
 /** Uma US lida inteira — o que a Investigação manda para o agente ler. */
 export interface StoryDetails {
@@ -11,6 +13,7 @@ export interface StoryDetails {
   /** Como o PO escreveu: HTML, na maioria dos processos do ADO. */
   readonly description: string | undefined;
   readonly url: string;
+  readonly wikiContext: WikiContext;
 }
 
 const workItemSchema = z.object({
@@ -35,6 +38,10 @@ export async function fetchStory(
     schema: workItemSchema,
     notFound: `O Azure DevOps não encontrou a US #${id} no projeto configurado.`,
   });
+  const wikiContext = await fetchWikiContext(options, {
+    storyId: item.id,
+    description: item.fields["System.Description"],
+  });
 
   return {
     id: item.id,
@@ -43,5 +50,6 @@ export async function fetchStory(
     state: item.fields["System.State"],
     description: item.fields["System.Description"],
     url: rest.workItemUrl(item.id),
+    wikiContext,
   };
 }

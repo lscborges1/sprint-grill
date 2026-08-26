@@ -33,6 +33,15 @@ describe("createLogger", () => {
     });
   });
 
+  it("should tag every line with the app name for cross-service correlation", () => {
+    const { lines, destination } = captureLines();
+    const logger = createLogger({ destination });
+
+    logger.info("linha de teste");
+
+    expect(lines[0]).toMatchObject({ app: "refina" });
+  });
+
   it("should tag every line with the boundary name so logs are attributable", () => {
     const { lines, destination } = captureLines();
     const logger = createLogger({ name: "ado-client", destination });

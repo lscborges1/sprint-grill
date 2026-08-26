@@ -33,18 +33,19 @@ const lifecycleSpies = vi.hoisted(() => ({
 }));
 const lifecycle = lifecycleSpies as CeremonyLifecycle;
 const getInvestigation = vi.hoisted(() => vi.fn());
+const getSquadConfig = vi.hoisted(() =>
+  vi.fn(() => ({
+    azureDevOps: { organization: "acme", project: "Plataforma" },
+    repos: { primary: { name: "core-api", path: "/dev/core-api" }, related: [] },
+  })),
+);
 
 vi.mock("@sprint-griller/ceremony", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@sprint-griller/ceremony")>()),
   createCeremonyLifecycle,
 }));
 vi.mock("./investigations", () => ({ getInvestigation }));
-vi.mock("./squad-config", () => ({
-  getSquadConfig: () => ({
-    azureDevOps: { organization: "acme", project: "Plataforma" },
-    repos: { primary: { name: "core-api", path: "/dev/core-api" }, related: [] },
-  }),
-}));
+vi.mock("./squad-config", () => ({ getSquadConfig }));
 vi.mock("./logger", () => ({
   logger: createLogger({
     destination: new Writable({ write(_chunk, _encoding, done) { done(); } }),
@@ -64,6 +65,8 @@ const {
   decisionSchema,
   decisionFormSchema,
   dumpCeremonySchema,
+  getDossie,
+  getPalco,
   sessionIdSchema,
   specDraftSchema,
   startCeremony,
@@ -209,5 +212,26 @@ describe("ceremony lifecycle wiring", () => {
       lifecycleInstances: createCeremonyLifecycle.mock.calls.length,
       storyIds: lifecycleSpies.start.mock.calls.map(([storyId]) => storyId),
     }).toEqual({ lifecycleInstances: 1, storyIds: [117, 118] });
+  });
+
+  it("should not read the squad config again after an HMR module reload reuses the cached lifecycle", async () => {
+    await startCeremony(117);
+    const callsBeforeReload = getSquadConfig.mock.calls.length;
+
+    vi.resetModules();
+    const reloaded = await import("./ceremonies");
+    await reloaded.startCeremony(119);
+
+    expect(getSquadConfig.mock.calls.length).toBe(callsBeforeReload);
+  });
+
+  it("should read the squad config at most once no matter how many ceremony functions run", async () => {
+    const callsBefore = getSquadConfig.mock.calls.length;
+
+    getPalco("session-1");
+    getDossie("session-1");
+    await startCeremony(120);
+
+    expect(getSquadConfig.mock.calls.length).toBe(callsBefore);
   });
 });

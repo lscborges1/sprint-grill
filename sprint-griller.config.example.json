@@ -1,7 +1,10 @@
 {
   "azureDevOps": {
     "organization": "minha-org",
-    "project": "Meu Projeto"
+    "project": "Meu Projeto",
+    "taskDefaults": {
+      "Custom.000_Activity": "Backend"
+    }
   },
   "repos": {
     "primary": {

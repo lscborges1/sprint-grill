@@ -1,5 +1,6 @@
-import { z } from "zod";
 import { INVESTIGATION_MARKER } from "../refinement/refinement-status";
+import { commentSchema } from "../refinement/publish-refinement";
+import { codeChip } from "../refinement/dump-marker";
 import { COMMENTS_API_VERSION, createAdoRest } from "../rest/ado-rest";
 import type { AdoClientOptions } from "../rest/ado-rest";
 
@@ -16,8 +17,7 @@ export interface InvestigationToPublish {
   readonly markdown: string;
 }
 
-/** O contrato da API de comments usa `commentId`, não `id` (7.1-preview.4). */
-const commentSchema = z.object({ commentId: z.number() });
+/** O contrato da rota de comments: `id` hoje, `commentId` em versões antigas. */
 
 /**
  * O `format` dos comments usa o enum `CommentFormat` da API 7.1: `markdown` ou
@@ -47,9 +47,10 @@ export async function publishInvestigation(
     query: { format: MARKDOWN_FORMAT },
     schema: commentSchema,
     write: true,
-    // O marcador vem primeiro e é invisível para quem lê no ADO. É o que o
-    // picker procura depois para mostrar a US como "investigada".
-    body: { text: `${INVESTIGATION_MARKER}\n\n${markdown}` },
+    // O chip vem primeiro: é o que o picker procura depois para mostrar a US
+    // como "investigada" — e sobrevive à sanitização que o ADO aplica ao texto
+    // do comment (comentários HTML não sobrevivem).
+    body: { text: `${codeChip(INVESTIGATION_MARKER)}\n\n${markdown}` },
     notFound:
       `O Azure DevOps não encontrou a US #${storyId} no projeto configurado — ` +
       "nada foi publicado.",

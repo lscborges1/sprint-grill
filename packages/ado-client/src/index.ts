@@ -17,6 +17,8 @@ export {
   markdownToAdoHtml,
 } from "./refinement/publish-refinement";
 export {
+  codeChip,
+  codeTag,
   dumpAudits,
   dumpAuditMarker,
   dumpCompletionMarker,
@@ -52,6 +54,7 @@ export type {
 // O picker lê a Investigação e a conclusão do dump para inferir o status.
 // SPEC_MARKER identifica o bloco gerenciado, mas não significa "refinada".
 export {
+  hasInvestigationMarker,
   INVESTIGATION_MARKER,
   SPEC_MARKER,
 } from "./refinement/refinement-status";

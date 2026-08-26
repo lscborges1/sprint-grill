@@ -26,10 +26,14 @@ const SILENT_LOGGER = createLogger({
 
 /**
  * Azure DevOps de mentira com memória: guarda o que a publicação grava e
- * devolve isso na leitura dos comments, como o de verdade faria.
+ * devolve isso na leitura dos comments, como o de verdade faria — inclusive
+ * a sanitização: comentários HTML (`<!-- -->`) não sobrevivem ao texto
+ * persistido, comportamento confirmado ao vivo contra a API em 2026-08-26.
+ * Sem imitar isso, o teste não provaria que o marcador sobrevive à volta.
  */
 function fakeAdo() {
   const comments: string[] = [];
+  const sanitizeLikeAdo = (text: string): string => text.replace(/<!--[^>]*-->/g, "");
 
   return vi.fn(
     async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -38,11 +42,11 @@ function fakeAdo() {
       if (/\/workItems\/\d+\/comments/i.test(url)) {
         if (init?.method === "POST") {
           const { text } = JSON.parse(String(init.body)) as { text: string };
-          comments.push(text);
-          return json({ commentId: comments.length, workItemId: STORY_ID });
+          comments.push(sanitizeLikeAdo(text));
+          return json({ id: comments.length, workItemId: STORY_ID });
         }
 
-        return json({ comments: comments.map((text) => ({ text })) });
+        return json({ comments: comments.map((text) => ({ id: text.length, text })) });
       }
 
       if (url.includes("/_apis/wit/workitemtypecategories/")) {

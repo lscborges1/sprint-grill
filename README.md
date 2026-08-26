@@ -69,6 +69,8 @@ pnpm dev
 
 Os repos são definidos **uma vez**, aqui — nenhuma cerimônia começa escolhendo repositório. Config inválida derruba o app na inicialização com a mensagem apontando o campo.
 
+`azureDevOps.taskDefaults` declara campos obrigatórios do processo da squad na criação de Tasks filhas (por reference name, ex.: `Custom.000_Activity`). Processos herdados costumam exigir campos com lista fechada — sem o valor, o ADO recusa a criação com 400 e o nome do campo aparece na mensagem de erro.
+
 O caminho do arquivo de config pode ser trocado com `SPRINT_GRILLER_CONFIG`.
 
 ## Comandos
@@ -134,12 +136,12 @@ O harness mostra o turno streamando, pergunta no terminal quando o agente pede i
 
 ## Status de refinamento no picker
 
-A tela inicial lista as US do backlog do produto — qualquer iteration, sem as `Removed`, do topo da prioridade para baixo — e mostra em que ponto do fluxo cada uma está — **sem Investigação**, **investigada** ou **refinada**. Não existe banco de status: o `ado-client` procura marcadores HTML que a própria ferramenta embute nos artefatos que grava no Azure DevOps.
+A tela inicial lista as US do backlog do produto — qualquer iteration, sem as `Removed`, do topo da prioridade para baixo — e mostra em que ponto do fluxo cada uma está — **sem Investigação**, **investigada** ou **refinada**. Não existe banco de status: o `ado-client` procura marcadores de código que a própria ferramenta embute nos artefatos que grava no Azure DevOps. O Azure DevOps remove comentários HTML (`<!-- -->`) do texto persistido de comments e descrições — por isso o marcador viaja como code span (`` `token` ``) nos comments e como `<code>token</code>` nos campos HTML; a leitura ainda aceita o formato legado em comentário HTML.
 
 | Marcador | Artefato que o carrega | Status resultante |
 |---|---|---|
-| `<!-- sprint-griller:investigacao -->` | Investigação publicada como comment na US | investigada |
-| `<!-- sprint-griller:dump:<dumpId>:complete -->` | Prova final gravada na description após todo o despejo terminar | refinada |
+| `` `sprint-griller:investigacao` `` | Investigação publicada como comment na US | investigada |
+| `<code>sprint-griller:dump:<dumpId>:complete</code>` | Prova final gravada na description após todo o despejo terminar | refinada |
 
 Quem publica a Investigação precisa embutir `INVESTIGATION_MARKER`. O despejo só
 pode chamar `publishDumpCompletion` depois de Spec, Tasks, estimativa, Registros
@@ -223,10 +225,11 @@ rolagem vem de WIQL cru; cobertura só recebe crédito quando a Investigação e
 auditoria imutável do gate foram gravadas no ADO até o fechamento da sprint.
 US rolada com duas ou mais dúvidas abertas ganha o destaque diagnóstico.
 
-O despejo grava a auditoria como comment invisível (`<!--
-sprint-griller:dump:<id>:audit:pending:<n> -->`), com o número de pendências
-que o gate mostrou. É o único estado adicional usado pelo relatório; comentários
-posteriores não reescrevem a história de uma sprint encerrada.
+O despejo grava a auditoria como comment imutável — um chip de código (``
+`sprint-griller:dump:<id>:audit:pending:<n>` ``) seguido de uma linha legível
+para a squad — com o número de pendências que o gate mostrou. É o único estado
+adicional usado pelo relatório; comentários posteriores não reescrevem a
+história de uma sprint encerrada.
 
 Interpretação anti-vaidade, impressa no relatório: rolagem caindo + cobertura
 alta = funciona; rolagem caindo + cobertura baixa = outra causa; rolagem
@@ -295,8 +298,9 @@ de aceite e dependências acíclicas.
 As aprovações são versionadas. Reabrir o Refinamento preserva os rascunhos, mas
 invalida aprovações derivadas. A publicação recebe do browser somente o id da
 sessão e a estimativa; Spec e Tickets aprovados são carregados e revalidados no
-SQLite antes de qualquer escrita no Azure DevOps. Retries continuam
-idempotentes pelos marcadores `sprint-griller:*`.
+SQLite antes de qualquer escrita no Azure DevOps. Retries continuam idempotentes:
+Spec, Registros e conclusão pelos marcadores `sprint-griller:*`; as Tasks filhas,
+pelo título exato como filhas da US — a descrição delas fica limpa para a squad.
 
 O banco local é descartável. Mudanças incompatíveis sobem `SCHEMA_VERSION`, e
 uma versão antiga é recusada com a orientação de apagar o arquivo.

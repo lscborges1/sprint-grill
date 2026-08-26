@@ -1,6 +1,32 @@
-const DUMP_MARKER_PREFIX = "<!-- sprint-griller:dump:";
-const DUMP_MARKER_SUFFIX = " -->";
-const DUMP_MARKER_RE = /<!-- sprint-griller:dump:([^:]+):([^ ]+) -->/g;
+/**
+ * Gramática dos marcadores que o Refina grava no Azure DevOps para depois
+ * reconhecer os próprios artefatos (ADR 0003 — o ADO é a fonte da verdade).
+ *
+ * O token `sprint-griller:dump:<dumpId>:<artifact>` nunca vai nu: o Azure
+ * DevOps remove comentários HTML (`<!-- -->`) de comments e de descrições —
+ * comportamento confirmado ao vivo contra a API em 2026-08-26. A forma que
+ * sobrevive à sanitização nas duas superfícies é um code span (`` `token` ``)
+ * nos comments em Markdown e um `<code>token</code>` nos campos HTML. A
+ * leitura aceita também o comentário HTML legado, para instâncias onde a
+ * gravação antiga sobreviveu.
+ */
+
+const DUMP_MARKER_PREFIX = "sprint-griller:dump:";
+
+/** Token cru, sem envoltório — só para montar e comparar, nunca para gravar. */
+export function dumpMarker(dumpId: string, artifact: string): string {
+  return `${DUMP_MARKER_PREFIX}${dumpId}:${artifact}`;
+}
+
+/** A forma que sobrevive em comments Markdown: um code span discreto. */
+export function codeChip(token: string): string {
+  return `\`${token}\``;
+}
+
+/** A forma que sobrevive em campos HTML (descrições): um elemento `<code>`. */
+export function codeTag(token: string): string {
+  return `<code>${token}</code>`;
+}
 
 interface DumpMarker {
   readonly dumpId: string;
@@ -10,11 +36,6 @@ interface DumpMarker {
 export interface DumpAudit {
   readonly dumpId: string;
   readonly openQuestions: number;
-}
-
-/** Cria um marcador determinístico para um artefato publicado no despejo. */
-export function dumpMarker(dumpId: string, artifact: string): string {
-  return `${DUMP_MARKER_PREFIX}${dumpId}:${artifact}${DUMP_MARKER_SUFFIX}`;
 }
 
 /** Cria a prova final de que todos os artefatos de um despejo foram publicados. */
@@ -64,11 +85,33 @@ export function incompleteDumpIds(texts: readonly string[]): readonly string[] {
     .map(([dumpId]) => dumpId);
 }
 
+/**
+ * O envoltório em volta de um token, em qualquer forma aceita. Prosa citando o
+ * token cru não conta: o valor de `includes` aqui é casar chip, `<code>` e
+ * comentário HTML legado com uma comparação só — todo envoltório contém o
+ * token inteiro como substring.
+ */
+export function carriesMarker(text: string, token: string): boolean {
+  return text.includes(token);
+}
+
+/**
+ * Cada alternativa casa a forma certa de abrir e fechar: chip (`` ` ``),
+ * `<code>` e o comentário HTML legado. Abertura de um com fechamento de outro
+ * não é marcador — só a dupla correta conta.
+ */
+const WRAPPED_DUMP_MARKER_RE =
+  /<!--\s*(sprint-griller:dump:[^\s<>]+?)\s*-->|<code>\s*(sprint-griller:dump:[^\s<>]+?)\s*<\/code>|`\s*(sprint-griller:dump:[^`<>]+?)\s*`/g;
+
 function readDumpMarkers(texts: readonly string[]): readonly DumpMarker[] {
   return texts.flatMap((text) =>
-    [...text.matchAll(DUMP_MARKER_RE)].flatMap((match) => {
-      const [dumpId, artifact] = [match[1], match[2]];
-      return dumpId === undefined || artifact === undefined ? [] : [{ dumpId, artifact }];
+    [...text.matchAll(WRAPPED_DUMP_MARKER_RE)].flatMap((match) => {
+      const token = match.slice(1).find((group) => group !== undefined);
+      if (token === undefined) return [];
+      const rest = token.slice(DUMP_MARKER_PREFIX.length);
+      const separator = rest.indexOf(":");
+      if (separator <= 0) return [];
+      return [{ dumpId: rest.slice(0, separator), artifact: rest.slice(separator + 1) }];
     }),
   );
 }

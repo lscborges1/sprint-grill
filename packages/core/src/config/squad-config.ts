@@ -18,6 +18,14 @@ const repoConfigSchema = z.object({
 });
 
 /**
+ * Campos obrigatórios do processo da squad ao criar Tasks filhas, por
+ * reference name (`Custom.000_Activity`, `Microsoft.VSTS.Scheduling.OriginalEstimate`…).
+ * Cada processo herdado exige os seus — o ADO devolve 400 sem eles, e o valor
+ * certo é decisão da squad, não do produto.
+ */
+const taskDefaultsSchema = z.record(z.string(), z.string().min(1));
+
+/**
  * Config da squad: definida uma vez pelo Operador, nunca por User Story.
  * O PAT do Azure DevOps não mora aqui — vem do ambiente (ver `ado-credentials`).
  */
@@ -25,6 +33,7 @@ export const squadConfigSchema = z.object({
   azureDevOps: z.object({
     organization: z.string().min(1, "informe a organização do Azure DevOps"),
     project: z.string().min(1, "informe o projeto do Azure DevOps"),
+    taskDefaults: taskDefaultsSchema.optional(),
   }),
   repos: z.object({
     primary: repoConfigSchema,

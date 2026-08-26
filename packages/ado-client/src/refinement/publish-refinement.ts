@@ -2,18 +2,25 @@ import markdownIt from "markdown-it";
 import { z } from "zod";
 import { AdoError } from "../ado-error";
 import {
+  carriesMarker,
+  codeChip,
+  codeTag,
   completedDumpIds,
   dumpAuditMarker,
   dumpCompletionMarker,
   dumpMarker,
   incompleteDumpIds,
 } from "./dump-marker";
-import { SPEC_MARKER } from "./refinement-status";
 import { COMMENTS_API_VERSION, createAdoRest } from "../rest/ado-rest";
 import type { AdoClientOptions } from "../rest/ado-rest";
 
-const SPEC_BLOCK_START = "<!-- sprint-griller:spec:start -->";
-const SPEC_BLOCK_END = "<!-- sprint-griller:spec:end -->";
+const SPEC_BLOCK_START = "<code>sprint-griller:spec:start</code>";
+const SPEC_BLOCK_END = "<code>sprint-griller:spec:end</code>";
+/** Delimitadores da primeira geração do bloco: comentários HTML que o ADO
+ * remove da descrição. Lidos para substituir blocos que sobreviveram em
+ * instâncias onde a sanitização não acontece. */
+const LEGACY_SPEC_BLOCK_START = "<!-- sprint-griller:spec:start -->";
+const LEGACY_SPEC_BLOCK_END = "<!-- sprint-griller:spec:end -->";
 const MARKDOWN_FORMAT = "markdown";
 
 const adoMarkdown = markdownIt({ html: false, linkify: false });
@@ -88,7 +95,17 @@ export interface ChildTasksToPublish {
   readonly tasks: readonly ChildTaskToPublish[];
 }
 
-const commentSchema = z.object({ commentId: z.number().int().positive() });
+/**
+ * A rota de comments devolve o id como `id` — contrato confirmado ao vivo
+ * contra a API em 2026-08-26. `commentId` é a forma que versões antigas da API
+ * entregavam; aceitar as duas mantém o retry seguro em qualquer uma delas.
+ */
+export const commentSchema = z.union([
+  z.object({ commentId: z.number().int().positive() }),
+  z
+    .object({ id: z.number().int().positive() })
+    .transform((comment) => ({ commentId: comment.id })),
+]);
 const commentsSchema = z.object({
   comments: z.array(z.object({
     commentId: z.number().int().positive().optional(),
@@ -103,6 +120,8 @@ const storySchema = z.object({
   fields: z.object({
     "System.Description": z.string().optional(),
     "System.WorkItemType": z.string().min(1),
+    "System.AreaPath": z.string().optional(),
+    "System.IterationPath": z.string().optional(),
   }),
 });
 const updatedStorySchema = z.object({ id: z.number().int().positive() });
@@ -134,7 +153,7 @@ const taskBatchSchema = z.object({
 /** Renderização determinística do Registro — o LLM nunca participa da escrita. */
 export function renderDecisionRecordMarkdown(record: Omit<DecisionRecordToPublish, "storyId">): string {
   return [
-    dumpMarker(record.dumpId, `decision:${record.questionSeq}`),
+    codeChip(dumpMarker(record.dumpId, `decision:${record.questionSeq}`)),
     "# Registro de decisão",
     `**Pergunta:** ${record.question}`,
     `**Decisão:** ${record.answer}`,
@@ -150,8 +169,15 @@ export async function publishDecisionRecord(
 ): Promise<PublishedDecisionRecord> {
   const rest = createAdoRest(options);
   const marker = dumpMarker(record.dumpId, `decision:${record.questionSeq}`);
+  // Registros publicados antes do chip existir perderam o marcador na
+  // sanitização do ADO: o corpo renderizado — determinístico por ADR 0002 — é
+  // a assinatura que reconcilia esses órfãos sem duplicar o comment.
+  const rendered = renderDecisionRecordMarkdown(record);
+  const renderedBody = rendered.slice(rendered.indexOf("# Registro de decisão"));
   const comments = await listDecisionRecordComments(rest, record.storyId);
-  const existing = comments.filter((comment) => comment.text.includes(marker));
+  const existing = comments.filter(
+    (comment) => carriesMarker(comment.text, marker) || comment.text.includes(renderedBody),
+  );
   if (existing.length > 1) {
     throw new AdoError("unexpected", `Há mais de um Registro para a decisão ${record.questionSeq}. Confira a US antes de despejar.`);
   }
@@ -223,7 +249,7 @@ export async function publishStorySpec(
   const currentDescription = story.fields["System.Description"] ?? "";
   // Retry: o marcador deste dump já prova a Spec escrita — reescrever descartaria
   // uma edição feita no ADO entre a falha parcial e o retry.
-  if (currentDescription.includes(dumpMarker(spec.dumpId, "spec"))) return;
+  if (carriesMarker(currentDescription, dumpMarker(spec.dumpId, "spec"))) return;
 
   const description = replaceManagedSpec(currentDescription, spec.markdown, spec.dumpId);
   const estimateField = await resolveEstimateField(rest, story.fields["System.WorkItemType"]);
@@ -293,7 +319,7 @@ export async function publishDumpCompletion(
   const rest = createAdoRest(options);
   const audit = dumpAuditMarker(input.dumpId, input.openQuestions);
   const comments = await listDecisionRecordComments(rest, input.storyId);
-  if (!comments.some((comment) => comment.text.includes(audit))) {
+  if (!comments.some((comment) => carriesMarker(comment.text, audit))) {
     await rest.request({
       operation: "a auditoria do gate de despejo",
       path: `_apis/wit/workItems/${input.storyId}/comments`,
@@ -301,7 +327,7 @@ export async function publishDumpCompletion(
       query: { format: MARKDOWN_FORMAT },
       schema: commentSchema,
       write: true,
-      body: { text: audit },
+      body: { text: renderDumpAuditComment(audit, input.openQuestions) },
       notFound: `O Azure DevOps não encontrou a US #${input.storyId} no projeto configurado — nada foi publicado.`,
     });
   }
@@ -325,9 +351,22 @@ export async function publishDumpCompletion(
     conflict: "A US mudou enquanto o despejo era concluído. Recarregue e tente de novo; os artefatos serão reconciliados.",
     body: [
       { op: "test", path: "/rev", value: story.rev },
-      { op: "add", path: "/fields/System.Description", value: `${story.fields["System.Description"] ?? ""}\n${completion}` },
+      { op: "add", path: "/fields/System.Description", value: `${story.fields["System.Description"] ?? ""}\n${codeTag(completion)}` },
     ],
   });
+}
+
+/**
+ * A auditoria do gate é comment imutável — e legível: o chip carrega o
+ * marcador que as métricas relêem, o resto diz à squad o que aquele comment
+ * significa na discussão da US.
+ */
+function renderDumpAuditComment(auditToken: string, openQuestions: number): string {
+  return [
+    codeChip(auditToken),
+    "**Refina concluiu o despejo desta US.**",
+    `Dúvidas em aberto no fechamento: ${openQuestions}.`,
+  ].join("\n\n");
 }
 
 const ESTIMATE_FIELDS = [
@@ -356,6 +395,14 @@ async function resolveEstimateField(
   return field;
 }
 
+/**
+ * O tipo canônico de Task da categoria — processos herdados adicionam outros
+ * ("Fix", "Bug Task"…) e a ordem da resposta da API é alfabética, não
+ * semântica: pegar o primeiro entrega "Fix" quando existe "Task". A Task
+ * filha do despejo nasce como o tipo que a squad chama de task.
+ */
+const CANONICAL_TASK_TYPE = "Task";
+
 /** Cria as Tasks filhas e só depois conecta as dependências nativas entre elas. */
 export async function publishChildTasks(
   options: AdoClientOptions,
@@ -367,13 +414,32 @@ export async function publishChildTasks(
     path: "_apis/wit/workitemtypecategories/Microsoft.TaskCategory",
     schema: taskTypeCategorySchema,
   });
-  const taskType = workItemTypes[0]?.name;
+  const taskType =
+    workItemTypes.find((type) => type.name === CANONICAL_TASK_TYPE)?.name ??
+    workItemTypes[0]?.name;
   if (!taskType) {
     throw new AdoError(
       "unexpected",
       "O processo do Azure DevOps não declara um tipo de Task. Corrija o processo antes de despejar.",
     );
   }
+
+  // A Task filha herda área e iteração da US — como o board faz ao criar filhos
+  // pela UI. Sem isso ela cai na área raiz do projeto, onde a squad costuma nem
+  // ter permissão de criar (TF401232/TF237111) e onde nenhum query do time acha.
+  // Campos obrigatórios do processo da squad (ex.: Custom.000_Activity) vêm da
+  // config: cada processo herdado exige os seus e o valor é decisão da squad.
+  const story = await rest.request({
+    operation: "a US para herdar área e iteração nas Tasks filhas",
+    path: `_apis/wit/workitems/${input.storyId}`,
+    schema: storySchema,
+    notFound: `O Azure DevOps não encontrou a US #${input.storyId} no projeto configurado — nada foi publicado.`,
+  });
+  const inherited = [
+    ["System.AreaPath", story.fields["System.AreaPath"]],
+    ["System.IterationPath", story.fields["System.IterationPath"]],
+    ...Object.entries(options.azureDevOps.taskDefaults ?? {}),
+  ] as const;
 
   const created = new Map<string, number>();
   const existing = await findPublishedTasks(rest, input);
@@ -383,12 +449,6 @@ export async function publishChildTasks(
       const taskNumber = index + 1;
       const prior = existing.get(taskNumber);
       if (prior !== undefined) {
-        if (prior.fields["System.Title"] !== task.title) {
-          throw new AdoError(
-            "unexpected",
-            `A Task marcada como ${taskNumber} não corresponde ao preview assinado. Confira a US antes de despejar.`,
-          );
-        }
         created.set(task.title, prior.id);
         continue;
       }
@@ -401,10 +461,13 @@ export async function publishChildTasks(
         write: true,
         body: [
           { op: "add", path: "/fields/System.Title", value: task.title },
+          ...inherited.flatMap(([field, value]) =>
+            value === undefined ? [] : [{ op: "add", path: `/fields/${field}`, value }],
+          ),
           {
             op: "add",
             path: "/fields/System.Description",
-            value: renderChildTaskDescription(task, dumpMarker(input.dumpId, `task:${taskNumber}`)),
+            value: renderChildTaskDescription(task),
           },
           {
             op: "add",
@@ -467,28 +530,36 @@ function workItemIdFromUrl(url: string): number | undefined {
   return Number.isSafeInteger(id) && id > 0 ? id : undefined;
 }
 
-function renderChildTaskDescription(task: ChildTaskToPublish, marker: string): string {
-  return `${marker}\n${markdownToAdoHtml(task.bodyMarkdown)}`;
+function renderChildTaskDescription(task: ChildTaskToPublish): string {
+  return markdownToAdoHtml(task.bodyMarkdown);
 }
 
 /** Exportado para cobrir o contrato de preservação do texto já escrito na US. */
 export function replaceManagedSpec(description: string, markdown: string, dumpId = "legacy"): string {
-  const block = `${SPEC_MARKER}\n${dumpMarker(dumpId, "spec")}\n${SPEC_BLOCK_START}\n${markdownToAdoHtml(markdown)}\n${SPEC_BLOCK_END}`;
-  const start = description.indexOf(SPEC_BLOCK_START);
-  if (start === -1) return description === "" ? block : `${description}\n\n${block}`;
+  const block = `${SPEC_BLOCK_START}\n${codeTag(dumpMarker(dumpId, "spec"))}\n${markdownToAdoHtml(markdown)}\n${SPEC_BLOCK_END}`;
+  // A geração anterior delimitava o bloco com comentários HTML. Onde esses
+  // sobreviveram (instâncias sem a sanitização), o bloco continua gerenciado:
+  // é substituído, nunca duplicado.
+  for (const boundaries of [
+    { start: SPEC_BLOCK_START, end: SPEC_BLOCK_END },
+    { start: LEGACY_SPEC_BLOCK_START, end: LEGACY_SPEC_BLOCK_END },
+  ]) {
+    const start = description.indexOf(boundaries.start);
+    if (start === -1) continue;
 
-  const end = description.indexOf(SPEC_BLOCK_END, start);
-  if (end === -1) {
-    throw new AdoError(
-      "unexpected",
-      "A Spec anterior do Refina está sem o marcador de fechamento. " +
-        "Corrija a descrição da US antes de despejar; a Spec não foi gravada.",
-    );
+    const end = description.indexOf(boundaries.end, start);
+    if (end === -1) {
+      throw new AdoError(
+        "unexpected",
+        "A Spec anterior do Refina está sem o marcador de fechamento. " +
+          "Corrija a descrição da US antes de despejar; a Spec não foi gravada.",
+      );
+    }
+
+    return `${description.slice(0, start)}${block}${description.slice(end + boundaries.end.length)}`;
   }
 
-  const markerStart = description.lastIndexOf(SPEC_MARKER, start);
-  const replaceStart = markerStart === -1 ? start : markerStart;
-  return `${description.slice(0, replaceStart)}${block}${description.slice(end + SPEC_BLOCK_END.length)}`;
+  return description === "" ? block : `${description}\n\n${block}`;
 }
 
 /**
@@ -510,6 +581,13 @@ function isAllowedDestination(
   }
 }
 
+/**
+ * As Tasks filhas existentes da US que já pertencem a este despejo. A descrição
+ * fica limpa para a squad — nenhum marcador interno nela — então a
+ * reconciliação é pelo título exato da Task assinada como filha desta US: o
+ * par título+pai é o que o retry precisa para não duplicar. Duas filhas com o
+ * mesmo título é ambiguidade que exige a sala, não um desempate automático.
+ */
 async function findPublishedTasks(
   rest: ReturnType<typeof createAdoRest>,
   input: ChildTasksToPublish,
@@ -535,11 +613,14 @@ async function findPublishedTasks(
 
   const found = new Map<number, z.infer<typeof taskBatchSchema>["value"][number]>();
   for (const task of value) {
-    for (const [index] of input.tasks.entries()) {
+    for (const [index, signed] of input.tasks.entries()) {
+      if (task.fields["System.Title"] !== signed.title) continue;
       const taskNumber = index + 1;
-      if (!(task.fields["System.Description"] ?? "").includes(dumpMarker(input.dumpId, `task:${taskNumber}`))) continue;
       if (found.has(taskNumber)) {
-        throw new AdoError("unexpected", `Há mais de uma Task marcada como ${taskNumber}. Confira a US antes de despejar.`);
+        throw new AdoError(
+          "unexpected",
+          `Há mais de uma Task filha com o título "${signed.title}". Confira a US antes de despejar.`,
+        );
       }
       found.set(taskNumber, task);
     }

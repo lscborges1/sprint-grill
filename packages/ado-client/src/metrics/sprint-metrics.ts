@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { dumpAudits } from "../refinement/dump-marker";
-import { INVESTIGATION_MARKER } from "../refinement/refinement-status";
+import { hasInvestigationMarker } from "../refinement/refinement-status";
 import { COMMENTS_API_VERSION, createAdoRest } from "../rest/ado-rest";
 import type { AdoRest } from "../rest/ado-rest";
 import { fetchRolloverBaseline } from "./rollover";
@@ -76,7 +76,7 @@ export async function fetchSprintMetrics(
           rolled: story.outcome === "rolled",
         });
       }
-      if (audit !== undefined && beforeClose.some((comment) => comment.text.includes(INVESTIGATION_MARKER))) {
+      if (audit !== undefined && beforeClose.some((comment) => hasInvestigationMarker(comment.text))) {
         refined += 1;
       }
     }

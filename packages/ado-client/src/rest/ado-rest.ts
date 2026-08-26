@@ -204,17 +204,17 @@ async function send(
   }
 
   if (response.ok) return response;
-  throw failedResponse(response, spec);
+  throw await failedResponse(response, spec);
 }
 
 /**
  * Cada código vira uma instrução diferente para o Operador: PAT, config ou
  * "isso não é problema seu". Mensagem genérica aqui custa uma cerimônia parada.
  */
-function failedResponse(
+async function failedResponse(
   response: Response,
   spec: RequestSpec<z.ZodType>,
-): AdoError {
+): Promise<AdoError> {
   if (response.status === 401 || response.status === 403) {
     const requiredPatScope = spec.requiredPatScope ??
       `${spec.write ? "leitura e escrita" : "leitura"} de work items`;
@@ -250,11 +250,27 @@ function failedResponse(
     );
   }
 
+  // 400 de regra do processo (campo obrigatório, valor fora da lista…) sem a
+  // mensagem do ADO é indecifrável: o Operador não vê o nome do campo.
+  const detail = await adoFailureDetail(response);
   return new AdoError(
     "unexpected",
     `O Azure DevOps falhou em ${spec.operation} (HTTP ${response.status})` +
+      (detail === undefined ? "" : `: ${detail}`) +
       (spec.write ? " — nada foi gravado." : "."),
   );
+}
+
+/** Extrai a mensagem humana do corpo de erro, quando há e quando é JSON. */
+async function adoFailureDetail(response: Response): Promise<string | undefined> {
+  try {
+    const payload = (await response.clone().json()) as { message?: unknown };
+    return typeof payload.message === "string" && payload.message.length > 0
+      ? payload.message
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

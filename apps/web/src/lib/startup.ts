@@ -5,12 +5,19 @@ import {
 } from "@sprint-griller/core";
 import { logger } from "./logger";
 
+const DEMO_ENV_VAR = "REFINA_DEMO";
+
 /**
  * Gate de inicialização: o app não sobe com config da squad inválida. Falhar
  * aqui é o ponto — o Operador descobre o campo errado agora, não no meio de uma
  * cerimônia.
  */
 export function validateStartupConfig(): void {
+  if (process.env[DEMO_ENV_VAR] === "1") {
+    logger.warn("modo demo ativo — config da squad e credencial ADO não serão validadas no boot");
+    return;
+  }
+
   try {
     const config = loadSquadConfig();
     loadAdoCredentials();

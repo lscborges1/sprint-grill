@@ -38,6 +38,16 @@ afterEach(() => {
 });
 
 describe("validateStartupConfig", () => {
+  it("should allow the local demo gallery to boot without Azure DevOps config", () => {
+    const exit = vi.spyOn(process, "exit").mockReturnValue(undefined as never);
+    vi.stubEnv("REFINA_DEMO", "1");
+    vi.stubEnv("AZURE_DEVOPS_PAT", "");
+
+    validateStartupConfig();
+
+    expect(exit).not.toHaveBeenCalled();
+  });
+
   it("should let the app boot when the config is valid", () => {
     const exit = vi.spyOn(process, "exit").mockReturnValue(undefined as never);
     useConfig();

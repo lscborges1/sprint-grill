@@ -28,6 +28,19 @@ const STATUS_TONE = {
   refinada: "success",
 } as const satisfies Record<RefinementStatus, "neutral" | "warning" | "success">;
 
+export type PickerSummary = Record<RefinementStatus, number> & { readonly total: number };
+
+export function summarizePickerStories(stories: readonly Pick<PickerStory, "refinement">[]): PickerSummary {
+  return stories.reduce<PickerSummary>(
+    (summary, story) => ({
+      ...summary,
+      total: summary.total + 1,
+      [story.refinement]: summary[story.refinement] + 1,
+    }),
+    { total: 0, "sem-investigacao": 0, investigada: 0, refinada: 0 },
+  );
+}
+
 export function filterPickerStories(
   stories: readonly PickerStory[],
   query: string,
@@ -58,6 +71,7 @@ export function Picker({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<PickerFilter>("all");
   const visibleStories = filterPickerStories(stories, query, filter);
+  const summary = summarizePickerStories(stories);
   const hasFilters = query !== "" || filter !== "all";
 
   function clearFilters(): void {
@@ -70,8 +84,32 @@ export function Picker({
       <PageHeader
         eyebrow="Picker · Backlog"
         title="Refina"
-        description={`US do backlog de ${project}, do topo da prioridade para baixo. Busque por ID ou título; os filtros valem somente para esta tela.`}
+        description={
+          <>
+            <strong className="font-medium text-foreground">Descubra antes de construir.</strong>{" "}
+            US do backlog de {project}, do topo da prioridade para baixo. O objetivo é mover
+            perguntas, gaps e dependências para antes da sprint.
+          </>
+        }
       />
+
+      <section aria-label="Resumo do refinamento" className="grid gap-3 md:grid-cols-3">
+        <MetricCard
+          label="Sem investigação"
+          value={summary["sem-investigacao"]}
+          description="Ainda parecem prontas só pelo texto da US."
+        />
+        <MetricCard
+          label="Investigadas"
+          value={summary.investigada}
+          description="Já têm gaps, hipóteses e impactos explicitados."
+        />
+        <MetricCard
+          label="Refinadas"
+          value={summary.refinada}
+          description="Já passaram pela sala e viraram decisões revisáveis."
+        />
+      </section>
 
       <section aria-labelledby="picker-controls" className="flex flex-col gap-4">
         <h2 id="picker-controls" className="sr-only">Filtros do Picker</h2>
@@ -138,6 +176,24 @@ export function Picker({
         </div>
       </details>
     </main>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  description,
+}: {
+  readonly label: string;
+  readonly value: number;
+  readonly description: string;
+}) {
+  return (
+    <div className="rounded-[var(--radius-md)] border border-line bg-surface p-4">
+      <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted">{label}</p>
+      <p className="mt-2 font-mono text-3xl text-foreground">{value}</p>
+      <p className="mt-2 text-sm text-muted">{description}</p>
+    </div>
   );
 }
 

@@ -308,7 +308,7 @@ describe("createAgentRuntime", () => {
     const session = await runtime.startSession({ tools: ["propose_refinement_completion"] });
     const events: AgentEvent[] = [];
 
-    for await (const event of session.send("grelhe")) {
+    for await (const event of session.send("refine")) {
       events.push(event);
       if (event.type === "completion-proposal") {
         await event.proposal.respond({ accepted: false, message: "Ainda há itens abertos." });
@@ -566,7 +566,7 @@ describe("createAgentRuntime", () => {
     );
     const session = await runtime.startSession({ tools: ["ask_operator"] });
 
-    const events = await drain(session.send("grelhe"));
+    const events = await drain(session.send("refine"));
 
     // Pergunta sem recomendação é fato disfarçado: não chega na sala.
     expect(events.some((event) => event.type === "question")).toBe(false);
@@ -608,7 +608,7 @@ describe("createAgentRuntime", () => {
     );
     const session = await runtime.startSession({ tools: ["ask_operator"] });
 
-    const events = await drain(session.send("grelhe"));
+    const events = await drain(session.send("refine"));
 
     expect(events.some((event) => event.type === "question")).toBe(false);
     expect(responsesIn(transcript)).toContainEqual({

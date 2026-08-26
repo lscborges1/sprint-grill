@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { filterPickerStories, Picker, type PickerStory } from "./picker";
+import { filterPickerStories, Picker, summarizePickerStories, type PickerStory } from "./picker";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -48,6 +48,15 @@ describe("Picker", () => {
     expect(filterPickerStories(stories, "ausente", "all")).toHaveLength(0);
   });
 
+  it("should summarize the refinement funnel without relying on Azure DevOps state", () => {
+    expect(summarizePickerStories(stories)).toEqual({
+      total: 3,
+      "sem-investigacao": 1,
+      investigada: 2,
+      refinada: 0,
+    });
+  });
+
   it("should render a responsive story table with the next action", () => {
     const html = renderToStaticMarkup(
       <Picker
@@ -59,6 +68,8 @@ describe("Picker", () => {
     );
 
     expect(html).toContain("Backlog");
+    expect(html).toContain("Descubra antes de construir.");
+    expect(html).toContain("Resumo do refinamento");
     expect(html).toContain("Exportar relatório");
     expect(html).toContain("Acompanhar execução");
     expect(html).toContain("Revisar reprovação");

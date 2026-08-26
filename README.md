@@ -9,6 +9,8 @@ Refina transforma User Stories cruas em decisões explícitas, uma Spec revisáv
 
 User Stories costumam chegar cruas ao refinamento, e dependências importantes aparecem tarde, quando a sala já está tentando decidir. O Refina antecipa a investigação do código, conduz uma decisão por vez e mantém o que foi aprovado rastreável até a publicação.
 
+**Tese:** descobrir problemas mais cedo — sem substituir PO, QA, devs ou o refinamento humano.
+
 ## Como funciona
 
 ![Fluxo do Refina em quatro etapas conectadas: Investigar, Refinar, Revisar e Publicar](docs/assets/readme/workflow.svg)
@@ -78,6 +80,32 @@ O caminho do arquivo de config pode ser trocado com `SPRINT_GRILLER_CONFIG`.
 | `pnpm check` | Typecheck + lint + testes — o comando único do CI |
 | `pnpm test` | Só os testes (vitest) |
 | `pnpm build` / `pnpm start` | Build e execução em modo produção |
+
+## Demo local para pitch
+
+Para apresentar o conceito sem dados confidenciais e sem depender do Azure DevOps, use a galeria de desenvolvimento:
+
+```bash
+pnpm install
+pnpm demo
+```
+
+Abra as telas da demo:
+
+- <http://localhost:3000/dev-ui?view=picker>
+- <http://localhost:3000/dev-ui?view=investigacao>
+- <http://localhost:3000/dev-ui?view=palco>
+- <http://localhost:3000/dev-ui?view=dossie>
+
+A fixture usa uma US fictícia de cupom no checkout para mostrar perguntas, gaps e impactos que o Refina tenta antecipar antes da sprint. O roteiro completo está em [`docs/pitch/demo-script.md`](docs/pitch/demo-script.md).
+
+## Pitch e documentação do produto
+
+- [`docs/product-positioning.md`](docs/product-positioning.md) — problema, hipótese, proposta de valor, CURRENT/PROPOSED/FUTURE e métricas de piloto.
+- [`docs/architecture.md`](docs/architecture.md) — arquitetura real encontrada no código e fluxo completo de uma análise.
+- [`docs/pitch/pitch.md`](docs/pitch/pitch.md) — estrutura de apresentação em 10 slides para 10–15 minutos.
+- [`docs/pitch/speaker-notes.md`](docs/pitch/speaker-notes.md) — roteiro falado slide a slide.
+- [`docs/pitch/demo-script.md`](docs/pitch/demo-script.md) — preparação, comandos, fluxo, resultado esperado e plano B.
 
 ## Estrutura
 

@@ -132,6 +132,8 @@ function isFile(candidate: string): boolean {
  */
 function read(file: string): string | undefined {
   try {
+    const stat = statSync(file);
+    if ((stat.mode & 0o444) === 0) return undefined;
     return readFileSync(file, "utf8");
   } catch {
     return undefined;

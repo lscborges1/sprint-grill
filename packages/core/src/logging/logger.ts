@@ -51,7 +51,7 @@ export interface CreateLoggerOptions {
 export function createLogger(options: CreateLoggerOptions = {}): Logger {
   const loggerOptions: LoggerOptions = {
     level: options.level ?? logLevelFromEnv(),
-    base: { app: "sprint-griller" },
+    base: { app: "refina" },
     redact: { paths: REDACTED_PATHS, censor: "[redacted]" },
     formatters: {
       level: (label) => ({ level: label }),

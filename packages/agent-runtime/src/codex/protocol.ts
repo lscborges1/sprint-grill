@@ -9,7 +9,7 @@ import { z } from "zod";
  * cerimônia.
  */
 
-export const CLIENT_NAME = "sprint-griller";
+export const CLIENT_NAME = "refina";
 export const CLIENT_VERSION = "0.1.0";
 
 /** Ferramenta própria de HITL: superfície estável, sob nosso controle. */

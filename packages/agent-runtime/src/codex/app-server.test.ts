@@ -87,7 +87,7 @@ describe("connectAppServer", () => {
     expect(readTranscript(transcript)[0]).toMatchObject({
       method: "initialize",
       params: {
-        clientInfo: { name: "sprint-griller" },
+        clientInfo: { name: "refina" },
         capabilities: { experimentalApi: true },
       },
     });

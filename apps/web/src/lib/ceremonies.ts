@@ -92,14 +92,16 @@ type CeremonyGlobal = typeof globalThis & {
   __sprintGrillerCeremonyLifecycle?: CeremonyLifecycle;
 };
 
-const squadConfig = getSquadConfig();
-
 /**
  * A única fronteira de infraestrutura do Next. Piná-la no global preserva a
  * sessão viva, o SQLite e assinaturas SSE durante HMR no `next dev`.
  */
-const lifecycle = ((globalThis as CeremonyGlobal).__sprintGrillerCeremonyLifecycle ??=
-  createCeremonyLifecycle({
+function getLifecycle(): CeremonyLifecycle {
+  const holder = globalThis as CeremonyGlobal;
+  if (holder.__sprintGrillerCeremonyLifecycle) return holder.__sprintGrillerCeremonyLifecycle;
+
+  const squadConfig = getSquadConfig();
+  holder.__sprintGrillerCeremonyLifecycle = createCeremonyLifecycle({
     dbPath: defaultCeremonyDbPath(),
     repos: squadConfig.repos,
     resolveStartInput: (storyId) => ceremonyInputFromInvestigation(getInvestigation(storyId)),
@@ -110,14 +112,16 @@ const lifecycle = ((globalThis as CeremonyGlobal).__sprintGrillerCeremonyLifecyc
     }),
     runtimeFactory: () => createAgentRuntime({ cwd: squadConfig.repos.primary.path, logger }),
     logger,
-  }));
+  });
+  return holder.__sprintGrillerCeremonyLifecycle;
+}
 
 /**
  * Abre a cerimônia de uma US **investigada**: a Investigação aprovada é o insumo
  * do Refinamento coletivo.
  */
 export function startCeremony(storyId: number): Promise<CeremonySession> {
-  return lifecycle.start(storyId);
+  return getLifecycle().start(storyId);
 }
 
 function ceremonyInputFromInvestigation(
@@ -137,65 +141,65 @@ function ceremonyInputFromInvestigation(
 
 /** O Palco lido do banco — sem subir o runtime só para uma leitura. */
 export function getPalco(sessionId: string): PalcoState | undefined {
-  return lifecycle.palco(sessionId);
+  return getLifecycle().palco(sessionId);
 }
 
 /** O Dossiê é projeção do estado gravado e não precisa do agente. */
 export function getDossie(sessionId: string): DossieState | undefined {
-  return lifecycle.dossie(sessionId);
+  return getLifecycle().dossie(sessionId);
 }
 
 /** Grava a edição do Operador e avisa as telas — o despejo é outro passo. */
 export function saveSpecDraft(input: SaveSpecDraftInput): SpecDraft {
-  return lifecycle.saveSpecDraft(input);
+  return getLifecycle().saveSpecDraft(input);
 }
 
 export function discardSpecDraft(input: DiscardSpecDraftInput): void {
-  lifecycle.discardSpecDraft(input);
+  getLifecycle().discardSpecDraft(input);
 }
 
 /** O despejo é serial por US e permanece responsabilidade do ciclo de vida. */
 export function dumpCeremony(input: z.infer<typeof dumpCeremonySchema>): Promise<void> {
-  return lifecycle.dump(input);
+  return getLifecycle().dump(input);
 }
 
 export function findOpenCeremony(storyId: number): CeremonySession | undefined {
-  return lifecycle.findOpen(storyId);
+  return getLifecycle().findOpen(storyId);
 }
 
 export async function submitDecision(input: z.infer<typeof decisionSchema>): Promise<void> {
-  await lifecycle.decide(input);
+  await getLifecycle().decide(input);
 }
 
 /** Dispara a Consulta factual; a resposta chega ao Palco pelo SSE. */
 export async function addDoubt(input: z.infer<typeof consultationSchema>): Promise<void> {
-  await lifecycle.consult(input);
+  await getLifecycle().consult(input);
 }
 
 export function resumeCeremony(sessionId: string): Promise<void> {
-  return lifecycle.resume(sessionId);
+  return getLifecycle().resume(sessionId);
 }
 
 export function confirmRefinement(input: ArtifactGateInput): Promise<void> {
-  return lifecycle.confirmRefinement(input);
+  return getLifecycle().confirmRefinement(input);
 }
 
 export function continueRefining(input: ArtifactGateInput): Promise<void> {
-  return lifecycle.continueRefining(input);
+  return getLifecycle().continueRefining(input);
 }
 
 export function approveSpec(input: ArtifactGateInput): Promise<ArtifactApproval> {
-  return lifecycle.approveSpec(input);
+  return getLifecycle().approveSpec(input);
 }
 
 export function approveTickets(
   input: ArtifactGateInput,
 ): Promise<NonNullable<TicketArtifact["approval"]>> {
-  return lifecycle.approveTickets(input);
+  return getLifecycle().approveTickets(input);
 }
 
 export function reopenRefinement(input: ArtifactGateInput): Promise<void> {
-  return lifecycle.reopenRefinement(input);
+  return getLifecycle().reopenRefinement(input);
 }
 
 /** Assina o Palco de uma sessão. Devolve o cancelamento — o SSE chama no `cancel`. */
@@ -203,7 +207,7 @@ export function subscribeToPalco(
   sessionId: string,
   listener: (state: PalcoState) => void,
 ): () => void {
-  return lifecycle.subscribePalco(sessionId, listener);
+  return getLifecycle().subscribePalco(sessionId, listener);
 }
 
 /** Assina o Dossiê da mesma sessão: a aba do Operador anda junto com o Palco. */
@@ -211,5 +215,5 @@ export function subscribeToDossie(
   sessionId: string,
   listener: (state: DossieState) => void,
 ): () => void {
-  return lifecycle.subscribeDossie(sessionId, listener);
+  return getLifecycle().subscribeDossie(sessionId, listener);
 }

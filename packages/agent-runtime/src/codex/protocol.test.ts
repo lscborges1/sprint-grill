@@ -2,9 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   agendaResolutionArgumentsSchema,
   askOperatorArgumentsSchema,
+  CLIENT_NAME,
   completionProposalArgumentsSchema,
   refinementTicketsSubmissionSchema,
 } from "./protocol";
+
+describe("CLIENT_NAME", () => {
+  it("should identify the app as refina to the codex app-server", () => {
+    expect(CLIENT_NAME).toBe("refina");
+  });
+});
 
 const baseQuestion = {
   id: "q1",

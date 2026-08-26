@@ -48,6 +48,16 @@ describe("validateStartupConfig", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
+  it("should still validate normally when REFINA_DEMO is not exactly \"1\"", () => {
+    const exit = vi.spyOn(process, "exit").mockReturnValue(undefined as never);
+    vi.stubEnv("REFINA_DEMO", "true");
+    useConfig({ omitOrganization: true });
+
+    validateStartupConfig();
+
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("should let the app boot when the config is valid", () => {
     const exit = vi.spyOn(process, "exit").mockReturnValue(undefined as never);
     useConfig();

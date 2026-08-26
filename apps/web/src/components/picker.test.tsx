@@ -57,6 +57,15 @@ describe("Picker", () => {
     });
   });
 
+  it("should summarize an empty backlog without dividing by zero", () => {
+    expect(summarizePickerStories([])).toEqual({
+      total: 0,
+      "sem-investigacao": 0,
+      investigada: 0,
+      refinada: 0,
+    });
+  });
+
   it("should render a responsive story table with the next action", () => {
     const html = renderToStaticMarkup(
       <Picker
@@ -75,6 +84,25 @@ describe("Picker", () => {
     expect(html).toContain("Revisar reprovação");
     expect(html).toContain('aria-label="Buscar no backlog"');
     expect(html).toContain("Config da squad");
+  });
+
+  it("should render the refinement funnel counts as metric cards", () => {
+    const html = renderToStaticMarkup(
+      <Picker
+        stories={stories}
+        project="Plataforma"
+        repos={{ primary: { name: "api", path: "/tmp/api" }, related: [] }}
+        startAction={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Sem investigação");
+    expect(html).toContain("Investigadas");
+    expect(html).toContain("Refinadas");
+    // Contagens vindas da fixture `stories`: 1 sem-investigacao, 2 investigada, 0 refinada.
+    expect(html).toMatch(/text-3xl text-foreground">1</);
+    expect(html).toMatch(/text-3xl text-foreground">2</);
+    expect(html).toMatch(/text-3xl text-foreground">0</);
   });
 
   it("should distinguish action targets by User Story", () => {

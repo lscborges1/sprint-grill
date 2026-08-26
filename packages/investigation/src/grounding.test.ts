@@ -90,6 +90,22 @@ describe("verifyGrounding", () => {
     });
   });
 
+  it("should treat a file with only execute permission bits as unreadable", () => {
+    const execOnly = path.join(CORE_API, "src", "cache", "exec-only.ts");
+    writeFileSync(execOnly, "export const SESSION_TTL = 2;\n");
+    chmodSync(execOnly, 0o111);
+
+    const result = verify([
+      { repo: "core-api", path: "src/cache/exec-only.ts", symbol: "SESSION_TTL" },
+    ]);
+
+    chmodSync(execOnly, 0o600);
+    expect(result).toMatchObject({
+      status: "reprovado",
+      violations: [{ reason: "arquivo-ilegivel" }],
+    });
+  });
+
   it("should reject a citation to a repo that is not in the squad config", () => {
     const result = verify([{ repo: "billing", path: "src/index.ts" }]);
 

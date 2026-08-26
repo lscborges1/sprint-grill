@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AdoClientOptions } from "@sprint-griller/ado-client";
-import { dumpCompletionMarker, dumpMarker } from "@sprint-griller/ado-client";
+import { codeTag, dumpCompletionMarker, dumpMarker } from "@sprint-griller/ado-client";
 import { createLogger } from "@sprint-griller/core";
 import Database from "better-sqlite3";
 import { Writable } from "node:stream";
@@ -122,7 +122,7 @@ function createAzure(): { readonly state: AzureState; readonly fetch: typeof glo
       const description = patchValue(body, "/fields/System.Description");
       if (typeof description !== "string") throw new Error("story description missing");
       const estimate = patchValue(body, "/fields/Microsoft.VSTS.Scheduling.StoryPoints");
-      state.artifactWrites.push(description.includes(":complete -->") ? "completion" : "spec");
+      state.artifactWrites.push(description.includes(":complete") ? "completion" : "spec");
       if (typeof estimate === "number") state.estimate = estimate;
       state.description = description;
       state.rev += 1;
@@ -426,7 +426,7 @@ describe("CeremonyDump", () => {
       tasksMarkdown: approved.tickets.markdown,
       estimate: input.estimate,
     });
-    fixture.azure.description = dumpMarker("remote-incomplete", "spec");
+    fixture.azure.description = codeTag(dumpMarker("remote-incomplete", "spec"));
 
     await expect(fixture.dump.assertCanStartCeremony({
       storyId: STORY_ID,
@@ -455,7 +455,7 @@ describe("CeremonyDump", () => {
         const current = holder.fixture;
         const local = current?.store.getSession("session-1")?.dump;
         if (current && local?.status === "publishing") {
-          current.azure.description = dumpCompletionMarker(local.inputs.dumpId);
+          current.azure.description = codeTag(dumpCompletionMarker(local.inputs.dumpId));
         }
         return base(request, init);
       },
@@ -477,7 +477,7 @@ describe("CeremonyDump", () => {
       fetch: (base) => async (request, init) => {
         const body = requestBody(init);
         const description = patchValue(body, "/fields/System.Description");
-        if (failCompletion && typeof description === "string" && description.includes(":complete -->")) {
+        if (failCompletion && typeof description === "string" && description.includes(":complete")) {
           failCompletion = false;
           return json({ message: "transient" }, 500);
         }
@@ -506,7 +506,7 @@ describe("CeremonyDump", () => {
       fetch: (base) => async (request, init) => {
         const body = requestBody(init);
         const description = patchValue(body, "/fields/System.Description");
-        if (failCompletion && typeof description === "string" && description.includes(":complete -->")) {
+        if (failCompletion && typeof description === "string" && description.includes(":complete")) {
           failCompletion = false;
           return json({ message: "transient" }, 500);
         }
@@ -546,7 +546,7 @@ describe("CeremonyDump", () => {
       fetch: (base) => async (request, init) => {
         const body = requestBody(init);
         const description = patchValue(body, "/fields/System.Description");
-        if (failSpec && typeof description === "string" && !description.includes(":complete -->")) {
+        if (failSpec && typeof description === "string" && !description.includes(":complete")) {
           failSpec = false;
           return json({ message: "transient" }, 500);
         }
@@ -645,7 +645,7 @@ describe("CeremonyDump", () => {
 
   it("should publish a revised ceremony after another dump completed remotely", async () => {
     const fixture = createFixture();
-    fixture.azure.description = dumpCompletionMarker("prior-completed-dump");
+    fixture.azure.description = codeTag(dumpCompletionMarker("prior-completed-dump"));
 
     await fixture.dump.publish(inputFor(fixture.dossie));
 

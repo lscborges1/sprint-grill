@@ -1,7 +1,7 @@
 import { Writable } from "node:stream";
 import { createLogger } from "@sprint-griller/core";
 import { describe, expect, it, vi } from "vitest";
-import { dumpMarker } from "./dump-marker";
+import { codeChip, codeTag, dumpMarker } from "./dump-marker";
 import { SPEC_MARKER } from "./refinement-status";
 import {
   publishChildTasks,
@@ -10,6 +10,7 @@ import {
   publishStorySpec,
   readDumpCompletion,
   readIncompleteDumps,
+  renderDecisionRecordMarkdown,
   replaceManagedSpec,
   markdownToAdoHtml,
 } from "./publish-refinement";
@@ -48,7 +49,8 @@ describe("replaceManagedSpec", () => {
     const description = replaceManagedSpec("<div>Texto do PO</div>", "# Spec");
 
     expect(description).toContain("<div>Texto do PO</div>");
-    expect(description).toContain(SPEC_MARKER);
+    expect(description).toContain("<code>sprint-griller:spec:start</code>");
+    expect(description).toContain(codeTag(dumpMarker("legacy", "spec")));
     expect(description).toContain("<h1>Spec</h1>");
     expect(description).not.toContain("# Spec\n");
   });
@@ -59,12 +61,26 @@ describe("replaceManagedSpec", () => {
 
     expect(second).toContain("<h1>Segunda</h1>");
     expect(second).not.toContain("Primeira");
-    expect(second.split(SPEC_MARKER)).toHaveLength(2);
+    expect(second.split("<code>sprint-griller:spec:start</code>")).toHaveLength(2);
+  });
+
+  it("should replace a legacy managed block delimited by HTML comments", () => {
+    // Blocos da primeira geração, gravados onde a sanitização não os removeu:
+    // continuam gerenciados — substituídos, nunca duplicados.
+    const legacy = "Texto do PO\n<!-- sprint-griller:spec:start -->\n<p>Antiga</p>\n<!-- sprint-griller:spec:end -->";
+    const replaced = replaceManagedSpec(legacy, "# Nova");
+
+    expect(replaced).toContain("<h1>Nova</h1>");
+    expect(replaced).not.toContain("Antiga");
+    expect(replaced).not.toContain("<!-- sprint-griller:spec:start -->");
   });
 
   it("should refuse a malformed managed block instead of truncating the User Story", () => {
     expect(() =>
       replaceManagedSpec("Texto do PO\n<!-- sprint-griller:spec:start -->\nNão apagar", "# Spec"),
+    ).toThrow(/marcador de fechamento/i);
+    expect(() =>
+      replaceManagedSpec("Texto do PO\n<code>sprint-griller:spec:start</code>\nNão apagar", "# Spec"),
     ).toThrow(/marcador de fechamento/i);
   });
 });
@@ -144,7 +160,8 @@ const answer = 42;
 
 describe("publishDecisionRecord", () => {
   it("should publish the deterministic collective decision without individual attribution", async () => {
-    const ado = fakeAdo((call) => call.init?.method === "GET" ? json({ comments: [] }) : json({ commentId: 91 }));
+    // Contrato ao vivo da rota (2026-08-26): o id vem como `id`.
+    const ado = fakeAdo((call) => call.init?.method === "GET" ? json({ comments: [] }) : json({ id: 91 }));
 
     await expect(
       publishDecisionRecord(options(ado.fetch), {
@@ -166,11 +183,12 @@ describe("publishDecisionRecord", () => {
     expect(call?.url).toContain("format=markdown");
     expect(String(call?.init?.body)).not.toContain("Decidido por");
     expect(String(call?.init?.body)).toContain("2026-08-06T14:30:00.000Z");
-    expect(String(call?.init?.body)).toContain("sprint-griller:dump:dump-4211:decision:1");
+    // O chip — não um comentário HTML, que o ADO remove do texto persistido.
+    expect(String(call?.init?.body)).toContain(codeChip("sprint-griller:dump:dump-4211:decision:1"));
   });
 
   it("should reuse a marked decision record instead of posting a duplicate", async () => {
-    const ado = fakeAdo(() => json({ comments: [{ commentId: 91, text: "<!-- sprint-griller:dump:dump-4211:decision:1 -->" }] }));
+    const ado = fakeAdo(() => json({ comments: [{ id: 91, text: codeChip("sprint-griller:dump:dump-4211:decision:1") }] }));
 
     await expect(publishDecisionRecord(options(ado.fetch), {
       storyId: 4211,
@@ -192,7 +210,7 @@ describe("publishDecisionRecord", () => {
     const ado = fakeAdo((call) => {
       if (call.url.includes("continuationToken=next-page")) {
         return json({
-          comments: [{ commentId: 91, text: "<!-- sprint-griller:dump:dump-4211:decision:1 -->" }],
+          comments: [{ id: 91, text: codeChip("sprint-griller:dump:dump-4211:decision:1") }],
           continuationToken: null,
         });
       }
@@ -204,7 +222,7 @@ describe("publishDecisionRecord", () => {
           },
         });
       }
-      return json({ commentId: 999 });
+      return json({ id: 999 });
     });
 
     await expect(publishDecisionRecord(options(ado.fetch), {
@@ -217,6 +235,30 @@ describe("publishDecisionRecord", () => {
       decidedAt: Date.UTC(2026, 7, 6, 14, 30),
     })).resolves.toMatchObject({ commentId: 91 });
   });
+
+  it("should reconcile an orphaned record that lost its marker to ADO sanitization", async () => {
+    // Fato real de 2026-08-26: o ADO aceitou o comment mas removeu o comentário
+    // HTML do texto persistido. O corpo renderizado — determinístico — é a
+    // assinatura que recupera esse Registro sem duplicá-lo no retry.
+    const orphan = {
+      storyId: 4211,
+      dumpId: "dump-4211",
+      questionSeq: 1,
+      question: "O TTL é global?",
+      answer: "Sim",
+      recommendation: "Global",
+      decidedAt: Date.UTC(2026, 7, 6, 14, 30),
+    };
+    const rendered = renderDecisionRecordMarkdown(orphan);
+    const orphanBody = rendered.slice(rendered.indexOf("# Registro de decisão"));
+    const ado = fakeAdo(() => json({ comments: [{ id: 91, text: `\n\n${orphanBody}` }] }));
+
+    await expect(publishDecisionRecord(options(ado.fetch), orphan)).resolves.toMatchObject({
+      commentId: 91,
+    });
+
+    expect(ado.calls).toHaveLength(1);
+  });
 });
 
 describe("readDumpCompletion", () => {
@@ -226,7 +268,7 @@ describe("readDumpCompletion", () => {
         id: 4211,
         rev: 3,
         fields: {
-          "System.Description": "<!-- sprint-griller:dump:dump-4211:complete -->",
+          "System.Description": codeTag("sprint-griller:dump:dump-4211:complete"),
           "System.WorkItemType": "User Story",
         },
       }),
@@ -241,14 +283,14 @@ describe("readIncompleteDumps", () => {
     const ado = fakeAdo((call) => {
       if (call.url.includes("/comments")) {
         return json({
-          comments: [{ commentId: 91, text: "<!-- sprint-griller:dump:dump-parcial:decision:1 -->" }],
+          comments: [{ id: 91, text: codeChip("sprint-griller:dump:dump-parcial:decision:1") }],
         });
       }
       return json({
         id: 4211,
         rev: 3,
         fields: {
-          "System.Description": `${SPEC_MARKER}\n<!-- sprint-griller:dump:dump-parcial:spec -->`,
+          "System.Description": `${codeTag(SPEC_MARKER)}\n${codeTag("sprint-griller:dump:dump-parcial:spec")}`,
           "System.WorkItemType": "User Story",
         },
       });
@@ -261,14 +303,14 @@ describe("readIncompleteDumps", () => {
     const ado = fakeAdo((call) => {
       if (call.url.includes("/comments")) {
         return json({
-          comments: [{ commentId: 91, text: "<!-- sprint-griller:dump:dump-ok:decision:1 -->" }],
+          comments: [{ commentId: 91, text: codeChip("sprint-griller:dump:dump-ok:decision:1") }],
         });
       }
       return json({
         id: 4211,
         rev: 3,
         fields: {
-          "System.Description": "<!-- sprint-griller:dump:dump-ok:complete -->",
+          "System.Description": codeTag("sprint-griller:dump:dump-ok:complete"),
           "System.WorkItemType": "User Story",
         },
       });
@@ -283,7 +325,7 @@ describe("publishDumpCompletion", () => {
     const ado = fakeAdo((call) => {
       if (call.url.includes("/comments")) {
         return call.init?.method === "POST"
-          ? json({ commentId: 91 })
+          ? json({ id: 91 })
           : json({ comments: [] });
       }
       return call.init?.method === "PATCH"
@@ -302,12 +344,25 @@ describe("publishDumpCompletion", () => {
         ? []
         : [{ method: call.init.method, body: JSON.parse(String(call.init.body)) }],
     )).toEqual(expect.arrayContaining([
-      { method: "POST", body: { text: "<!-- sprint-griller:dump:dump-4211:audit:pending:2 -->" } },
+      {
+        method: "POST",
+        // O chip carrega a prova que as métricas relêem; o resto é o que a
+        // squad vê na discussão da US.
+        body: {
+          text: [
+            codeChip("sprint-griller:dump:dump-4211:audit:pending:2"),
+            "**Refina concluiu o despejo desta US.**",
+            "Dúvidas em aberto no fechamento: 2.",
+          ].join("\n\n"),
+        },
+      },
       {
         method: "PATCH",
         body: [
           { op: "test", path: "/rev", value: 7 },
-          expect.objectContaining({ value: expect.stringContaining("sprint-griller:dump:dump-4211:complete") }),
+          expect.objectContaining({
+            value: expect.stringContaining(codeTag("sprint-griller:dump:dump-4211:complete")),
+          }),
         ],
       },
     ]));
@@ -353,7 +408,7 @@ describe("publishStorySpec", () => {
         id: 4211,
         rev: 7,
         fields: {
-          "System.Description": `${dumpMarker("dump-4211", "spec")}\n<p>Editada no ADO</p>`,
+          "System.Description": `${codeTag(dumpMarker("dump-4211", "spec"))}\n<p>Editada no ADO</p>`,
           "System.WorkItemType": "User Story",
         },
       }),
@@ -414,6 +469,37 @@ describe("publishStorySpec", () => {
 });
 
 describe("publishChildTasks", () => {
+  const STORY = {
+    id: 4211,
+    rev: 7,
+    fields: {
+      "System.Description": "<p>Texto do PO</p>",
+      "System.WorkItemType": "User Story",
+      "System.AreaPath": "Plataforma\\Checkout",
+      "System.IterationPath": "Plataforma\\Sprint 1",
+    },
+  };
+
+  it("should create child Tasks as the canonical Task type, not the first alphabetically", async () => {
+    // Processo herdado da ONR: a categoria devolve ['Fix', 'Task']. A ordem é
+    // alfabética — o despejo tem que escolher o tipo que a squad chama de Task.
+    const ado = fakeAdo((call) => {
+      if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
+        return json({ workItemTypes: [{ name: "Fix" }, { name: "Task" }] });
+      }
+      if (call.url.includes("/_apis/wit/workitems/4211")) return json(STORY);
+      if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
+      return json({ id: 900 });
+    });
+
+    await publishChildTasks(options(ado.fetch), childTasks);
+
+    expect(
+      ado.calls.some((call) => call.url.includes("/_apis/wit/workitems/$Task")),
+    ).toBe(true);
+    expect(ado.calls.some((call) => call.url.includes("/_apis/wit/workitems/$Fix"))).toBe(false);
+  });
+
   const childTasks = {
     storyId: 4211,
     dumpId: "dump-4211",
@@ -429,15 +515,18 @@ describe("publishChildTasks", () => {
       if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
         return json({ workItemTypes: [{ name: "Task" }] });
       }
+      if (call.url.includes("/_apis/wit/workitems/4211")) return json(STORY);
       if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
       return json({ id: 900 });
     });
-    await publishChildTasks(options(ado.fetch), {
-      storyId: 4211,
-      dumpId: "dump-4211",
-      tasks: [{
-        title: "Criar endpoint",
-        bodyMarkdown: `    pnpm test
+    await publishChildTasks(
+      { ...options(ado.fetch), azureDevOps: { ...AZURE_DEVOPS, taskDefaults: { "Custom.000_Activity": "Backend" } } },
+      {
+        storyId: 4211,
+        dumpId: "dump-4211",
+        tasks: [{
+          title: "Criar endpoint",
+          bodyMarkdown: `    pnpm test
 
 Entrega o CSV.
 
@@ -449,9 +538,10 @@ Preservar clientes antigos.
 
 - Retorna o CSV.
 `,
-        blockedBy: [],
-      }],
-    });
+          blockedBy: [],
+        }],
+      },
+    );
 
     const taskBody = String(
       ado.calls.find((call) => call.url.includes("/_apis/wit/workitems/$Task"))?.init?.body,
@@ -460,7 +550,17 @@ Preservar clientes antigos.
     expect(taskBody).toContain("<pre><code>pnpm test\\n</code></pre>");
     expect(taskBody).toContain("Preservar clientes antigos.");
     expect(taskBody).not.toContain("Spec da US");
-    expect(taskBody).toContain("sprint-griller:dump:dump-4211:task:1");
+    // A descrição fica limpa: nenhum marcador interno da ferramenta nela.
+    expect(taskBody).not.toContain("sprint-griller");
+    // A Task filha herda área e iteração da US — sem isso ela nasce na área
+    // raiz, onde a squad nem sempre pode criar (TF237111).
+    const taskPatch = JSON.parse(taskBody) as Array<{ path: string; value: string }>;
+    expect(taskPatch).toEqual(expect.arrayContaining([
+      { op: "add", path: "/fields/System.AreaPath", value: "Plataforma\\Checkout" },
+      { op: "add", path: "/fields/System.IterationPath", value: "Plataforma\\Sprint 1" },
+      // Campo obrigatório do processo da squad, declarado na config.
+      { op: "add", path: "/fields/Custom.000_Activity", value: "Backend" },
+    ]));
   });
 
   it("should create child Tasks with acceptance criteria, a Spec link, and native blockers", async () => {
@@ -469,6 +569,7 @@ Preservar clientes antigos.
       if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
         return json({ workItemTypes: [{ name: "Task" }] });
       }
+      if (call.url.includes("/_apis/wit/workitems/4211")) return json(STORY);
       if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
       if (call.url.includes("/_apis/wit/workitems/$Task")) {
         if (call.init?.method !== "POST") {
@@ -527,6 +628,8 @@ Preservar clientes antigos.
     const ado = fakeAdo((call) =>
       call.url.includes("workitemtypecategories/Microsoft.TaskCategory")
         ? json({ workItemTypes: [{ name: "Task" }] })
+        : call.url.includes("/_apis/wit/workitems/4211")
+          ? json(STORY)
         : call.url.includes("/_apis/wit/wiql")
           ? json({ workItems: [] })
         : json({ id: 900 }),
@@ -545,11 +648,12 @@ Preservar clientes antigos.
     expect(JSON.stringify(lines)).not.toContain("Transferir dados pessoais de Maria");
   });
 
-  it("should reuse a marked child Task instead of creating it again", async () => {
+  it("should reuse an existing child Task with the signed title instead of creating it again", async () => {
     const ado = fakeAdo((call) => {
       if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
         return json({ workItemTypes: [{ name: "Task" }] });
       }
+      if (call.url.includes("/_apis/wit/workitems/4211")) return json(STORY);
       if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [{ id: 900 }] });
       if (call.url.includes("/_apis/wit/workitemsbatch")) {
         return json({
@@ -557,7 +661,7 @@ Preservar clientes antigos.
             id: 900,
             fields: {
               "System.Title": "Criar endpoint",
-              "System.Description": "<!-- sprint-griller:dump:dump-4211:task:1 -->",
+              "System.Description": "<p>Editada pela squad no ADO</p>",
             },
             relations: [],
           }],
@@ -581,6 +685,7 @@ Preservar clientes antigos.
       if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
         return json({ workItemTypes: [{ name: "Task" }] });
       }
+      if (call.url.includes("/_apis/wit/workitems/4211")) return json(STORY);
       if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [{ id: 900 }, { id: 901 }] });
       if (call.url.includes("/_apis/wit/workitemsbatch")) {
         return json({
@@ -589,7 +694,7 @@ Preservar clientes antigos.
               id: 900,
               fields: {
                 "System.Title": "Criar endpoint",
-                "System.Description": "<!-- sprint-griller:dump:dump-4211:task:1 -->",
+                "System.Description": "<p>Gravada no primeiro trecho do despejo</p>",
               },
               relations: [],
             },
@@ -597,7 +702,7 @@ Preservar clientes antigos.
               id: 901,
               fields: {
                 "System.Title": "Mostrar link",
-                "System.Description": "<!-- sprint-griller:dump:dump-4211:task:2 -->",
+                "System.Description": "<p>Gravada no primeiro trecho do despejo</p>",
               },
               relations: [{
                 rel: "System.LinkTypes.Dependency-Reverse",
@@ -641,6 +746,7 @@ Preservar clientes antigos.
       if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
         return json({ workItemTypes: [{ name: "Task" }] });
       }
+      if (call.url.includes("/_apis/wit/workitems/4211")) return json(STORY);
       if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
       throw new TypeError("network down");
     });
@@ -657,6 +763,7 @@ Preservar clientes antigos.
       if (call.url.includes("workitemtypecategories/Microsoft.TaskCategory")) {
         return json({ workItemTypes: [{ name: "Task" }] });
       }
+      if (call.url.includes("/_apis/wit/workitems/4211")) return json(STORY);
       if (call.url.includes("/_apis/wit/wiql")) return json({ workItems: [] });
       writes += 1;
       return writes === 1 ? json({ id: 900 }) : json({ message: "invalid Task" }, 400);

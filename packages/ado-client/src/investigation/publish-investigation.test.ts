@@ -74,8 +74,9 @@ function bodyOf(call: Call): { text: string } {
 
 describe("publishInvestigation", () => {
   it("should post the report as a Markdown comment on the story itself", async () => {
+    // Contrato ao vivo da rota (2026-08-26): o id vem como `id`.
     const { promise, calls } = publish(() =>
-      json({ commentId: 77, workItemId: 4211 }),
+      json({ id: 77, workItemId: 4211 }),
     );
     await promise;
 
@@ -91,7 +92,7 @@ describe("publishInvestigation", () => {
   });
 
   it("should embed the marker the picker reads, so the US turns investigada", async () => {
-    const { promise, calls } = publish(() => json({ commentId: 77 }));
+    const { promise, calls } = publish(() => json({ id: 77 }));
     await promise;
 
     const published = bodyOf(calls[0]!).text;
@@ -102,6 +103,7 @@ describe("publishInvestigation", () => {
   });
 
   it("should return the comment and a link the operator can open", async () => {
+    // `commentId`: a forma antiga da API continua aceita.
     const { promise } = publish(() => json({ commentId: 77 }));
 
     await expect(promise).resolves.toEqual({

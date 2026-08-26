@@ -1,7 +1,7 @@
 import { Writable } from "node:stream";
 import { createLogger } from "@sprint-griller/core";
 import { describe, expect, it, vi } from "vitest";
-import { dumpAuditMarker } from "../refinement/dump-marker";
+import { dumpAuditMarker, codeChip } from "../refinement/dump-marker";
 import { INVESTIGATION_MARKER } from "../refinement/refinement-status";
 import { fetchSprintMetrics } from "./sprint-metrics";
 
@@ -51,22 +51,22 @@ function fakeAdo(paginateComments = false) {
     if (comments === "1") {
       if (paginateComments && !url.includes("continuationToken=next")) {
         return json({ comments: [{
-          text: INVESTIGATION_MARKER,
+          text: codeChip(INVESTIGATION_MARKER),
           createdDate: "2026-01-20T10:00:00Z",
         }] }, { "x-ms-continuationtoken": "next" });
       }
       return json({ comments: [
         ...(paginateComments ? [] : [{
-          text: INVESTIGATION_MARKER,
+          text: codeChip(INVESTIGATION_MARKER),
           createdDate: "2026-01-20T10:00:00Z",
         }]),
-        { text: dumpAuditMarker("dump-1", 0), createdDate: "2026-01-21T10:00:00Z" },
+        { text: codeChip(dumpAuditMarker("dump-1", 0)), createdDate: "2026-01-21T10:00:00Z" },
       ] });
     }
     if (comments === "2") {
       return json({ comments: [
-        { text: dumpAuditMarker("dump-2", 2), createdDate: "2026-01-22T10:00:00Z" },
-        { text: INVESTIGATION_MARKER, createdDate: "2026-02-01T10:00:00Z" },
+        { text: codeChip(dumpAuditMarker("dump-2", 2)), createdDate: "2026-01-22T10:00:00Z" },
+        { text: codeChip(INVESTIGATION_MARKER), createdDate: "2026-02-01T10:00:00Z" },
       ] });
     }
     throw new Error(`rota inesperada: ${url} ${init?.method ?? "GET"}`);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { codeChip, codeTag, dumpCompletionMarker } from "../index";
 import {
   INVESTIGATION_MARKER,
   SPEC_MARKER,
@@ -19,8 +20,19 @@ describe("inferRefinementStatus", () => {
     const status = inferRefinementStatus({
       description: "Como PO, quero exportar o relatório em CSV.",
       comments: [
-        `${INVESTIGATION_MARKER}\n## Impacto\n\`core-api/src/report.ts\` monta o payload.`,
+        `${codeChip(INVESTIGATION_MARKER)}\n## Impacto\n\`core-api/src/report.ts\` monta o payload.`,
       ],
+    });
+
+    expect(status).toBe("investigada");
+  });
+
+  it("should report a US as investigada from an orphaned Investigation that lost its marker", () => {
+    // Investigações publicadas antes do chip existir perderam o comentário
+    // HTML na sanitização do ADO — o título do relatório é o que sobrou delas.
+    const status = inferRefinementStatus({
+      description: "Como PO, quero exportar o relatório em CSV.",
+      comments: ["\n\n# Investigação — US #4211: TTL configurável\n\nO TTL é fixo."],
     });
 
     expect(status).toBe("investigada");
@@ -30,8 +42,8 @@ describe("inferRefinementStatus", () => {
     const status = inferRefinementStatus({
       description: "Como PO, quero exportar o relatório em CSV.",
       comments: [
-        `${INVESTIGATION_MARKER}\n## Impacto`,
-        `${SPEC_MARKER}\n## Decisões\n- CSV com separador ";" (PO, 06/08)\n<!-- sprint-griller:dump:abc123:complete -->`,
+        `${codeChip(INVESTIGATION_MARKER)}\n## Impacto`,
+        `${codeTag(SPEC_MARKER)}\n## Decisões\n- CSV com separador ";" (PO, 06/08)\n${codeTag(dumpCompletionMarker("abc123"))}`,
       ],
     });
 
@@ -40,7 +52,7 @@ describe("inferRefinementStatus", () => {
 
   it("should report a US as refinada when the final marker lives in its description", () => {
     const status = inferRefinementStatus({
-      description: `Como PO, quero exportar o relatório em CSV.\n\n${SPEC_MARKER}\n## Decisões\n<!-- sprint-griller:dump:abc123:complete -->`,
+      description: `Como PO, quero exportar o relatório em CSV.\n\n${codeTag(SPEC_MARKER)}\n## Decisões\n${codeChip(dumpCompletionMarker("abc123"))}`,
       comments: [],
     });
 

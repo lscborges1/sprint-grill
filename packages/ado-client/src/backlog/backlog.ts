@@ -71,7 +71,7 @@ export async function fetchBacklog(
   const types = await fetchBacklogItemTypes(rest);
   if (types.length === 0) return [];
 
-  const stories = await fetchStories(rest, types);
+  const stories = await fetchStories(rest, options.azureDevOps.project, types);
 
   rest.logger.info({ stories: stories.length }, "backlog lido");
 
@@ -80,6 +80,7 @@ export async function fetchBacklog(
 
 async function fetchStories(
   rest: AdoRest,
+  project: string,
   types: readonly string[],
 ): Promise<readonly BacklogStory[]> {
   const priorityField = await resolvePriorityField(rest, types);
@@ -89,7 +90,7 @@ async function fetchStories(
     path: "_apis/wit/wiql",
     query: { $top: String(BACKLOG_LIMIT) },
     schema: wiqlIdsSchema,
-    body: { query: backlogItemsQuery(types, priorityField) },
+    body: { query: backlogItemsQuery(project, types, priorityField) },
   });
 
   const ids = workItems.map(({ id }) => id);
@@ -189,9 +190,14 @@ async function fetchComments(
  * antes do planejamento, com a US ainda fora de sprint. `Removed` é a única
  * exclusão — o status de refinamento, não o estado do board, diz ao Operador
  * o que falta refinar. Só itens de backlog: tasks e test cases são o ruído que
- * o picker não lista. Aspas simples são escapadas dobrando, como manda a WIQL.
+ * o picker não lista. O filtro por `[System.TeamProject]` é explícito porque a
+ * rota com projeto na URL não garante o escopo da WIQL: sem ele, o ADO consulta
+ * a organização inteira — pode devolver itens de outros projetos, estourar o
+ * limite de 20.000 itens (VS402337) e deixar o picker vazio. Aspas simples são
+ * escapadas dobrando, como manda a WIQL.
  */
 function backlogItemsQuery(
+  project: string,
   types: readonly string[],
   priorityField: string | undefined,
 ): string {
@@ -203,7 +209,8 @@ function backlogItemsQuery(
 
   return (
     "SELECT [System.Id] FROM WorkItems " +
-    `WHERE [System.WorkItemType] IN (${typeList}) ` +
+    `WHERE [System.TeamProject] = '${escapeWiql(project)}' ` +
+    `AND [System.WorkItemType] IN (${typeList}) ` +
     "AND [System.State] <> 'Removed' " +
     orderBy
   );

@@ -2,6 +2,7 @@ import { Writable } from "node:stream";
 import { createLogger } from "@sprint-griller/core";
 import { describe, expect, it, vi } from "vitest";
 import { AdoError } from "../ado-error";
+import { codeChip } from "../refinement/dump-marker";
 import {
   INVESTIGATION_MARKER,
   SPEC_MARKER,
@@ -173,7 +174,8 @@ describe("fetchBacklog", () => {
 
     expect(ado.wiqlQueries[0]).toBe(
       "SELECT [System.Id] FROM WorkItems " +
-        "WHERE [System.WorkItemType] IN ('Product Backlog Item', 'Bug') " +
+        "WHERE [System.TeamProject] = 'Plataforma' " +
+        "AND [System.WorkItemType] IN ('Product Backlog Item', 'Bug') " +
         "AND [System.State] <> 'Removed' " +
         "ORDER BY [Microsoft.VSTS.Common.BacklogPriority] ASC, [System.Id] ASC",
     );
@@ -221,12 +223,12 @@ describe("fetchBacklog", () => {
         {
           id: 2,
           title: "Já investigada",
-          comments: [`${INVESTIGATION_MARKER}\n## Impacto`],
+          comments: [`${codeChip(INVESTIGATION_MARKER)}\n## Impacto`],
         },
         {
           id: 3,
           title: "Já refinada",
-          comments: [`${INVESTIGATION_MARKER}`, `${SPEC_MARKER}\n## Decisões\n<!-- sprint-griller:dump:abc123:complete -->`],
+          comments: [`${codeChip(INVESTIGATION_MARKER)}`, `${SPEC_MARKER}\n## Decisões\n<!-- sprint-griller:dump:abc123:complete -->`],
         },
       ],
     });

@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./runs": "./src/runs/index.ts",
     "./vocabulary": "./src/vocabulary.ts"
   },
   "scripts": {
@@ -15,10 +16,12 @@
     "@sprint-griller/ado-client": "workspace:*",
     "@sprint-griller/agent-runtime": "workspace:*",
     "@sprint-griller/core": "workspace:*",
+    "better-sqlite3": "^13.0.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@types/better-sqlite3": "^7.6.13",
     "eslint": "^9.39.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.66.0"

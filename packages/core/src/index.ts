@@ -3,10 +3,14 @@ export { loadAdoCredentials } from "./config/ado-credentials";
 export type { AdoCredentials } from "./config/ado-credentials";
 export { DB_PATH_ENV_VAR, defaultCeremonyDbPath } from "./config/ceremony-db";
 export {
+  INVESTIGATIONS_DB_PATH_ENV_VAR,
+  defaultInvestigationsDbPath,
+} from "./config/investigations-db";
+export {
   CONFIG_PATH_ENV_VAR,
   defaultSquadConfigPath,
   loadSquadConfig,
 } from "./config/squad-config";
-export type { RepoConfig, SquadConfig } from "./config/squad-config";
+export type { PreparoConfig, RepoConfig, SquadConfig } from "./config/squad-config";
 export { createLogger } from "./logging/logger";
 export type { LogLevel, Logger } from "./logging/logger";

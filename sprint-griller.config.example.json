@@ -17,5 +17,11 @@
         "path": "/Users/voce/dev/web-app"
       }
     ]
+  },
+  "preparo": {
+    "enabled": true,
+    "intervalMinutes": 30,
+    "limit": 5,
+    "states": ["New"]
   }
 }

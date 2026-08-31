@@ -16,6 +16,7 @@ const STORY = {
   id: 117,
   title: "Aplicar cupom de desconto no checkout",
   url: "https://example.com/117",
+  rev: 7,
 } as const;
 
 const DECISION = {
@@ -67,6 +68,7 @@ export const PICKER_STORIES = [
     id: 118,
     title: "Exibir histórico de tentativas de pagamento",
     url: "https://example.com/118",
+    rev: 4,
     type: "User Story",
     state: "Active",
     assignedTo: undefined,
@@ -77,6 +79,7 @@ export const PICKER_STORIES = [
     id: 119,
     title: "Notificar cliente sobre expiração de orçamento",
     url: "https://example.com/119",
+    rev: 2,
     type: "User Story",
     state: "Active",
     assignedTo: undefined,
@@ -103,6 +106,7 @@ export const INVESTIGATION_MODEL = {
       },
     },
     startedAt: 1,
+    origin: "operador",
     finishedAt: 2,
     previous: undefined,
     publication: undefined,

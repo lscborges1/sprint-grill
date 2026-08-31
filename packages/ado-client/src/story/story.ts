@@ -10,6 +10,8 @@ export interface StoryDetails {
   readonly title: string;
   readonly type: string;
   readonly state: string;
+  /** Revisão do work item — sobe a qualquer edição; invalida análises antigas. */
+  readonly rev: number;
   /** Como o PO escreveu: HTML, na maioria dos processos do ADO. */
   readonly description: string | undefined;
   readonly url: string;
@@ -22,6 +24,7 @@ const workItemSchema = z.object({
     "System.Title": z.string(),
     "System.WorkItemType": z.string().default(""),
     "System.State": z.string().default(""),
+    "System.Rev": z.number().default(1),
     "System.Description": z.string().optional(),
   }),
 });
@@ -48,6 +51,7 @@ export async function fetchStory(
     title: item.fields["System.Title"],
     type: item.fields["System.WorkItemType"],
     state: item.fields["System.State"],
+    rev: item.fields["System.Rev"],
     description: item.fields["System.Description"],
     url: rest.workItemUrl(item.id),
     wikiContext,

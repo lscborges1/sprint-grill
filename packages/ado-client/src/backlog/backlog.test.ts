@@ -26,6 +26,7 @@ interface FakeWorkItem {
   readonly title: string;
   readonly type?: string;
   readonly state?: string;
+  readonly rev?: number;
   readonly assignedTo?: string;
   readonly description?: string;
   readonly comments?: readonly string[];
@@ -84,6 +85,7 @@ function fakeAdo(state: FakeAdoState = {}) {
               "System.Title": item.title,
               "System.WorkItemType": item.type ?? "User Story",
               "System.State": item.state ?? "New",
+              "System.Rev": item.rev ?? 3,
               "System.CommentCount": item.comments?.length ?? 0,
               ...(item.description === undefined
                 ? {}
@@ -221,12 +223,12 @@ describe("fetchBacklog", () => {
         {
           id: 2,
           title: "Já investigada",
-          comments: [`${INVESTIGATION_MARKER}\n## Impacto`],
+          comments: ["`" + INVESTIGATION_MARKER + "`\n## Impacto"],
         },
         {
           id: 3,
           title: "Já refinada",
-          comments: [`${INVESTIGATION_MARKER}`, `${SPEC_MARKER}\n## Decisões\n<!-- sprint-griller:dump:abc123:complete -->`],
+          comments: ["`" + INVESTIGATION_MARKER + "`", "`" + SPEC_MARKER + "`\n## Decisões\n`sprint-griller:dump:abc123:complete`"],
         },
       ],
     });

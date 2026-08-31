@@ -211,6 +211,9 @@ importers:
       '@sprint-griller/core':
         specifier: workspace:*
         version: link:../core
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -218,6 +221,9 @@ importers:
       '@eslint/js':
         specifier: ^9.39.1
         version: 9.39.5
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       eslint:
         specifier: ^9.39.1
         version: 9.39.5(jiti@2.7.0)(supports-color@7.2.0)

@@ -11,6 +11,8 @@ export type PickerFilter = "all" | RefinementStatus;
 
 export type PickerStory = BacklogStory & {
   readonly action: PickerAction;
+  /** A US do backlog mudou desde a última Investigação local — análise velha. */
+  readonly stale?: boolean;
 };
 
 type StartInvestigationAction = (formData: FormData) => void | Promise<void>;
@@ -242,7 +244,16 @@ function StoryIdentity({ story }: { readonly story: PickerStory }) {
 }
 
 function RefinementBadge({ story }: { readonly story: PickerStory }) {
-  return <StatusBadge tone={STATUS_TONE[story.refinement]}>{REFINEMENT_LABEL[story.refinement]}</StatusBadge>;
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <StatusBadge tone={STATUS_TONE[story.refinement]}>{REFINEMENT_LABEL[story.refinement]}</StatusBadge>
+      {story.stale && (
+        <StatusBadge tone="danger">
+          US mudou
+        </StatusBadge>
+      )}
+    </span>
+  );
 }
 
 function StoryAction({ story, startAction }: { readonly story: PickerStory; readonly startAction: StartInvestigationAction }) {

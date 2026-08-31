@@ -7,6 +7,7 @@ export type PickerAction =
       readonly kind: "open";
       readonly label:
         | "Acompanhar execução"
+        | "Aguardando preparo"
         | "Revisar falha"
         | "Revisar reprovação"
         | "Tentar publicação"
@@ -24,6 +25,7 @@ export function derivePickerAction(
       label: persisted === "sem-investigacao" ? "Investigar" : "Investigar novamente",
     };
   }
+  if (run.status === "aguardando") return { kind: "open", label: "Aguardando preparo" };
   if (run.status === "em-andamento") return { kind: "open", label: "Acompanhar execução" };
   if (run.status === "falhou") return { kind: "open", label: "Revisar falha" };
   if (run.status === "reprovado") return { kind: "open", label: "Revisar reprovação" };

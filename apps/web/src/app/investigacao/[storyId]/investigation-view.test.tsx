@@ -5,11 +5,13 @@ import { InvestigationView } from "./investigation-view";
 
 const rejectedRun = {
   storyId: 117,
+  origin: "operador",
   story: {
     id: 117,
     title: "Exportar relatório",
     type: "User Story",
     state: "New",
+    rev: 5,
     description: "Exportar o relatório em CSV.",
     url: "https://example.com/117",
     wikiContext: {
@@ -42,6 +44,7 @@ const rejectedRun = {
 
 const failedRun = {
   storyId: 117,
+  origin: "operador",
   story: rejectedRun.story,
   startedAt: 1,
   finishedAt: 2,

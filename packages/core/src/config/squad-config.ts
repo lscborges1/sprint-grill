@@ -26,6 +26,22 @@ const repoConfigSchema = z.object({
 const taskDefaultsSchema = z.record(z.string(), z.string().min(1));
 
 /**
+ * Preparo automático ([ADR 0005](../../../docs/adr/0005-preparo-automatico-antecipa-a-investigacao.md)):
+ * opt-in — sem a seção, nada roda sozinho. `intervalMinutes` tem piso porque
+ * cada varredura é uma leitura do backlog no ADO; `limit` é o tamanho do lote
+ * por ciclo (a concorrência é 1, sempre). `states` cobre processos que não
+ * chamam o estado inicial de `New` (CMMI usa `Proposed`).
+ */
+const preparoSchema = z.object({
+  enabled: z.boolean(),
+  intervalMinutes: z.number().int().min(5).default(30),
+  limit: z.number().int().min(1).max(20).default(5),
+  states: z.array(z.string().min(1)).default(["New"]),
+});
+
+export type PreparoConfig = z.infer<typeof preparoSchema>;
+
+/**
  * Config da squad: definida uma vez pelo Operador, nunca por User Story.
  * O PAT do Azure DevOps não mora aqui — vem do ambiente (ver `ado-credentials`).
  */
@@ -39,6 +55,7 @@ export const squadConfigSchema = z.object({
     primary: repoConfigSchema,
     related: z.array(repoConfigSchema).readonly().default([]),
   }),
+  preparo: preparoSchema.optional(),
 });
 
 export type RepoConfig = z.infer<typeof repoConfigSchema>;

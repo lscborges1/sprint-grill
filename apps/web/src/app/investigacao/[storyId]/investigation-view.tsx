@@ -151,6 +151,20 @@ function Outcome({
     );
   }
 
+  if (run.status === "aguardando") {
+    return (
+      <>
+        <p role="status" className="text-lg text-muted">
+          Na fila do preparo automático — o turno começa assim que a US anterior
+          terminar. Pode fechar esta tela: quando chegar a vez dela, a
+          Investigação roda sozinha e o relatório espera aqui.
+        </p>
+        <AutoRefresh seconds={REFRESH_SECONDS} />
+        <Previous run={run.previous} />
+      </>
+    );
+  }
+
   if (run.status === "em-andamento") {
     return (
       <>

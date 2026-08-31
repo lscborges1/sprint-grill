@@ -4,6 +4,7 @@ import { derivePickerAction } from "./picker-action";
 
 const baseRun = {
   storyId: 42,
+  origin: "operador",
   story: undefined,
   startedAt: 1,
   previous: undefined,
@@ -11,6 +12,9 @@ const baseRun = {
 } as const;
 
 function run(status: InvestigationRun["status"]): InvestigationRun {
+  if (status === "aguardando") {
+    return { ...baseRun, status, queuedRev: 3 };
+  }
   if (status === "em-andamento") return { ...baseRun, status };
   if (status === "falhou") {
     return { ...baseRun, status, finishedAt: 2, message: "A Investigação falhou." };
@@ -38,6 +42,7 @@ describe("derivePickerAction", () => {
   it.each([
     ["sem-investigacao", undefined, { kind: "start", label: "Investigar" }],
     ["investigada", undefined, { kind: "start", label: "Investigar novamente" }],
+    ["sem-investigacao", run("aguardando"), { kind: "open", label: "Aguardando preparo" }],
     ["sem-investigacao", run("em-andamento"), { kind: "open", label: "Acompanhar execução" }],
     ["investigada", run("falhou"), { kind: "open", label: "Revisar falha" }],
     ["investigada", run("reprovado"), { kind: "open", label: "Revisar reprovação" }],

@@ -3,7 +3,8 @@ import { Alert, EmptyState, PageHeader } from "@/components/ui";
 import { OperationalFrame } from "@/components/operational-frame";
 import { Picker, type PickerStory } from "@/components/picker";
 import { loadBacklog } from "@/lib/backlog";
-import { getInvestigation } from "@/lib/investigations";
+import { getInvestigation, getRunSummaries } from "@/lib/investigations";
+import { isRunStale } from "@sprint-griller/investigation/runs";
 import { derivePickerAction } from "@/lib/picker-action";
 import { getSquadConfig } from "@/lib/squad-config";
 import { startInvestigationAction } from "./investigacao/actions";
@@ -40,8 +41,10 @@ export default async function Home() {
 }
 
 function pickerStories(stories: readonly BacklogStory[]): readonly PickerStory[] {
+  const summaries = getRunSummaries();
   return stories.map((story) => ({
     ...story,
     action: derivePickerAction(story.refinement, getInvestigation(story.id)),
+    stale: isRunStale(story.rev, summaries.get(story.id)),
   }));
 }

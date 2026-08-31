@@ -82,6 +82,7 @@ const STORY = {
   title: "TTL de sessão configurável",
   type: "User Story",
   state: "New",
+  rev: 3,
   description: "O TTL hoje é fixo.",
   url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/1",
   wikiContext: WIKI_CONTEXT,
@@ -165,7 +166,10 @@ describe("startInvestigation", () => {
     const first = startInvestigation(nextStoryId);
     const second = startInvestigation(nextStoryId);
 
-    expect(second).toBe(first);
+    // O run vem do banco agora, não da memória: mesmo turno é mesmo
+    // `startedAt` — e nenhum runtime novo nasceu do segundo clique.
+    expect(second.startedAt).toBe(first.startedAt);
+    expect(second.status).toBe("em-andamento");
     await vi.waitFor(() =>
       expect(getInvestigation(nextStoryId)?.status).toBe("aprovado"),
     );
@@ -271,11 +275,13 @@ describe("redisparo", () => {
     );
 
     const run = getInvestigation(storyId);
-    expect(run?.previous).toMatchObject({
+    const previous = run?.previous;
+    expect(previous).toMatchObject({
       status: "aprovado",
       markdown: APPROVED_MARKDOWN,
-      previous: undefined,
     });
+    // A cadeia para aqui: o previous do previous não atravessa mais um nível.
+    if (previous) expect(previous.previous).toBeUndefined();
   });
 });
 

@@ -56,6 +56,7 @@ describe("fetchStory", () => {
       title: "TTL de sessão configurável",
       type: "User Story",
       state: "New",
+      rev: 1,
       description: "<div>O TTL hoje é fixo.</div>",
       url: "https://dev.azure.com/acme/Plataforma/_workitems/edit/4211",
       wikiContext: {

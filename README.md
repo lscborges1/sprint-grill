@@ -73,6 +73,23 @@ Os repos são definidos **uma vez**, aqui — nenhuma cerimônia começa escolhe
 
 O caminho do arquivo de config pode ser trocado com `SPRINT_GRILLER_CONFIG`.
 
+### Preparo automático (opcional)
+
+Com a seção `preparo` na config (`"enabled": true`), o Refina passa a preparar
+Investigações sozinho antes da cerimônia
+([ADR 0005](docs/adr/0005-preparo-automatico-antecipa-a-investigacao.md)): a
+cada `intervalMinutes` ele lê o topo do backlog e enfileira até `limit` USs
+elegíveis — sem Investigação publicada e no estado de board listado em `states`
+(`New` por padrão; CMMI usa `Proposed`). A fila roda com concorrência 1, um
+turno de agente por vez, e sobrevive a restart no banco local
+(`investigacoes.db`, irmão do banco de cerimônia — descartável, o ADO continua
+sendo a fonte da verdade).
+
+A mesma US só volta à fila quando muda no ADO (`System.Rev` sobe): falha da
+mesma versão não entra em loop de retry. E nada é publicado sozinho — o
+preparo produz preview; publicar continua sendo um clique do Operador. Sem a
+seção `preparo`, nada roda automaticamente.
+
 ## Comandos
 
 | Comando | O que faz |

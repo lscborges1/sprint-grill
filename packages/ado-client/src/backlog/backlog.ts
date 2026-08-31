@@ -13,6 +13,12 @@ export interface BacklogStory {
   readonly type: string;
   /** Estado do board (`New`, `Active`…) — do ADO, não do refinamento. */
   readonly state: string;
+  /**
+   * Revisão do work item (`System.Rev`): sobe a qualquer edição da US. É a
+   * chave de invalidação do preparo automático — Investigação feita sobre uma
+   * `rev` antiga fica marcada como desatualizada quando a US muda.
+   */
+  readonly rev: number;
   readonly assignedTo: string | undefined;
   readonly url: string;
   readonly refinement: RefinementStatus;
@@ -42,6 +48,7 @@ const workItemsBatchSchema = z.object({
         "System.Title": z.string(),
         "System.WorkItemType": z.string(),
         "System.State": z.string(),
+        "System.Rev": z.number(),
         "System.CommentCount": z.number().default(0),
         "System.Description": z.string().optional(),
         "System.AssignedTo": z.object({ displayName: z.string() }).optional(),
@@ -105,6 +112,7 @@ async function fetchStories(
         "System.Title",
         "System.WorkItemType",
         "System.State",
+        "System.Rev",
         "System.CommentCount",
         "System.Description",
         "System.AssignedTo",
@@ -130,6 +138,7 @@ async function fetchStories(
           title: fields["System.Title"],
           type: fields["System.WorkItemType"],
           state: fields["System.State"],
+          rev: fields["System.Rev"],
           assignedTo: fields["System.AssignedTo"]?.displayName,
           url: rest.workItemUrl(item.id),
           refinement: inferRefinementStatus({

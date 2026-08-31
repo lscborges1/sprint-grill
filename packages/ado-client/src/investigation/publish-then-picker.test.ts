@@ -72,6 +72,7 @@ function fakeAdo() {
                 "System.Title": "TTL de sessão configurável",
                 "System.WorkItemType": "User Story",
                 "System.State": "New",
+                "System.Rev": 2,
                 "System.CommentCount": comments.length,
               },
             },
